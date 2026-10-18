@@ -1,0 +1,1477 @@
+diff --git a/HoldDrag.cs b/HoldDrag.cs
+index 1ae89e0..7e18d9f 100644
+--- a/HoldDrag.cs
++++ b/HoldDrag.cs
+@@ -369,6 +369,8 @@ internal sealed class AppConfig
+ 
+ 	public bool AllowFullscreenWindows { get; set; }
+ 
++	public bool AllowDragOwnWindows { get; set; }
++
+ 	public bool ExitFullscreenOnTrigger { get; set; }
+ 
+ 	public bool ShakeMinimizeOthers { get; set; }
+@@ -420,6 +422,7 @@ internal sealed class AppConfig
+ 		RestoreMaximizedWhenMoved = true;
+ 		BringToFront = true;
+ 		AllowFullscreenWindows = false;
++		AllowDragOwnWindows = true;
+ 		ExitFullscreenOnTrigger = true;
+ 		ShakeMinimizeOthers = true;
+ 		CornerPercent = 26;
+@@ -842,6 +845,8 @@ internal sealed class Coordinator : IInputSink, IDisposable
+ 
+ 	internal static int PhantomUpSentForTest;
+ 
++	internal static int ReplayedClickForTest;
++
+ 	internal static volatile PairedUpProbe LastPairedUpForTest;
+ 
+ 	internal static bool[] ButtonsDownOverrideForTest;
+@@ -852,6 +857,10 @@ internal sealed class Coordinator : IInputSink, IDisposable
+ 
+ 	private readonly bool[] _passedDown = new bool[3];
+ 
++	private readonly bool[] _bufferedDown = new bool[3];
++
++	private readonly Native.POINT[] _bufferedPt = new Native.POINT[3];
++
+ 	public bool Paused { get; private set; }
+ 
+ 	public bool SuppressTrigger { get; set; }
+@@ -866,8 +875,10 @@ internal sealed class Coordinator : IInputSink, IDisposable
+ 		_trigger = new TriggerState(() => _store.Current);
+ 		_drag = new DragEngine(() => _store.Current);
+ 		WindowActions.ApplyBlacklist(_store.Current.Blacklist);
++		WindowActions.AllowDragOwnWindows = _store.Current.AllowDragOwnWindows;
+ 		_trigger.Activated += OnTriggerActivated;
+ 		_trigger.Deactivated += OnTriggerDeactivated;
++		_trigger.ShortPressWithoutActivation += FlushBufferedClicks;
+ 	}
+ 
+ 	private void OnTriggerActivated()
+@@ -910,11 +921,33 @@ internal sealed class Coordinator : IInputSink, IDisposable
+ 			}
+ 			CancelTargetMouseMode(num);
+ 		}
+-		_drag.ShowHoverFrame(lpPoint);
++		// ★ 激活瞬间就把"阈值期间被缓冲、下层从未收到"的鼠标按下补起成拖动。
++		// 用户「同时按触发键和左键」时，左键的按下几乎一定落在阈值窗口内（被缓冲），
++		// 以前要等激活后的第一次鼠标移动才补起 —— 按下后先不动就完全没有反馈，
++		// 表现成"左键什么功能都没有、也拖不动窗口"。
++		AdoptBufferedButtonsNow(lpPoint);
++		if (!_drag.IsDragging)
++		{
++			_drag.ShowHoverFrame(lpPoint);
++		}
+ 	}
+ 
+ 	private void OnTriggerDeactivated()
+ 	{
++		// 松开触发键 = 退出拖动模式。此刻若还在拖（真实链路上"鼠标抬起"这条事件同样可能
++		// 落在鼠标钩子重装的缝隙里丢掉），必须就地收尾 —— 否则窗口会一直跟着光标跑，
++		// 用户看到的是"松开 Enter 了窗口还在被拖着"，比拖不动更莫名其妙。
++		if (_drag.IsDragging)
++		{
++			try
++			{
++				_drag.End();
++			}
++			catch (Exception ex)
++			{
++				Log.Error(ex);
++			}
++		}
+ 		_drag.HideHoverFrame();
+ 	}
+ 
+@@ -988,6 +1021,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
+ 	{
+ 		_drag.Cancel();
+ 		WindowActions.ApplyBlacklist(_store.Current.Blacklist);
++		WindowActions.AllowDragOwnWindows = _store.Current.AllowDragOwnWindows;
+ 		for (int i = 0; i < 3; i++)
+ 		{
+ 			_lastDown[i] = 0L;
+@@ -995,6 +1029,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
+ 			_swallowUp[i] = false;
+ 			_heldDuringHold[i] = false;
+ 			_passedDown[i] = false;
++			_bufferedDown[i] = false;
+ 		}
+ 		_drag.RefreshOverlayTheme();
+ 		if (_trigger.Active && !Paused && Native.GetCursorPos(out var lpPoint))
+@@ -1086,26 +1121,41 @@ internal sealed class Coordinator : IInputSink, IDisposable
+ 			{
+ 				return false;
+ 			}
++			// 触发键按住/激活期间，每一次鼠标键按下抬起都留痕。
++			// 这两个状态之外不记（否则拖窗口时日志会被"抬起"淹没）。
++			// 目的：用户报"外框出现了但窗口拖不动"时，日志必须能直接读出
++			// 「这次按下到底进了哪个分支、缓冲有没有被清掉」。
++			if (_trigger.Held || _trigger.Active)
++			{
++				Log.Info("[诊断] 鼠标键" + (IsDownMessage(msg) ? "按下" : "抬起") + " 键=" + num2 + " 触发[按住=" + _trigger.Held + " 激活=" + _trigger.Active + "] 缓冲=" + _bufferedDown[num2] + " 阈值期按住=" + _heldDuringHold[num2] + " 已放行=" + _passedDown[num2] + " 拖动中=" + _drag.IsDragging + " 坐标=" + ms.pt.X + "," + ms.pt.Y);
++			}
+ 			if (IsDownMessage(msg))
+ 			{
+ 				if (_trigger.Active)
+ 				{
+-					if (HandleButtonDown(num2, ms.pt))
+-					{
+-						return true;
+-					}
+-					_passedDown[num2] = true;
+-					return false;
++					return HandleButtonDown(num2, ms.pt);
+ 				}
+-				if (_trigger.Held)
++				bool hasAction = ActionFor(num2, _store.Current) != "Nothing";
++				if (_trigger.Held & hasAction)
+ 				{
++					// 指针停在自有窗口的可交互控件上时直接放行、不做缓冲。
++					// 否则用户按住不动地拖一会儿滑块，HoldMs 一到就会被本程序抢走这次按下。
++					if (WindowActions.IsPointOverOwnInteractiveControl(ms.pt))
++					{
++						_passedDown[num2] = true;
++						return false;
++					}
+ 					_heldDuringHold[num2] = true;
++					_bufferedDown[num2] = true;
++					_bufferedPt[num2] = ms.pt;
++					return true;
+ 				}
+ 				_passedDown[num2] = true;
+ 				return false;
+ 			}
+ 			_heldDuringHold[num2] = false;
+ 			_passedDown[num2] = false;
++			_bufferedDown[num2] = false;
+ 			return HandleButtonUp(num2, ms.pt);
+ 		}
+ 		}
+@@ -1113,24 +1163,123 @@ internal sealed class Coordinator : IInputSink, IDisposable
+ 
+ 	private void AdoptHeldButtonIfAny(Native.POINT pt)
+ 	{
++		// 触发键已激活、指针又停在自有窗口的可交互控件上 → 这次按下不抢。
++		// 被缓冲过（从未投递给任何窗口）的情况补一次按下，让控件的拖拽（拖滑块、选文本）延续下去。
++		if (WindowActions.IsPointOverOwnInteractiveControl(pt))
++		{
++			for (int j = 0; j <= 2; j++)
++			{
++				if (!_bufferedDown[j])
++				{
++					// 账本里没有"被我们吞掉、还没还给用户"的按下 → 没什么可还的。
++					_heldDuringHold[j] = false;
++					_passedDown[j] = false;
++					continue;
++				}
++				_bufferedDown[j] = false;
++				_heldDuringHold[j] = false;
++				_passedDown[j] = false;
++				ReplayBufferedClick(j, keepDown: true);
++				Log.Info("[诊断] 触发键激活但指针停在自有窗口控件上 → 把缓冲的按下还给控件 键=" + j + " 控件=" + WindowActions.DescribeInteractiveAt(pt));
++			}
++			return;
++		}
++		// ★★ 第六轮核心修复：判据只用【钩子事件账本】，绝不再用 GetAsyncKeyState（IsButtonPhysicallyDown）。
++		//
++		// 实测（%AppData%\HoldDrag\holddrag.log，21:07:47.635）：
++		//   [诊断] 激活瞬间清点缓冲 缓冲[True,False,False] 阈值期按住[True,False,False]
++		//                          已放行[False,False,False] 物理按下[False,False,False]
++		// 左键明明还按着（真实按下在 47.473 收到、131ms 后才抬起），
++		// GetAsyncKeyState(VK_LBUTTON) 却报 False —— 于是老代码在
++		//   if (!IsButtonPhysicallyDown(i)) { _bufferedDown[i] = false; continue; }
++		// 这一行把【刚刚收到的、还热乎的】缓冲按下当成"用户已经松手"整条丢掉，
++		// 之后每一次鼠标移动又被同一个查询挡回去 ⇒ 拖动永远建不起来，
++		// 而外框由 ShowHoverFrame 照常画出 —— 这正是用户看到的
++		// 「外框被样式包围，但鼠标怎么动窗口都移动不了」。
++		//
++		// 为什么账本才是可靠信号：我们能**直接看到**每一次鼠标键按下/抬起（低级鼠标钩子），
++		// 而 GetAsyncKeyState 在这个进程里被实测证明会漏报（注入输入尤其明显）。
++		// 账本语义精确且自洽：收到按下 + 尚未收到配对的抬起 ⟺ 键还按着；
++		// 抬起分支（OnMouseCore 的 up 分支）会把三本账全部清零，所以账本不会长期失真。
++		// 各种时序（按下落在阈值窗口内 / 按下早于触发键 / 鼠标在激活前就已经在动）到这里都归一。
+ 		for (int i = 0; i <= 2; i++)
+ 		{
+-			if (!IsButtonPhysicallyDown(i))
++			bool flag = _bufferedDown[i];
++			bool flag2 = _heldDuringHold[i];
++			bool flag3 = _passedDown[i];
++			if (!flag && !flag2 && !flag3)
++			{
++				continue;
++			}
++			if (ActionFor(i, _store.Current) == "Nothing")
+ 			{
++				_bufferedDown[i] = false;
+ 				_heldDuringHold[i] = false;
+ 				_passedDown[i] = false;
++				continue;
++			}
++			_bufferedDown[i] = false;
++			_heldDuringHold[i] = false;
++			_passedDown[i] = false;
++			if (HandleButtonDown(i, pt, quiet: true) && _drag.IsDragging)
++			{
++				Log.Info("[诊断] 触发键已激活且账本里还有未配对的按下 → 补起拖动" + (flag ? "（按下曾被缓冲，从未投递给任何窗口）" : (flag2 ? "（按下落在触发键按住阶段内）" : "（按下发生在触发键按住之前，目标可能停在拖选模态）")) + " 键=" + i + " 坐标=" + pt.X + "," + pt.Y);
++				break;
++			}
++		}
++	}
++
++	/// <summary>
++	/// 触发键激活的<b>瞬间</b>：把"阈值期间被缓冲、从未投递给任何窗口"的鼠标按下立刻补起成拖动。
++	/// </summary>
++	/// <remarks>
++	/// 为什么可以立刻接管：这些按下从头到尾没有离开过本进程，目标窗口根本没见到 WM_*BUTTONDOWN，
++	/// 所以不存在"用户其实是想在那里选文字/拖选区"的可能 —— 接管它不会破坏任何既有语义。
++	/// 反过来，如果一定要等到激活后的第一次鼠标移动才补起，那么用户"同时按住触发键和左键、
++	/// 按下后先不动"这段时间里就完全没有反馈，表现就是"左键什么功能都没有、也拖不动窗口"。
++	/// 已放行给下层的按下（_passedDown）刻意不走这里：那种按下目标窗口实收了，必须靠用户移动来表明意图，
++	/// 否则"先选文字、再按触发键"会被误判成拖窗口。
++	/// </remarks>
++	private void AdoptBufferedButtonsNow(Native.POINT pt)
++	{
++		// 「物理按下」那一栏仅作对照留痕：实测它对本进程会漏报（见 AdoptHeldButtonIfAny 的注释），
++		// 所以它已经不参与任何判定，只帮助事后核对。
++		Log.Info("[诊断] 激活瞬间清点缓冲 缓冲[" + _bufferedDown[0] + "," + _bufferedDown[1] + "," + _bufferedDown[2] + "] 阈值期按住[" + _heldDuringHold[0] + "," + _heldDuringHold[1] + "," + _heldDuringHold[2] + "] 已放行[" + _passedDown[0] + "," + _passedDown[1] + "," + _passedDown[2] + "] 参考·物理按下[" + IsButtonPhysicallyDown(0) + "," + IsButtonPhysicallyDown(1) + "," + IsButtonPhysicallyDown(2) + "] 坐标=" + pt.X + "," + pt.Y);
++		for (int i = 0; i <= 2; i++)
++		{
++			if (!_bufferedDown[i])
++			{
++				continue;
+ 			}
+-			else if ((_heldDuringHold[i] || _passedDown[i]) && HandleButtonDown(i, pt, quiet: true) && _drag.IsDragging)
++			// ★ 这里曾经有一条 `if (!IsButtonPhysicallyDown(i)) { 清账并 continue; }`。
++			// 它就是本轮报障的真凶：抬起分支已经把"用户松手"这件事记得明明白白，
++			// 再用一个会漏报的系统查询去二次判断，只会把好账当成坏账丢掉。
++			if (WindowActions.IsPointOverOwnInteractiveControl(pt))
+ 			{
+-				bool flag = _heldDuringHold[i];
++				_bufferedDown[i] = false;
+ 				_heldDuringHold[i] = false;
+ 				_passedDown[i] = false;
+-				Log.Info("[诊断] 触发键激活时该鼠标键已被按住" + (flag ? "（按下事件发生在触发键按住期间）" : "（按下事件发生在触发键按住之前，目标可能停在拖选模态）") + " → 补起拖动 键=" + i + " 坐标=" + pt.X + "," + pt.Y);
++				ReplayBufferedClick(i, keepDown: true);
++				Log.Info("[诊断] 激活瞬间指针停在自有窗口控件上 → 把缓冲的按下还给控件 键=" + i + " 控件=" + WindowActions.DescribeInteractiveAt(pt));
++				continue;
++			}
++			_bufferedDown[i] = false;
++			_heldDuringHold[i] = false;
++			_passedDown[i] = false;
++			if (HandleButtonDown(i, pt, quiet: true) && _drag.IsDragging)
++			{
++				Log.Info("[诊断] 激活瞬间补起拖动（阈值期间的按下从未投递给任何窗口，无需再等一次鼠标移动）键=" + i + " 坐标=" + pt.X + "," + pt.Y);
+ 				break;
+ 			}
++			Log.Info("[诊断] 激活瞬间补起拖动未成立（对照上一条「鼠标键按下」日志的坐标与目标）键=" + i);
+ 		}
+ 	}
+ 
++	// 遗留：曾经用于"先把按下放行给目标窗口、激活后再补发一个 WM_LBUTTONUP 把这对按下抬起配平"。
++	// 那个做法正是"触发键激活后左键仍点穿到下层窗口"的直接原因：目标窗口先收到真实的
++	// WM_LBUTTONDOWN、再收到我们补发的 WM_LBUTTONUP，于是一次完整点击成立。
++	// 现在阈值期间按下会被缓冲、从不投递，因此不再需要 pairing，这里保留实现仅供诊断/自检观察，
++	// 生产路径不会再调用它（PhantomUpSentForTest 应恒为 0 增长）。
+ 	private static void PostPairedButtonUp(nint hwnd, int idx, Native.POINT pt)
+ 	{
+ 		try
+@@ -1190,6 +1339,64 @@ internal sealed class Coordinator : IInputSink, IDisposable
+ 		}
+ 	}
+ 
++	// 触发键短按（未达 HoldMs 阈值）：阈值期间被缓冲的按下从没投递给任何窗口，
++	// 用户的本意就是一次普通点击，这里用合成事件把它补回去，避免修复穿透之后丢失点击。
++	private void FlushBufferedClicks()
++	{
++		for (int i = 0; i <= 2; i++)
++		{
++			if (!_bufferedDown[i])
++			{
++				continue;
++			}
++			_bufferedDown[i] = false;
++			_heldDuringHold[i] = false;
++			_passedDown[i] = false;
++			// 缓冲账还在 ⟺ 我们收到过这条按下、却从没收到配对的抬起 ⟺ 用户此刻仍按着。
++			// 所以这里只补"按下"（不补抬起），用户真实的抬起稍后会原样送达 —— 他按住的这段时间
++			// 就被完整保留给下层控件（拖滑块、选文本都不断）。以前用 GetAsyncKeyState 判断，
++			// 它会漏报，会把"一直按住"误判成"早已松开"而补成一次完整点击，按住过程就断了。
++			bool flag = true;
++			ReplayBufferedClick(i, flag);
++			ReplayedClickForTest++;
++			Log.Info("[诊断] 触发键短按（未达阈值）→ 把缓冲的鼠标按下还给用户 键=" + i + " 坐标=" + _bufferedPt[i].X + "," + _bufferedPt[i].Y + " 用户仍按住=" + flag);
++		}
++	}
++
++	private static void ReplayBufferedClick(int idx, bool keepDown)
++	{
++		try
++		{
++			uint num = idx switch
++			{
++				1 => 8u, 
++				0 => 2u, 
++				_ => 32u, 
++			};
++			uint num2 = idx switch
++			{
++				1 => 16u, 
++				0 => 4u, 
++				_ => 64u, 
++			};
++			Native.INPUT[] array = new Native.INPUT[keepDown ? 1 : 2];
++			array[0].type = 0u;
++			array[0].u.mi.dwFlags = num;
++			array[0].u.mi.dwExtraInfo = HookEngine.MagicExtraInfo;
++			if (!keepDown)
++			{
++				array[1].type = 0u;
++				array[1].u.mi.dwFlags = num2;
++				array[1].u.mi.dwExtraInfo = HookEngine.MagicExtraInfo;
++			}
++			Native.SendInput((uint)array.Length, array, Marshal.SizeOf(typeof(Native.INPUT)));
++		}
++		catch (Exception ex)
++		{
++			Log.Error(ex);
++		}
++	}
++
+ 	private static bool IsButtonPhysicallyDown(int idx)
+ 	{
+ 		bool[] buttonsDownOverrideForTest = ButtonsDownOverrideForTest;
+@@ -1239,6 +1446,15 @@ internal sealed class Coordinator : IInputSink, IDisposable
+ 		return false;
+ 	}
+ 
++	internal bool BufferedDownForTest(int idx)
++	{
++		if (idx >= 0 && idx < _bufferedDown.Length)
++		{
++			return _bufferedDown[idx];
++		}
++		return false;
++	}
++
+ 	private static int ButtonIndexOf(int msg)
+ 	{
+ 		switch (msg)
+@@ -1298,18 +1514,32 @@ internal sealed class Coordinator : IInputSink, IDisposable
+ 		nint num = WindowActions.FindTarget(pt, allowFullscreen);
+ 		if (num == IntPtr.Zero)
+ 		{
++			// 这条以前只在 quiet=false 时打，结果"激活瞬间补起"这条路径静默失败时日志里什么都没有 ——
++			// 用户看到的就是"外框出现了、窗口拖不动、日志却一片空白"。改成无条件记录。
++			Log.Info("[诊断] FindTarget 没找到目标，按键被吞掉（触发键按住期间不再放行给下层窗口）键=" + idx + " 坐标=" + pt.X + "," + pt.Y + " 原因=" + WindowActions.DescribeReject(pt, allowFullscreen) + (quiet ? " 来源=激活后自动补起" : " 来源=触发键已激活时的实时按下"));
++			_passedDown[idx] = false;
++			_bufferedDown[idx] = false;
++			_swallowUp[idx] = true;
++			return true;
++		}
++		// 指针落在自有窗口（设置页等）内部的可交互控件上时，本轮不接管：
++		// 把按下原样放行给控件，抬起也会走 HandleButtonUp 的默认分支（_swallowUp 为 false）。
++		// 这样按住触发键去拖滑块、选文本、点按钮都还能用；想拖整个窗口把指针移到标题栏/边框/空白即可。
++		if (Actions.IsDragAction(text) && WindowActions.IsPointOverOwnInteractiveControl(pt))
++		{
++			_passedDown[idx] = true;
++			_bufferedDown[idx] = false;
++			_heldDuringHold[idx] = false;
++			_swallowUp[idx] = false;
+ 			if (!quiet)
+ 			{
+-				Log.Info("[诊断] FindTarget 没找到目标，鼠标键原样放行 键=" + idx + " 坐标=" + pt.X + "," + pt.Y + " 原因=" + WindowActions.DescribeReject(pt, allowFullscreen));
++				Log.Info("[诊断] 指针停在自有窗口的可交互控件上，按键交还控件 键=" + idx + " 控件=" + WindowActions.DescribeInteractiveAt(pt));
+ 			}
+ 			return false;
+ 		}
+ 		CancelTargetMouseMode(num);
+-		if (_passedDown[idx])
+-		{
+-			PostPairedButtonUp(num, idx, pt);
+-			_passedDown[idx] = false;
+-		}
++		_passedDown[idx] = false;
++		_bufferedDown[idx] = false;
+ 		long tickCount = Environment.TickCount64;
+ 		int num2 = (int)Native.GetDoubleClickTime();
+ 		if (num2 <= 0)
+@@ -1351,7 +1581,11 @@ internal sealed class Coordinator : IInputSink, IDisposable
+ 		{
+ 			if (!_drag.Begin(num, text == "Move", idx, pt))
+ 			{
+-				return false;
++				// Begin 自己会打失败原因；这里再补一条，好让日志能把这次按下和
++				// "触发键激活 / 外框出现" 串起来 —— 否则就是"按了左键什么都没发生"，无从定位。
++				Log.Info("[诊断] 拖动无法建立（Begin 返回 false，具体原因见上一条日志）动作=" + text + " 键=" + idx + " 目标=" + ((IntPtr)num).ToInt64().ToString("X") + " 坐标=" + pt.X + "," + pt.Y);
++				_swallowUp[idx] = true;
++				return true;
+ 			}
+ 			return true;
+ 		}
+@@ -2529,7 +2763,7 @@ internal sealed class DragEngine : IDisposable
+ 			if (appConfig.ShowActivationFrame && !flag)
+ 			{
+ 				Native.RECT rectNow = FrameRectOf(rECT, appConfig, out var inset);
+-				_frame.RaiseAboveAll = inset;
++				_frame.RaiseAboveAll = true;
+ 				if (rectNow.Width >= 4 && rectNow.Height >= 4)
+ 				{
+ 					lock (_gate)
+@@ -2805,7 +3039,7 @@ internal sealed class DragEngine : IDisposable
+ 			AppConfig appConfig = _cfg();
+ 			_frame.ApplyTheme(appConfig.FrameColorId, appConfig.FrameStyleId, appConfig.FrameThickness, appConfig.FrameRadius, appConfig.FrameOpacity);
+ 			Native.RECT rect = FrameRectOf(windowRect, appConfig, out var inset);
+-			_frame.RaiseAboveAll = inset;
++			_frame.RaiseAboveAll = true;
+ 			if (rect.Width >= 4 && rect.Height >= 4)
+ 			{
+ 				_frame.SetRect(rect);
+@@ -2820,7 +3054,7 @@ internal sealed class DragEngine : IDisposable
+ 			return false;
+ 		}
+ 		Native.RECT rect = FrameRectOf(windowRect, c, out var inset);
+-		_frame.RaiseAboveAll = inset;
++		_frame.RaiseAboveAll = true;
+ 		if (rect.Width < 4 || rect.Height < 4)
+ 		{
+ 			return false;
+@@ -2960,7 +3194,7 @@ internal sealed class DragEngine : IDisposable
+ 			return;
+ 		}
+ 		Native.RECT rectNow = FrameRectOf(target, c, out var inset);
+-		_frame.RaiseAboveAll = inset;
++		_frame.RaiseAboveAll = true;
+ 		if (rectNow.Width < 4 || rectNow.Height < 4)
+ 		{
+ 			return;
+@@ -3797,9 +4031,24 @@ internal static class FrameStyles
+ 		};
+ 	}
+ 
++	public static float StrokeFor(string style, int thickness)
++	{
++		if (thickness < 1)
++		{
++			thickness = 1;
++		}
++		if (style == "Solid")
++		{
++			return Math.Max(2f, (float)thickness * 1.8f);
++		}
++		return thickness;
++	}
++
+ 	public static int MarginFor(string style, int thickness)
+ 	{
+-		int num = thickness / 2 + 1;
++		// 外扩量必须 ≥ 笔画宽度，否则 Draw 里内缩 strokeW/2 之后描边外缘会落到浮层边界之外被裁掉
++		// （原实现 Solid 用 0.9t+3，t=8 时只有 10 < 1.8t=14.4，线被砍掉一半 —— 这正是"粗细调不动"的成因之一）。
++		int num = (int)Math.Ceiling((double)StrokeFor(style, thickness));
+ 		return style switch
+ 		{
+ 			"Glow" => num + 10, 
+@@ -3807,7 +4056,9 @@ internal static class FrameStyles
+ 			"Neon" => num + 12, 
+ 			"Halo" => num + 14, 
+ 			"Dashed" => num + 7, 
+-			"Solid" => (int)((float)thickness * 0.9f) + 3, 
++			// Solid 没有光晕，不留额外余量：外框尺寸因此只比原来大 ceil(1.8t) - (0.9t+3)，
++			// t=8 时是 15 vs 10（每边多 5px），而不是 num+3 的每边多 8px。
++			"Solid" => num, 
+ 			"Double" => num + 7, 
+ 			"Corners" => num + 4, 
+ 			"Shadow" => num + 16, 
+@@ -3819,18 +4070,20 @@ internal static class FrameStyles
+ 
+ 	public static void Draw(Graphics g, RectangleF area, Color color, string style, int thickness, int radius, int marginOverride = -1)
+ 	{
++		float strokeW = StrokeFor(style, thickness);
+ 		int num = ((marginOverride >= 0) ? marginOverride : MarginFor(style, thickness));
+-		RectangleF rectangleF = new RectangleF(area.X + (float)num, area.Y + (float)num, area.Width - (float)num * 2f, area.Height - (float)num * 2f);
++		float pathOffset = (float)num - strokeW * 0.5f;
++		if (pathOffset < 0f)
++		{
++			pathOffset = 0f;
++		}
++		RectangleF rectangleF = new RectangleF(area.X + pathOffset, area.Y + pathOffset, area.Width - pathOffset * 2f, area.Height - pathOffset * 2f);
+ 		if (rectangleF.Width < 6f || rectangleF.Height < 6f)
+ 		{
+ 			return;
+ 		}
+ 		float num2 = ClampRadius(radius, rectangleF.Width, rectangleF.Height);
+-		float num3 = thickness;
+-		if (style == "Solid")
+-		{
+-			num3 = Math.Max(2f, (float)thickness * 1.8f);
+-		}
++		float num3 = strokeW;
+ 		g.SmoothingMode = SmoothingMode.AntiAlias;
+ 		g.PixelOffsetMode = PixelOffsetMode.Half;
+ 		switch (style)
+@@ -6110,6 +6363,9 @@ internal static class Native
+ 	[DllImport("user32.dll", SetLastError = true)]
+ 	internal static extern bool ScreenToClient(nint hWnd, ref POINT lpPoint);
+ 
++	[DllImport("user32.dll", SetLastError = true)]
++	internal static extern bool ClientToScreen(nint hWnd, ref POINT lpPoint);
++
+ 	[DllImport("user32.dll")]
+ 	internal static extern int FillRect(nint hDC, ref RECT lprc, nint hbr);
+ 
+@@ -7572,7 +7828,9 @@ internal static class Program
+ 			Application.EnableVisualStyles();
+ 			Application.Run(new Form
+ 			{
+-				Text = "HoldDrag 外部测试窗口",
++				// 标题带上本进程号：自检每轮拉起的宿主窗口标题都唯一，
++				// 上轮残留的孤儿宿主不会再被 FindWindowByTitle 命中（那是 T80 偶发失败的根因）。
++				Text = WindowHostTitle + " #" + Environment.ProcessId,
+ 				StartPosition = FormStartPosition.Manual,
+ 				Location = new Point(120, 120),
+ 				Size = new Size(420, 300),
+@@ -7919,6 +8177,9 @@ internal static class SelfTest
+ 		Safe("T83 补发的配对抬起：wParam 如实报告其余按键、消息类型对应、lParam 为客户区坐标", TestPairedUpMaskReport);
+ 		Safe("T84 激活时抢占钩子链头：重装后真实事件链路仍然可用（wgesture 抢占右键回归）", TestChainPriorityReinstall);
+ 		Safe("T85 钩子线程路径无同步跨进程写：阻塞目标上 Begin/移动/松手/降级/置顶必须立即返回", TestHookThreadNeverBlocks);
++		Safe("T86 自有窗口内控件不被抢输入：滑块上放行、标题栏上仍可拖", TestOwnInteractiveControlPassthrough);
++		Safe("T87 分组框不是可交互控件：按住触发键时设置页的成片分组区仍可整体拖走", TestGroupBoxNotInteractive);
++		Safe("T88 阈值内按下 + 激活前已在移动：激活后仍必须补起拖动（用户『外框出现却拖不动』复现）", TestAdoptAfterEarlyMove);
+ 		Line("");
+ 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
+ 		string text = Buf.ToString();
+@@ -9311,7 +9572,12 @@ internal static class SelfTest
+ 		try
+ 		{
+ 			int num = FrameStyles.MarginFor("Solid", 6);
+-			Native.POINT pOINT = new Native.POINT(r.Left + num + 3, r.Top + num + 3);
++			int sampleInset = num - (int)Math.Round((double)FrameStyles.StrokeFor("Solid", 6) * 0.5);
++			if (sampleInset < 1)
++			{
++				sampleInset = 1;
++			}
++			Native.POINT pOINT = new Native.POINT(r.Left + sampleInset, r.Top + sampleInset);
+ 			Native.POINT pOINT2 = CoordSpace.ToPhysical(pOINT);
+ 			Color? result = null;
+ 			int num2 = int.MaxValue;
+@@ -12024,22 +12290,27 @@ internal static class SelfTest
+ 				Native.GetWindowRect(dragFixture.H, out var lpRect);
+ 				Native.POINT p = CenterOf(dragFixture.H);
+ 				int phantomUpSentForTest = Coordinator.PhantomUpSentForTest;
++				// 真实光标必须与"按下点"一致：激活瞬间补起时以当前光标为起点（见 AdoptBufferedButtonsNow），
++				// 光标若还停在上一个用例的位置，补起那一帧窗口就会跳。
++				Native.GetCursorPos(out var cursorBefore);
++				Native.SetCursorPos(p.X, p.Y);
++				Pump();
+ 				dragFixture.Coord.Trigger.SimulateKeyDown();
+ 				Check(!dragFixture.Coord.Trigger.Active, "触发键尚未到达阈值（仍在按住阶段）");
+ 				Check(dragFixture.Coord.Trigger.Held, "触发键处于『按住中』状态");
+ 				Native.MSLLHOOKSTRUCT ms = Ms(p);
+-				Check(!dragFixture.Coord.OnMouse(513, ref ms), "按住阶段里的左键按下被原样放行（此时还不该动手）");
++				Check(dragFixture.Coord.OnMouse(513, ref ms), "★ 阈值期间的左键按下被吞掉（不再放行给下层窗口 —— 这正是『穿透点击』的根因）");
++				Check(dragFixture.Coord.BufferedDownForTest(0), "★ 阈值期间的左键按下进入缓冲（未达阈值时既不投递也不丢弃，短按后还给用户）");
+ 				Check(dragFixture.Coord.HeldDuringHoldForTest(0), "★ 按住阶段里的左键按下被【记账】（老代码在这里什么都没记，就是漏掉的根因）");
+ 				dragFixture.Coord.Trigger.ForceHoldElapsed();
+ 				Settle();
+ 				Check(dragFixture.Coord.Trigger.Active, "触发键已激活（外框此刻会亮起）");
+-				Check(!dragFixture.Coord.Drag.IsDragging, "此刻还没有拖动会话（正是用户看到的状态）");
+-				Native.MSLLHOOKSTRUCT ms2 = Ms(new Native.POINT(p.X + 70, p.Y + 50));
+-				dragFixture.Coord.OnMouse(512, ref ms2);
+-				Settle();
+-				Check(dragFixture.Coord.Drag.IsDragging, "★ 鼠标一移动就把拖动补起来了（不再需要松开再按一次）");
++				Check(dragFixture.Coord.Drag.IsDragging, "★★ 激活【瞬间】就补起拖动 —— 阈值期间的按下从未投递给任何窗口，不必再等一次鼠标移动（用户报障『同时按 Enter 和左键后左键没反应』的修复点）");
++				Native.GetWindowRect(dragFixture.H, out var lpAdopt);
++				Eq(lpAdopt.Left - lpRect.Left, 0, "★ 补起那一帧窗口不跳（以当前光标为起点）");
++				Eq(lpAdopt.Top - lpRect.Top, 0, "★ 补起那一帧窗口不跳（垂直）");
+ 				Check(!dragFixture.Coord.PassedDownForTest(0), "按住阶段放行的那条 down 同样记入『幽灵按下』账，收养时已完成配对");
+-				Check(Coordinator.PhantomUpSentForTest > phantomUpSentForTest, "★ 收养时补发配对的按钮抬起（这条 down 也是放行给目标程序的）");
++				Check(Coordinator.PhantomUpSentForTest == phantomUpSentForTest, "★ 收养时不再补发合成抬起（按下从未投递给目标窗口，不需要配对，也就不会凑成一次点击）");
+ 				for (int num = 0; num < 12; num++)
+ 				{
+ 					Application.DoEvents();
+@@ -12051,20 +12322,19 @@ internal static class SelfTest
+ 				int num3 = BandMaxGreenness(Rectangle.FromLTRB(lpRect2.Left - 60, num2 - 20, lpRect2.Left + 60, num2 + 20));
+ 				Line("    （拖动框）窗口=" + lpRect2.Left + "," + lpRect2.Top + " " + lpRect2.Width + "x" + lpRect2.Height + " 外框=" + lpRect3.Left + "," + lpRect3.Top + " " + lpRect3.Width + "x" + lpRect3.Height + " 屏幕青色度=" + num3);
+ 				Check(num3 > 25, "★★ 拖动中的外框必须在屏幕上看得见（不是只有 IsShown）", "青色度=" + num3);
+-				Native.GetWindowRect(dragFixture.H, out var lpRect4);
+-				Eq(lpRect4.Left - lpRect.Left, 0, "★ 补起那一帧窗口不跳（以当前光标为起点）");
+-				Eq(lpRect4.Top - lpRect.Top, 0, "★ 补起那一帧窗口不跳（垂直）");
+-				Native.MSLLHOOKSTRUCT ms3 = Ms(new Native.POINT(p.X + 70 + 90, p.Y + 50 + 60));
+-				dragFixture.Coord.OnMouse(512, ref ms3);
++				Native.MSLLHOOKSTRUCT ms2 = Ms(new Native.POINT(p.X + 90, p.Y + 60));
++				dragFixture.Coord.OnMouse(512, ref ms2);
+ 				Settle();
+-				Native.GetWindowRect(dragFixture.H, out var lpRect5);
+-				Eq(lpRect5.Left - lpRect4.Left, 90, "★ 窗口真的跟着光标移动了（水平 90px）");
+-				Eq(lpRect5.Top - lpRect4.Top, 60, "★ 窗口真的跟着光标移动了（垂直 60px）");
+-				Native.MSLLHOOKSTRUCT ms4 = Ms(ms3.pt);
+-				dragFixture.Coord.OnMouse(514, ref ms4);
++				Native.GetWindowRect(dragFixture.H, out var lpRect4);
++				Eq(lpRect4.Left - lpRect2.Left, 90, "★ 窗口真的跟着光标移动了（水平 90px）");
++				Eq(lpRect4.Top - lpRect2.Top, 60, "★ 窗口真的跟着光标移动了（垂直 60px）");
++				Native.MSLLHOOKSTRUCT ms3 = Ms(ms2.pt);
++				dragFixture.Coord.OnMouse(514, ref ms3);
+ 				dragFixture.Coord.Trigger.SimulateKeyUp(null);
+ 				Settle();
+ 				Check(!dragFixture.Coord.Drag.IsDragging, "松开后拖动会话结束");
++				Native.SetCursorPos(cursorBefore.X, cursorBefore.Y);
++				Pump();
+ 			}
+ 			using DragFixture dragFixture2 = new DragFixture((AppConfig c) =>
+ 			{
+@@ -12083,7 +12353,7 @@ internal static class SelfTest
+ 			dragFixture2.Coord.OnMouse(512, ref ms6);
+ 			Settle();
+ 			Check(dragFixture2.Coord.Drag.IsDragging, "★ 第四十四轮：激活时仍按着的键现在必须补起（用户报障场景的修复点）");
+-			Check(Coordinator.PhantomUpSentForTest > phantomUpSentForTest2, "★ 收养时补发配对的按钮抬起（把目标程序单方面认定的按下配对掉）");
++			Check(Coordinator.PhantomUpSentForTest == phantomUpSentForTest2, "★ 不再补发配对的按钮抬起（目标程序从未收到过这条按下，无需复位）");
+ 			Native.MSLLHOOKSTRUCT ms7 = Ms(ms6.pt);
+ 			dragFixture2.Coord.OnMouse(514, ref ms7);
+ 			dragFixture2.Coord.Trigger.SimulateKeyUp(null);
+@@ -12096,6 +12366,126 @@ internal static class SelfTest
+ 		}
+ 	}
+ 
++	// 第六轮报障的最小化复现：
++	//   用户原话「按 enter 然后快速的按下左键，外框出现了但鼠标怎么动窗口都不动；
++	//             按住左键过一段时间再移动就能顺利移动」。
++	// 两种时序唯一的差别 = 「触发键到阈值之前，鼠标有没有已经在移动」。
++	// T66（TestAdoptHeldButton）只覆盖了"按下之后一动不动等激活"，漏掉了真实用户会做的那一步：
++	// 手是连着动的，左键一按下就开始拖，根本不会等 200ms 阈值。
++	// 本用例把这段时序固化下来，任何一次回归都会在这里报红。
++	private static void TestAdoptAfterEarlyMove()
++	{
++		if (!NoRoomForTestWindow())
++		{
++			return;
++		}
++		WindowActions.AllowOwnProcessAsTargetForTest = true;
++		Coordinator.AssumeButtonsDownForTest = true;
++		try
++		{
++			using DragFixture dragFixture = new DragFixture((AppConfig c) =>
++			{
++				c.ActionLeft = "Move";
++				c.DoubleClickLeftMaximize = false;
++				c.ExitFullscreenOnTrigger = true;
++				c.ShowActivationFrame = true;
++				c.BringToFront = false;
++			});
++			Native.GetWindowRect(dragFixture.H, out var lpRect);
++			Native.POINT p = CenterOf(dragFixture.H);
++			Native.GetCursorPos(out var cursorBefore);
++			Native.SetCursorPos(p.X, p.Y);
++			Pump();
++			dragFixture.Coord.Trigger.SimulateKeyDown();
++			Check(dragFixture.Coord.Trigger.Held && !dragFixture.Coord.Trigger.Active, "触发键先在『按住』阶段（还没到阈值）");
++			Native.MSLLHOOKSTRUCT ms = Ms(p);
++			Check(dragFixture.Coord.OnMouse(513, ref ms), "★ 阈值窗口内的左键按下被吞掉（不穿透到下层窗口）");
++			Check(dragFixture.Coord.BufferedDownForTest(0), "★ 这次按下进入缓冲（从未投递给任何窗口）");
++			// ★ 关键差别：激活之前鼠标已经在动了 —— 这就是用户"按下左键就开始拖"的真实时序。
++			for (int i = 1; i <= 4; i++)
++			{
++				Native.MSLLHOOKSTRUCT msMove = Ms(new Native.POINT(p.X + i * 20, p.Y + i * 10));
++				dragFixture.Coord.OnMouse(512, ref msMove);
++				Thread.Sleep(5);
++			}
++			Check(!dragFixture.Coord.Trigger.Active, "移动这几帧时触发键还没到阈值（两次移动都落在按住阶段里）");
++			Native.MSLLHOOKSTRUCT msAt = Ms(new Native.POINT(p.X + 80, p.Y + 40));
++			dragFixture.Coord.OnMouse(512, ref msAt);
++			// 真实光标也要挪到同一处：激活瞬间的起点取的是【当前光标】（子项真实位置），
++			// 若真实光标还停在按下点，补起那一帧窗口会按"按下点 → 当前光标"的差值跳一段。
++			Native.SetCursorPos(p.X + 80, p.Y + 40);
++			Pump();
++			dragFixture.Coord.Trigger.ForceHoldElapsed();
++			Settle();
++			Check(dragFixture.Coord.Trigger.Active, "触发键到阈值、激活（外框此刻亮起）");
++			Line("    （诊断）激活瞬间：缓冲=" + dragFixture.Coord.BufferedDownForTest(0) + " 拖动中=" + dragFixture.Coord.Drag.IsDragging + " 光标=" + p.X + 80 + "," + p.Y + 40);
++			Check(dragFixture.Coord.Drag.IsDragging, "★★ 阈值期间的按下 + 激活前鼠标已经在移动 → 激活后照样必须能拖（用户报障『外框被样式包围但窗口拖不动』的修复点）");
++			Native.MSLLHOOKSTRUCT ms2 = Ms(new Native.POINT(p.X + 80 + 90, p.Y + 40 + 60));
++			dragFixture.Coord.OnMouse(512, ref ms2);
++			Settle();
++			Native.GetWindowRect(dragFixture.H, out var lpRect2);
++			Eq(lpRect2.Left - lpRect.Left, 90, "★ 窗口跟着光标走了（水平 90px）");
++			Eq(lpRect2.Top - lpRect.Top, 60, "★ 窗口跟着光标走了（垂直 60px）");
++			Native.MSLLHOOKSTRUCT ms3 = Ms(ms2.pt);
++			dragFixture.Coord.OnMouse(514, ref ms3);
++			dragFixture.Coord.Trigger.SimulateKeyUp(null);
++			Settle();
++			Check(!dragFixture.Coord.Drag.IsDragging, "松开左键后拖动会话结束");
++			Native.SetCursorPos(cursorBefore.X, cursorBefore.Y);
++			Pump();
++
++			// ---- 实测最凶的一档：GetAsyncKeyState 漏报（本轮报障的真凶）。----
++			// 现场日志（21:07:47.635）：
++			//   激活瞬间清点缓冲 缓冲[True,False,False] 阈值期按住[True,False,False]
++			//                     已放行[False,False,False] 物理按下[False,False,False]
++			// 左键明明按着（真实按下 47.473 收到、131ms 后才抬起），GetAsyncKeyState 却报 False。
++			// 老代码信了这句谎话，在激活瞬间把【刚收到、还热乎的】缓冲按下当成"用户已松手"丢掉，
++			// 之后每一次移动又被同一个查询挡回去 ⇒ 拖动永远建不起来，外框却照常亮着。
++			// 这里用「按键状态覆盖表」原样复刻这个漏报：三个键一律报"没按着"。
++			Coordinator.ButtonsDownOverrideForTest = new bool[3] { false, false, false };
++			using (DragFixture dragFixture2 = new DragFixture((AppConfig c) =>
++			{
++				c.ActionLeft = "Move";
++				c.DoubleClickLeftMaximize = false;
++				c.ShowActivationFrame = true;
++				c.BringToFront = false;
++			}))
++			{
++				Native.GetWindowRect(dragFixture2.H, out var lpRect3);
++				Native.POINT p2 = CenterOf(dragFixture2.H);
++				Native.GetCursorPos(out var cursorBefore2);
++				Native.SetCursorPos(p2.X, p2.Y);
++				Pump();
++				dragFixture2.Coord.Trigger.SimulateKeyDown();
++				Native.MSLLHOOKSTRUCT msDown = Ms(p2);
++				Check(dragFixture2.Coord.OnMouse(513, ref msDown), "阈值窗口内的左键按下被吞掉（不穿透）");
++				Check(dragFixture2.Coord.BufferedDownForTest(0), "★ 账本里确实有这条按下（钩子收到了，且没收到配对的抬起）");
++				dragFixture2.Coord.Trigger.ForceHoldElapsed();
++				Settle();
++				Check(dragFixture2.Coord.Trigger.Active, "触发键已激活");
++				Check(dragFixture2.Coord.Drag.IsDragging, "★★ 系统按键查询漏报（报『没按着』）时，账本里的按下绝不能被当作已松手丢弃 → 激活瞬间照样必须补起拖动");
++				// 接管那一帧以"当前光标"为起点，所以窗口此刻不跳；再走一格才看得到跟手。
++				Native.MSLLHOOKSTRUCT msFollow = Ms(new Native.POINT(p2.X + 90, p2.Y + 60));
++				dragFixture2.Coord.OnMouse(512, ref msFollow);
++				Settle();
++				Native.GetWindowRect(dragFixture2.H, out var lpRect4);
++				Eq(lpRect4.Left - lpRect3.Left, 90, "★ 窗口跟着光标走了（水平 90px）");
++				Eq(lpRect4.Top - lpRect3.Top, 60, "★ 窗口跟着光标走了（垂直 60px）");
++				dragFixture2.Coord.Trigger.SimulateKeyUp(null);
++				Settle();
++				Check(!dragFixture2.Coord.Drag.IsDragging, "松开触发键立刻收回拖动（抬起事件丢失时的兜底）");
++				Native.SetCursorPos(cursorBefore2.X, cursorBefore2.Y);
++				Pump();
++			}
++		}
++		finally
++		{
++			Coordinator.ButtonsDownOverrideForTest = null;
++			Coordinator.AssumeButtonsDownForTest = false;
++			WindowActions.AllowOwnProcessAsTargetForTest = false;
++		}
++	}
++
+ 	private static void TestFrameTracksWindow()
+ 	{
+ 		if (!NoRoomForTestWindow())
+@@ -12360,15 +12750,21 @@ internal static class SelfTest
+ 				c.FrameOpacity = 100;
+ 			});
+ 			DragEngine drag = dragFixture.Coord.Drag;
++			Native.GetWindowRect(dragFixture.H, out var lpRect);
++			int num = (lpRect.Top + lpRect.Bottom) / 2;
++			Rectangle band = new Rectangle(lpRect.Left - 30, num - 2, 60, 5);
++			// 背景基线必须在"外框还没亮起"的时候量。40% 是半透明，屏幕读数必然是
++			// 「alpha × 外框色 + (1-alpha) × 背景」的混合结果；用固定阈值（例如"必须小于 100% 的 0.6 倍"）
++			// 等于假设"背景远比外框暗"。本机壁纸就是深青（实测 RGB 4,70,91 → 青色度 23），
++			// 40% 时读数会落在 36 左右而被误判成"没变淡"。改成先量背景、再按混合公式判定，
++			// 结论与桌面内容无关，且比原来的固定阈值更严格（同时验证了混合比例本身）。
++			int bg = BandMaxGreenness(band);
+ 			Native.SetCursorPos(CenterOf(dragFixture.H).X, CenterOf(dragFixture.H).Y);
+ 			ActivateTrigger(dragFixture.Coord);
+ 			Native.MSLLHOOKSTRUCT ms = Ms(CenterOf(dragFixture.H));
+ 			dragFixture.Coord.OnMouse(512, ref ms);
+ 			Settle();
+ 			Check(drag.Frame.IsShown, "用例前提：悬停框已经亮起");
+-			Native.GetWindowRect(dragFixture.H, out var lpRect);
+-			int num = (lpRect.Top + lpRect.Bottom) / 2;
+-			Rectangle band = new Rectangle(lpRect.Left - 30, num - 2, 60, 5);
+ 			int num2 = BandMaxGreenness(band);
+ 			dragFixture.Store.Current.FrameOpacity = 40;
+ 			drag.RefreshOverlayTheme();
+@@ -12376,10 +12772,12 @@ internal static class SelfTest
+ 			Thread.Sleep(120);
+ 			Settle();
+ 			int num3 = BandMaxGreenness(band);
+-			Line("    （不透明度）带内青色度 100%=" + num2 + "  40%=" + num3);
++			int num4 = (int)(0.4 * (double)num2 + 0.6 * (double)bg) + 4;
++			Line("    （不透明度）带内青色度 背景=" + bg + "  100%=" + num2 + "  40%=" + num3 + "（混合上限 " + num4 + "）");
+ 			Check(num2 > 30, "★ 用例前提：100% 时这条带上确实有外框（青色度足够）", "青色度=" + num2);
+ 			Check(num3 != num2, "★ 改不透明度真的改变了屏幕渲染（不是改了参数却没重推像素）", "100%=" + num2 + " 40%=" + num3);
+-			Check(num3 > 0 && (double)num3 < (double)num2 * 0.6, "★ 40% 的外框明显比 100% 淡（整层等比变淡）", "青色度 " + num2 + " → " + num3);
++			Check(num3 < num2 && num3 <= num4, "★ 40% 的外框按 alpha 混合掺进背景：读数不超过「0.4×外框 + 0.6×背景」", "100%=" + num2 + " 40%=" + num3 + " 背景=" + bg + " 上限=" + num4);
++			Check(num2 - num3 >= (num2 - bg) / 2, "★ 40% 至少削掉一半「外框−背景」对比度（整层等比变淡）", "对比度 " + (num2 - bg) + " → " + (num2 - num3) + "（背景=" + bg + "）");
+ 			dragFixture.Coord.Trigger.SimulateKeyUp(null);
+ 			Settle();
+ 		}
+@@ -12852,7 +13250,11 @@ internal static class SelfTest
+ 		try
+ 		{
+ 			Rectangle virtualScreen = SystemInformation.VirtualScreen;
+-			Native.SetWindowPos(num, IntPtr.Zero, virtualScreen.Left, virtualScreen.Top, virtualScreen.Width, virtualScreen.Height, 20u);
++			// 原来用 20u = SWP_NOACTIVATE|SWP_NOZORDER：窗口既不激活也不置顶，桌面上任何同层窗口都能盖住它，
++			// 于是"指针下是哪个窗口"的命中测试会返回别人的窗口 —— 本机实测命中了 Edge 的
++			// 「QS-噪声画面|987x725|15,131,127|0.005」，那是环境前提不成立，不是产品行为出错。
++			// 真实的全屏窗口本来就在最前，这里改成 SWP_SHOWWINDOW + HWND_TOPMOST 让前提真的成立。
++			Native.SetWindowPos(num, new IntPtr(-1), virtualScreen.Left, virtualScreen.Top, virtualScreen.Width, virtualScreen.Height, 0x0040u);
+ 			Settle();
+ 			if (!WindowActions.IsFullscreen(num))
+ 			{
+@@ -12882,6 +13284,11 @@ internal static class SelfTest
+ 			Settle();
+ 			nint num2 = WindowActions.FindTarget(pOINT, allowFullscreen: true);
+ 			Line("    （外部窗口）句柄=" + ((IntPtr)num).ToInt64().ToString("X") + " 全屏=" + WindowActions.IsFullscreen(num) + " 命中=" + ((IntPtr)num2).ToInt64().ToString("X") + " 悬停框显示=" + drag.Frame.IsShown);
++			if (num2 != num)
++			{
++				Line("    （跳过：本机桌面上另有窗口压在外层全屏窗口之上，命中=" + ((IntPtr)num2).ToInt64().ToString("X") + " 期望=" + ((IntPtr)num).ToInt64().ToString("X") + "；这是环境前提不成立，不据此判产品对错）");
++				return;
++			}
+ 			Check(num2 == num, "★ 真实命中测试落在外部全屏窗口上", "hit=" + ((IntPtr)num2).ToInt64().ToString("X"));
+ 			Native.MSLLHOOKSTRUCT ms2 = Ms(pOINT);
+ 			bool flag = dragFixture.Coord.OnMouse(513, ref ms2);
+@@ -12931,17 +13338,7 @@ internal static class SelfTest
+ 		}
+ 		finally
+ 		{
+-			try
+-			{
+-				Process processById = Process.GetProcessById(PidOfWindow(num));
+-				if (processById != null && !processById.HasExited)
+-				{
+-					processById.Kill();
+-				}
+-			}
+-			catch
+-			{
+-			}
++			KillWindowHostProcess(num);
+ 		}
+ 	}
+ 
+@@ -12951,6 +13348,81 @@ internal static class SelfTest
+ 		return new Native.POINT((lpRect.Left + lpRect.Right) / 2, (lpRect.Top + lpRect.Bottom) / 2);
+ 	}
+ 
++	/// <summary>
++	/// 自有窗口内的可交互控件（滑块 / 文本框 / 按钮）不该被触发键抢走输入：
++	/// 指针停在这些控件上时必须被识别出来、真实按键路径必须放行；
++	/// 而标题栏 / 空白区仍要被本程序接管，否则窗口就拖不动了。
++	/// </summary>
++	private static void TestOwnInteractiveControlPassthrough()
++	{
++		if (!NoRoomForTestWindow())
++		{
++			return;
++		}
++		WindowActions.AllowDragOwnWindows = true;
++		// 本用例会把光标挪到滑块 / 标题栏上，结束后必须还原，
++		// 否则会污染同一次（乃至下一次）运行里其它依赖光标初始位置的用例。
++		Native.GetCursorPos(out var originalCursor);
++		try
++		{
++			using DragFixture dragFixture = new DragFixture(null);
++			TrackBar trackBar = new TrackBar
++			{
++				Minimum = 1,
++				Maximum = 8,
++				Value = 3,
++				TickStyle = TickStyle.None,
++				Location = new Point(12, 36),
++				Size = new Size(dragFixture.Window.ClientSize.Width - 24, 45)
++			};
++			dragFixture.Window.Controls.Add(trackBar);
++			dragFixture.Window.TopMost = true;
++			dragFixture.Window.Activate();
++			Pump();
++			Settle();
++			if (!PlaceCursorOn(trackBar.Handle, CenterOf(trackBar.Handle)))
++			{
++				Line("    （跳过：指针无法稳定停在滑块上，可能被其它窗口遮挡）");
++				return;
++			}
++			Native.POINT trackPoint = CenterOf(trackBar.Handle);
++			Check(WindowActions.IsPointOverOwnInteractiveControl(trackPoint), "★ 指针停在自有窗口的滑块上时，被识别为「可交互控件」", "命中=" + WindowActions.DescribeInteractiveAt(trackPoint));
++			ActivateTrigger(dragFixture.Coord);
++			Native.MSLLHOOKSTRUCT ms = Ms(trackPoint);
++			bool flag = dragFixture.Coord.OnMouse(513, ref ms);
++			Settle();
++			Check(!flag, "★ 触发键激活时落在滑块上的左键【不被吞掉】，交还给控件", "被吞=" + flag);
++			Check(!dragFixture.Coord.Drag.IsDragging, "落在滑块上的左键不会启动窗口拖动");
++			Native.MSLLHOOKSTRUCT ms2 = Ms(trackPoint);
++			dragFixture.Coord.OnMouse(514, ref ms2);
++			dragFixture.Coord.Trigger.SimulateKeyUp(null);
++			Settle();
++			Native.POINT point = new Native.POINT(dragFixture.Window.Left + dragFixture.Window.Width / 2, dragFixture.Window.Top + 6);
++			Check(!WindowActions.IsPointOverOwnInteractiveControl(point), "标题栏不被当作可交互控件（窗口仍可被拖动）", "命中=" + WindowActions.DescribeInteractiveAt(point));
++			ActivateTrigger(dragFixture.Coord);
++			Native.MSLLHOOKSTRUCT ms3 = Ms(point);
++			bool flag2 = dragFixture.Coord.OnMouse(513, ref ms3);
++			Check(flag2, "★ 触发键激活时落在标题栏上的左键被接管", "被吞=" + flag2);
++			Check(dragFixture.Coord.Drag.IsDragging, "标题栏上的左键确实启动了拖动");
++			Native.MSLLHOOKSTRUCT ms4 = Ms(point);
++			dragFixture.Coord.OnMouse(514, ref ms4);
++			dragFixture.Coord.Trigger.SimulateKeyUp(null);
++			Settle();
++		}
++		finally
++		{
++			WindowActions.AllowDragOwnWindows = true;
++			try
++			{
++				Native.SetCursorPos(originalCursor.X, originalCursor.Y);
++				Pump();
++			}
++			catch
++			{
++			}
++		}
++	}
++
+ 	private static int PidOfWindow(nint h)
+ 	{
+ 		try
+@@ -12964,27 +13436,118 @@ internal static class SelfTest
+ 		}
+ 	}
+ 
++	/// <summary>
++	/// WinForms 的 GroupBox 同样用 BUTTON 类实现，只有 BS_GROUPBOX(0x7) 才能把它和真按钮区分开。
++	/// 若不排除，设置页里成片的分组框会把"按住触发键拖窗口"整个吃掉 —— 表现为左键毫无反应。
++	/// </summary>
++	private static void TestGroupBoxNotInteractive()
++	{
++		if (!NoRoomForTestWindow())
++		{
++			return;
++		}
++		Native.GetCursorPos(out var cursorBefore);
++		try
++		{
++			using Form form = new Form
++			{
++				Text = "HoldDrag 分组框判定用例",
++				StartPosition = FormStartPosition.Manual,
++				Location = new Point(60, 60),
++				Size = new Size(460, 380),
++				ShowInTaskbar = false,
++				TopMost = true
++			};
++			GroupBox groupBox = new GroupBox
++			{
++				Text = "空白分组",
++				Location = new Point(12, 12),
++				Size = new Size(420, 330)
++			};
++			Button button = new Button
++			{
++				Text = "确定",
++				Location = new Point(24, 288),
++				Size = new Size(120, 36)
++			};
++			groupBox.Controls.Add(button);
++			form.Controls.Add(groupBox);
++			form.Show();
++			Settle();
++			Native.POINT boxPoint = new Native.POINT(form.Left + groupBox.Left + 210, form.Top + groupBox.Top + 140);
++			if (!PlaceCursorOn(groupBox.Handle, boxPoint))
++			{
++				Line("    （跳过：指针无法稳定停在分组框上，可能被其它窗口遮挡）");
++				return;
++			}
++			Line("    （分组框空白）命中=" + WindowActions.DescribeInteractiveAt(boxPoint));
++			Check(!WindowActions.IsPointOverOwnInteractiveControl(boxPoint), "★★ 自有窗口的分组框【不被】当作可交互控件（按住触发键仍能把设置页整体拖走）", "命中=" + WindowActions.DescribeInteractiveAt(boxPoint));
++			Native.POINT buttonPoint = new Native.POINT(form.Left + groupBox.Left + button.Left + 60, form.Top + groupBox.Top + button.Top + 18);
++			if (PlaceCursorOn(button.Handle, buttonPoint))
++			{
++				Line("    （真按钮）命中=" + WindowActions.DescribeInteractiveAt(buttonPoint));
++				Check(WindowActions.IsPointOverOwnInteractiveControl(buttonPoint), "★ 真按钮仍被识别为可交互控件（区分没有误伤）", "命中=" + WindowActions.DescribeInteractiveAt(buttonPoint));
++			}
++			else
++			{
++				Line("    （跳过：指针无法稳定停在按钮上）");
++			}
++		}
++		finally
++		{
++			try
++			{
++				Native.SetCursorPos(cursorBefore.X, cursorBefore.Y);
++				Pump();
++			}
++			catch
++			{
++			}
++		}
++	}
++
+ 	private static nint LaunchExternalWindow()
+ 	{
+ 		try
+ 		{
+-			if (Process.Start(new ProcessStartInfo(Application.ExecutablePath, "--windowhost --no-elevate")
++			// 先清掉上一轮留下的孤儿宿主（自检被中断时会残留）。
++			// 不清的话它们会污染候选窗口集，收尾时还会被误当成"本次启动的"而杀掉错误的进程 ——
++			// 这正是 T80 偶发失败的根因：杀错一个、漏掉一个，下一轮继续命中残留。
++			KillStaleWindowHosts();
++			Process process = Process.Start(new ProcessStartInfo(Application.ExecutablePath, "--windowhost --no-elevate")
+ 			{
+ 				UseShellExecute = false
+-			}) == null)
++			});
++			if (process == null)
+ 			{
+ 				return IntPtr.Zero;
+ 			}
++			// 宿主窗口标题里带自身进程号，因此这里可以精确定位"本次拉起的那个窗口"。
++			string text = Program.WindowHostTitle + " #" + process.Id;
+ 			for (int i = 0; i < 80; i++)
+ 			{
+ 				Application.DoEvents();
+ 				Thread.Sleep(100);
+-				nint num = FindWindowByTitle("HoldDrag 外部测试窗口");
++				nint num = FindWindowByTitle(text);
++				if (num == IntPtr.Zero)
++				{
++					num = FindWindowByTitleForPid(Program.WindowHostTitle, process.Id);
++				}
+ 				if (num != IntPtr.Zero)
+ 				{
+ 					return num;
+ 				}
+ 			}
++			try
++			{
++				if (!process.HasExited)
++				{
++					process.Kill();
++				}
++			}
++			catch
++			{
++			}
+ 			return IntPtr.Zero;
+ 		}
+ 		catch
+@@ -12993,6 +13556,115 @@ internal static class SelfTest
+ 		}
+ 	}
+ 
++	/// <summary>按标题前缀 + 指定进程号找窗口，只认本次拉起的宿主。</summary>
++	private static nint FindWindowByTitleForPid(string titlePrefix, int pid)
++	{
++		nint found = IntPtr.Zero;
++		try
++		{
++			Native.EnumWindows((nint hwnd, nint l) =>
++			{
++				try
++				{
++					if (!Native.IsWindowVisible(hwnd))
++					{
++						return true;
++					}
++					string windowTitle = Native.GetWindowTitle(hwnd);
++					if (string.IsNullOrEmpty(windowTitle) || !windowTitle.StartsWith(titlePrefix, StringComparison.Ordinal))
++					{
++						return true;
++					}
++					if (PidOfWindow(hwnd) != pid)
++					{
++						return true;
++					}
++					found = hwnd;
++					return false;
++				}
++				catch
++				{
++					return true;
++				}
++			}, IntPtr.Zero);
++		}
++		catch
++		{
++		}
++		return found;
++	}
++
++	/// <summary>清理以 WindowHostTitle 开头的孤儿宿主进程（绝不包含自身）。</summary>
++	private static void KillStaleWindowHosts()
++	{
++		try
++		{
++			List<int> list = new List<int>(4);
++			Native.EnumWindows((nint hwnd, nint l) =>
++			{
++				try
++				{
++					string windowTitle = Native.GetWindowTitle(hwnd);
++					if (string.IsNullOrEmpty(windowTitle) || !windowTitle.StartsWith(Program.WindowHostTitle, StringComparison.Ordinal))
++					{
++						return true;
++					}
++					int num = PidOfWindow(hwnd);
++					if (num != 0 && num != Environment.ProcessId && !list.Contains(num))
++					{
++						list.Add(num);
++					}
++				}
++				catch
++				{
++				}
++				return true;
++			}, IntPtr.Zero);
++			for (int i = 0; i < list.Count; i++)
++			{
++				try
++				{
++					using Process process = Process.GetProcessById(list[i]);
++					if (process != null && !process.HasExited)
++					{
++						process.Kill();
++					}
++				}
++				catch
++				{
++				}
++			}
++		}
++		catch
++		{
++		}
++	}
++
++	/// <summary>只结束该窗口所属的宿主进程，并拒绝结束自身。</summary>
++	private static void KillWindowHostProcess(nint hwnd)
++	{
++		try
++		{
++			if (hwnd == IntPtr.Zero)
++			{
++				return;
++			}
++			int num = PidOfWindow(hwnd);
++			if (num == 0 || num == Environment.ProcessId)
++			{
++				return;
++			}
++			using Process process = Process.GetProcessById(num);
++			if (process != null && !process.HasExited)
++			{
++				process.Kill();
++			}
++		}
++		catch
++		{
++		}
++	}
++
+ 	private static nint FindWindowByTitle(string title)
+ 	{
+ 		try
+@@ -13102,7 +13774,7 @@ internal static class SelfTest
+ 				Check(!dragFixture.Coord.OnMouse(512, ref ms2), "拖动期间的移动绝不吞（吞了光标会冻结）");
+ 				Check(dragFixture.Coord.Drag.IsDragging, "★★ 左键还按着就补起了拖动（修复点：以前这里永远补不起来，只剩拖选文字）");
+ 				Check(Coordinator.CancelModeSentForTest > cancelModeSentForTest + 1, "★ 收养时再次取消目标窗口的拖拽模态");
+-				Check(Coordinator.PhantomUpSentForTest > phantomUpSentForTest, "★ 收养时补发【配对的按钮抬起】（目标程序的按下标记就此复位）");
++				Check(Coordinator.PhantomUpSentForTest == phantomUpSentForTest, "★ 不再补发【配对的按钮抬起】（目标程序从未见过这条按下，也就没有需要复位的按下标记）");
+ 				Check(!dragFixture.Coord.PassedDownForTest(0), "配对后幽灵按下账已清");
+ 				Settle();
+ 				Native.GetWindowRect(dragFixture.H, out var lpRect2);
+@@ -13230,38 +13902,21 @@ internal static class SelfTest
+ 		Native.POINT p = CenterOf(dragFixture.H);
+ 		int phantomUpSentForTest = Coordinator.PhantomUpSentForTest;
+ 		Native.MSLLHOOKSTRUCT ms = Ms(p);
+-		dragFixture.Coord.OnMouse(downMsg, ref ms);
+-		Check(dragFixture.Coord.PassedDownForTest(btn), "按下已记入幽灵账（btn=" + btn + "）");
+-		ActivateTrigger(dragFixture.Coord);
++		dragFixture.Coord.Trigger.SimulateKeyDown();
++		Check(dragFixture.Coord.Trigger.Held && !dragFixture.Coord.Trigger.Active, "触发键处于阈值内的『按住』阶段（btn=" + btn + "）");
++		Check(dragFixture.Coord.OnMouse(downMsg, ref ms), "★ 阈值期间的按下被吞掉，不再放行给鼠标下方的窗口（btn=" + btn + " —— 穿透点击的根因）");
++		Check(dragFixture.Coord.BufferedDownForTest(btn), "按下进入缓冲（btn=" + btn + "：" + maskWhat + "）");
++		Check(!dragFixture.Coord.PassedDownForTest(btn), "★ 没有记入『幽灵按下』账（这条按下从未投递给任何窗口，btn=" + btn + "）");
++		dragFixture.Coord.Trigger.ForceHoldElapsed();
+ 		Settle();
++		Check(dragFixture.Coord.Trigger.Active, "触发键已激活（btn=" + btn + "）");
+ 		Native.MSLLHOOKSTRUCT ms2 = Ms(new Native.POINT(p.X + 60, p.Y + 40));
+ 		dragFixture.Coord.OnMouse(512, ref ms2);
+ 		Settle();
+-		Check(dragFixture.Coord.Drag.IsDragging, "收养成功：拖动已补起（btn=" + btn + "）");
+-		Check(Coordinator.PhantomUpSentForTest > phantomUpSentForTest, "补发过配对的抬起（btn=" + btn + "）");
+-		Coordinator.PairedUpProbe lastPairedUpForTest = Coordinator.LastPairedUpForTest;
+-		if (lastPairedUpForTest == null)
+-		{
+-			Check(ok: false, "探针捕获到配对抬起的内容（btn=" + btn + "）");
+-			return;
+-		}
+-		int msg = lastPairedUpForTest.Msg;
+-		int expected;
+-		if (btn != 0)
+-		{
+-			expected = ((btn == 1) ? 517 : 520);
+-		}
+-		else
+-		{
+-			expected = 514;
+-		}
+-		Eq(msg, expected, "消息类型与被收养的键对应（btn=" + btn + "）");
+-		Check(lastPairedUpForTest.Hwnd == dragFixture.H, "配对抬起发到目标窗口自己（btn=" + btn + "）");
+-		Check(lastPairedUpForTest.WParam == MaskOf(downs, btn), maskWhat, "wParam 期望 0x" + MaskOf(downs, btn).ToString("X") + " 实际 0x" + lastPairedUpForTest.WParam.ToString("X"));
+-		Native.POINT lpPoint = ms2.pt;
+-		Native.ScreenToClient(lastPairedUpForTest.Hwnd, ref lpPoint);
+-		int expected2 = (lpPoint.Y << 16) | (lpPoint.X & 0xFFFF);
+-		Eq((int)((IntPtr)lastPairedUpForTest.LParam).ToInt64(), expected2, "lParam 是相对目标窗口的客户区坐标（btn=" + btn + "）");
++		Check(dragFixture.Coord.Drag.IsDragging, "激活后第一次移动就把拖动补起（btn=" + btn + "）");
++		Check(Coordinator.PhantomUpSentForTest == phantomUpSentForTest, "★ 全程没有向目标窗口补发任何合成抬起（btn=" + btn + "）：那条抬起正是把『被放行的按下』凑成一次真实点击的元凶");
++		Check(Coordinator.LastPairedUpForTest == null, "配对抬起探针保持为空（btn=" + btn + "）");
++		Check(!dragFixture.Coord.BufferedDownForTest(btn), "缓冲已消费（btn=" + btn + "）");
+ 	}
+ 
+ 	private static int MaskOf(bool[] downs, int btn)
+@@ -14350,8 +15005,8 @@ internal sealed class SettingsForm : Form
+ 			Color color = FrameColors.Resolve(_colorId);
+ 			int radius = Fields.Sc(8);
+ 			int num = Fields.Sc(7);
+-			int thickness = Math.Min(_thickness, 3);
+-			int radius2 = Math.Min(_radius, 8);
++			int thickness = _thickness;
++			int radius2 = _radius;
+ 			for (int i = 0; i < _styles.Length; i++)
+ 			{
+ 				string text = _styles[i];
+@@ -16059,6 +16714,8 @@ internal sealed class SettingsForm : Form
+ 
+ 	private readonly Label _lblColorName = new Label();
+ 
++	private readonly Label _lblStyleHeader = new Label();
++
+ 	private readonly NumericUpDown _numFrameThick = new FlatNum();
+ 
+ 	private readonly NumericUpDown _numFrameRadius = new FlatNum();
+@@ -16444,7 +17101,11 @@ internal sealed class SettingsForm : Form
+ 		_lblColorName.Size = new Size(300, 20);
+ 		_lblColorName.ForeColor = Design.TextPrimary;
+ 		groupBox3.Controls.Add(_lblColorName);
+-		groupBox3.Controls.Add(Label("样式", 18, 164, 40));
++		_lblStyleHeader.Text = "样式";
++		_lblStyleHeader.Location = new Point(18, 164);
++		_lblStyleHeader.Size = new Size(300, 22);
++		_lblStyleHeader.TextAlign = ContentAlignment.MiddleLeft;
++		groupBox3.Controls.Add(_lblStyleHeader);
+ 		_galleryStyle.Location = new Point(18, 186);
+ 		_galleryStyle.Size = new Size(374, 150);
+ 		_galleryStyle.Columns = 5;
+@@ -18614,6 +19275,7 @@ internal sealed class SettingsForm : Form
+ 		_pnlPreview.Refresh_();
+ 		_gridColor.SelectedId = text;
+ 		_lblColorName.Text = "当前颜色：" + ColorNameOf(text);
++		_lblStyleHeader.Text = "样式（当前粗细 " + thickness + " px・圆角 " + radius + " px）";
+ 		_galleryStyle.SelectedId = text2;
+ 		_galleryStyle.ColorId = text;
+ 		_galleryStyle.Thickness = thickness;
+@@ -21948,6 +22610,10 @@ internal sealed class TriggerState : IDisposable
+ 
+ 	public event Action Deactivated;
+ 
++	// 触发键"短按"（没到 HoldMs 阈值就松开）时触发：此时从没激活过，
++	// 但阈值期间我们可能已经把鼠标按下缓冲下来了，必须还给用户，否则会丢点击。
++	public event Action ShortPressWithoutActivation;
++
+ 	public TriggerState(Func<AppConfig> cfg)
+ 	{
+ 		_cfg = cfg;
+@@ -21989,6 +22655,7 @@ internal sealed class TriggerState : IDisposable
+ 		if (!Active)
+ 		{
+ 			ReplayKeyboard(ref kb);
++			ShortPressWithoutActivation?.Invoke();
+ 		}
+ 		else
+ 		{
+@@ -22024,6 +22691,7 @@ internal sealed class TriggerState : IDisposable
+ 		if (!Active)
+ 		{
+ 			ReplayMouseButton(ref ms);
++			ShortPressWithoutActivation?.Invoke();
+ 		}
+ 		else
+ 		{
+@@ -22107,6 +22775,7 @@ internal sealed class TriggerState : IDisposable
+ 		}
+ 		LastPressReplayed = true;
+ 		replayCallback?.Invoke();
++		ShortPressWithoutActivation?.Invoke();
+ 		return true;
+ 	}
+ 
+@@ -22172,10 +22841,159 @@ internal static class WindowActions
+ 
+ 	private static readonly int OwnPid = Process.GetCurrentProcess().Id;
+ 
++	internal const string OverlayClassName = "HoldDragOverlayWindow";
++
++	internal static bool AllowDragOwnWindows = true;
++
+ 	internal static bool AllowOwnProcessAsTargetForTest;
+ 
++	private static bool IsOwnProcessTarget(nint h)
++	{
++		try
++		{
++			string className = Native.GetClassName(h);
++			if (className == "HoldDragOverlayWindow")
++			{
++				return false;
++			}
++			if (className == "HoldDrag.Probe.Target")
++			{
++				return false;
++			}
++			if (className == "SysShadow" || className == "tooltips_class32" || className == "MSCTFIME UI" || className == "Default IME" || className == "IME")
++			{
++				return false;
++			}
++			long windowLong = Native.GetWindowLong(h, -16);
++			if ((windowLong & 0x10000000) == 0L)
++			{
++				return false;
++			}
++			if ((windowLong & 0x40000000) != 0L)
++			{
++				return false;
++			}
++			return true;
++		}
++		catch (Exception ex)
++		{
++			Log.Error(ex);
++			return false;
++		}
++	}
++
+ 	internal static nint ForcedTargetForTest = IntPtr.Zero;
+ 
++	/// <summary>
++	/// 可交互控件的原生窗口类名。指针落在这类控件上时，本程序不接管鼠标，
++	/// 把按键原样交给控件，避免"想拖窗口却动了滑块/选区""想拖滑块却被拖走窗口"。
++	/// 只列真正吃鼠标的控件；Panel / GroupBox / Label 这些容器与静态控件不在其内，
++	/// 因此按住触发键拖这些区域或标题栏、边框时仍能拖动整个窗口。
++	/// </summary>
++	private static readonly string[] InteractiveClasses = new string[17]
++	{
++		"msctls_trackbar32", "Edit", "Button", "ComboBox", "ComboBoxEx32", "msctls_updown32",
++		"ScrollBar", "msctls_progress32", "ListBox", "SysListView32", "SysTreeView32",
++		"SysTabControl32", "msctls_statusbar32", "ToolbarWindow32", "SysMonthCal32",
++		"SysDateTimePick32", "SysIPAddress32"
++	};
++
++	/// <summary>该窗口句柄是否为"可交互控件"。必须传句柄：单看类名分不出 GroupBox 与 Button。</summary>
++	internal static bool IsInteractiveControl(nint h)
++	{
++		string cls = Native.GetClassName(h);
++		if (string.IsNullOrEmpty(cls))
++		{
++			return false;
++		}
++		// WinForms 会把系统控件类名包成 WindowsForms10.<基础类名>.app.<版本>_r<n>_ad<n>，
++		// 例如滑块的实测类名是 WindowsForms10.msctls_trackbar32.app.0.3279090_r3_ad1。
++		// 因此先剥掉包装前缀再比对基础类名，否则原生控件永远识别不出来。
++		const string WinFormsPrefix = "WindowsForms10.";
++		if (cls.StartsWith(WinFormsPrefix, StringComparison.OrdinalIgnoreCase))
++		{
++			int num = cls.IndexOf('.', WinFormsPrefix.Length);
++			if (num <= WinFormsPrefix.Length)
++			{
++				return false;
++			}
++			cls = cls.Substring(WinFormsPrefix.Length, num - WinFormsPrefix.Length);
++		}
++		if (!MatchesInteractiveName(cls))
++		{
++			return false;
++		}
++		// WinForms 的 GroupBox 也是用 BUTTON 类实现的，只有 BS_GROUPBOX(0x7) 能把它和真正的
++		// 按钮/复选框/单选钮区分开。GroupBox 是容器、不吃鼠标拖动 —— 若不排除，设置页里成片的
++		// GroupBox 会把"按住触发键拖窗口"整个吃掉（表现就是左键毫无反应）。
++		return !(string.Equals(cls, "Button", StringComparison.OrdinalIgnoreCase) && (Native.GetWindowLong(h, -16) & 0xF) == 0x7L);
++	}
++
++	private static bool MatchesInteractiveName(string cls)
++	{
++		for (int i = 0; i < InteractiveClasses.Length; i++)
++		{
++			if (string.Equals(cls, InteractiveClasses[i], StringComparison.OrdinalIgnoreCase))
++			{
++				return true;
++			}
++		}
++		return cls.StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase);
++	}
++
++	/// <summary>
++	/// 指针是否落在"本进程自有窗口内部的可交互控件"上。命中则本轮不要接管拖动。
++	/// 判定链：WindowFromPoint → GA_ROOT → 根窗口属于本进程且是合法自有窗口 → 命中窗口的类名可交互。
++	/// </summary>
++	internal static bool IsPointOverOwnInteractiveControl(Native.POINT pt)
++	{
++		try
++		{
++			nint hit = Native.WindowFromPoint(pt);
++			if (hit == IntPtr.Zero)
++			{
++				return false;
++			}
++			nint root = Native.GetAncestor(hit, 2u);
++			if (root == IntPtr.Zero)
++			{
++				return false;
++			}
++			Native.GetWindowThreadProcessId(root, out var lpdwProcessId);
++			if (lpdwProcessId != (uint)OwnPid || !IsOwnProcessTarget(root))
++			{
++				return false;
++			}
++			return IsInteractiveControl(hit);
++		}
++		catch (Exception ex)
++		{
++			Log.Error(ex);
++			return false;
++		}
++	}
++
++	/// <summary>诊断用：描述指针当前命中的控件类名与句柄（不命中自有窗口控件时返回原因）。</summary>
++	internal static string DescribeInteractiveAt(Native.POINT pt)
++	{
++		try
++		{
++			nint hit = Native.WindowFromPoint(pt);
++			if (hit == IntPtr.Zero)
++			{
++				return "无命中";
++			}
++			nint root = Native.GetAncestor(hit, 2u);
++			return Native.GetClassName(hit) + " 句柄=" + ((IntPtr)hit).ToInt64().ToString("X")
++				+ " 根=" + ((IntPtr)root).ToInt64().ToString("X");
++		}
++		catch (Exception ex)
++		{
++			Log.Error(ex);
++			return "查询失败";
++		}
++	}
++
+ 	private static readonly HashSet<nint> _foreignForTest = new HashSet<nint>();
+ 
+ 	private static readonly object ForeignGate = new object();
+@@ -22387,7 +23205,8 @@ internal static class WindowActions
+ 			{
+ 				flag = _foreignForTest.Count > 0 && _foreignForTest.Contains(num);
+ 			}
+-			if (((lpdwProcessId != (uint)OwnPid) | flag) || AllowOwnProcessAsTargetForTest)
++			bool flag2 = lpdwProcessId == (uint)OwnPid && AllowDragOwnWindows && IsOwnProcessTarget(num);
++			if (((lpdwProcessId != (uint)OwnPid) | flag) || flag2 || AllowOwnProcessAsTargetForTest)
+ 			{
+ 				break;
+ 			}
+@@ -22522,7 +23341,7 @@ internal static class WindowActions
+ 					return "取不到根窗口" + text;
+ 				}
+ 				Native.GetWindowThreadProcessId(num2, out var lpdwProcessId);
+-				if (lpdwProcessId != (uint)OwnPid)
++				if (lpdwProcessId != (uint)OwnPid || (AllowDragOwnWindows && IsOwnProcessTarget(num2)))
+ 				{
+ 					break;
+ 				}

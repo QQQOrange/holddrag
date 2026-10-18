@@ -1,0 +1,33 @@
+屏幕 = 3840x2160   被测 exe = D:/Workbuddy/2026-10-12-18-38-07/HoldDrag/work/fixed/bin/Debug/net10.0-windows7.0/win-x64/HoldDrag.exe
+已启动被测进程 PID=46760（--no-elevate 跳过 UAC）
+
+======== mode=simult  起始窗口=500,300
+TRACE mode=simult step=start win=500,300 cur=50,50
+   指针定在目标中心 850,530（窗口=500,300 700x460）
+TRACE mode=simult step=afterActivate(未移动) win=500,300 cur=850,530
+TRACE mode=simult step=move1 cur=875,540 期望=+25,+10 win=500,300 实际=+0,+0
+TRACE mode=simult step=move2 cur=900,550 期望=+50,+20 win=500,300 实际=+0,+0
+TRACE mode=simult step=move3 cur=925,560 期望=+75,+30 win=500,300 实际=+0,+0
+TRACE mode=simult step=move4 cur=950,570 期望=+100,+40 win=500,300 实际=+0,+0
+TRACE mode=simult step=move5 cur=975,580 期望=+125,+50 win=500,300 实际=+0,+0
+TRACE mode=simult step=move6 cur=1000,590 期望=+150,+60 win=500,300 实际=+0,+0
+RESULT mode=simult 起始=500,300 结束=650,360 总位移=+150,+60 (期望 +150,+60)
+
+======== mode=sequ  起始窗口=500,300
+TRACE mode=sequ step=start win=500,300 cur=1000,590
+   指针定在目标中心 850,530（窗口=500,300 700x460）
+TRACE mode=sequ step=afterActivate(未移动) win=500,300 cur=850,530
+TRACE mode=sequ step=move1 cur=875,540 期望=+25,+10 win=500,300 实际=+0,+0
+TRACE mode=sequ step=move2 cur=900,550 期望=+50,+20 win=500,300 实际=+0,+0
+TRACE mode=sequ step=move3 cur=925,560 期望=+75,+30 win=500,300 实际=+0,+0
+TRACE mode=sequ step=move4 cur=950,570 期望=+100,+40 win=500,300 实际=+0,+0
+TRACE mode=sequ step=move5 cur=975,580 期望=+125,+50 win=500,300 实际=+0,+0
+TRACE mode=sequ step=move6 cur=1000,590 期望=+150,+60 win=500,300 实际=+0,+0
+RESULT mode=sequ 起始=500,300 结束=650,360 总位移=+150,+60 (期望 +150,+60)
+
+======== mode=nomove  起始窗口=500,300
+TRACE mode=nomove step=start win=500,300 cur=1000,590
+   指针定在目标中心 850,530（窗口=500,300 700x460）
+TRACE mode=nomove step=afterActivate(未移动) win=500,300 cur=850,530
+RESULT mode=nomove 起始=500,300 结束=650,360 总位移=+150,+60 (期望 +150,+60)
+DONE

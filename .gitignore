@@ -3,6 +3,18 @@ Thumbs.db
 *.swp
 
 bin
+obj
 *.dll
 *.exe
 /Translation.ini
+
+# ---------------------------------------------------------------
+# holddrag/ 有意提交的二进制交付物
+# 上游 .gitignore 会忽略 bin/ 与 *.exe；下面几条把这些"确有交付价值"
+# 的产物重新纳入版本管理（交付产物、修复前基线、历史阶段构建）。
+# ---------------------------------------------------------------
+!holddrag/dist/*.exe
+!holddrag/dist/*.pdb
+!holddrag/reference/baseline/*.exe
+!holddrag/reference/baseline/*.pdb
+!holddrag/legacy/builds/*.exe

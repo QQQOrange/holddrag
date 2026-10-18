@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" />
+    </application>
+  </compatibility>
+
+  <!--
+    DPI 感知必须写在这里，不能只靠代码里的 Application.SetHighDpiMode。
+
+    原因（用户实测踩到的真实故障）：
+      本程序全程使用【物理像素坐标】——鼠标钩子 MSLLHOOKSTRUCT.pt 给的就是物理坐标。
+      如果进程是"DPI 不感知"的，系统会把传进去的坐标再按缩放比缩一次：
+        屏幕 3840x2160 @200%，进程却以为只有 1920x1080，
+        钩子给的 (2182,1440) 被系统当成 200% 的坐标再放大到 (4364,2880)，
+        直接跑到屏幕外面 → WindowFromPoint 返回空句柄
+        → FindTarget 返回 0 → 长按 Enter 后左键右键完全没反应。
+
+      代码里的 Application.SetHighDpiMode 受调用时机影响，可能被运行时提前锁定而静默失效
+      （日志里长期出现 "SetHighDpiMode(PerMonitorV2) => False" 就是这个现象）。
+      清单文件是进程启动时最先读取的，任何托管代码都改不掉它，所以必须以它为准。
+
+    dpiAware   = true/pm  给 Win8.1（按显示器感知 V1）
+    dpiAwareness = PerMonitorV2 给 Win10+（按显示器感知 V2，支持混合 DPI 多屏）
+  -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>

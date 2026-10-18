@@ -1,0 +1,12 @@
+log = C:\Users\64381\AppData\Local\Temp\hdp-form\holddrag.log
+form      client={Width=1472, Height=1280}  bounds={X=60,Y=60,Width=1498,Height=1351}
+preview   bounds={X=848,Y=184,Width=184,Height=240}  screen={X=1297,Y=1046,Width=184,Height=240}  visible=True
+gallery   bounds={X=36,Y=436,Width=748,Height=300}  screen={X=485,Y=1298,Width=748,Height=300}
+厚度控件  bounds={X=152,Y=752,Width=124,Height=38} min=1 max=8 enabled=True
+style = Glow
+thickness= 1  preview: ink=     0 changedVsPrev=      -   gallery: ink= 16675 changedVsPrev=      -   (num.Value=1)
+thickness= 3  preview: ink=     0 changedVsPrev=      0   gallery: ink= 21354 changedVsPrev=   6726   (num.Value=3)
+thickness= 4  preview: ink=     0 changedVsPrev=      0   gallery: ink= 21354 changedVsPrev=      0   (num.Value=4)
+thickness= 6  preview: ink=     0 changedVsPrev=      0   gallery: ink= 21354 changedVsPrev=      0   (num.Value=6)
+thickness= 8  preview: ink=     0 changedVsPrev=      0   gallery: ink= 21354 changedVsPrev=      0   (num.Value=8)
+shots -> C:\Users\64381\AppData\Local\Temp\hdp-form\shots

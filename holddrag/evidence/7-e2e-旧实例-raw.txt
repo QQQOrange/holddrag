@@ -1,0 +1,45 @@
+屏幕 = 3840x2160   被测 exe = -
+使用当前已在运行 HoldDrag 实例（不另起进程）
+
+======== mode=tap  起始窗口=500,300
+TRACE mode=tap step=start win=500,300 cur=2019,1044
+   指针定在目标中心 850,530（窗口=500,300 700x460）
+TRACE mode=tap step=afterActivate(未移动) win=500,300 cur=850,530
+TRACE mode=tap step=move1 cur=875,540 期望=+25,+10 win=500,300 实际=+0,+0
+TRACE mode=tap step=move2 cur=900,550 期望=+50,+20 win=500,300 实际=+0,+0
+TRACE mode=tap step=move3 cur=925,560 期望=+75,+30 win=500,300 实际=+0,+0
+TRACE mode=tap step=move4 cur=950,570 期望=+100,+40 win=500,300 实际=+0,+0
+TRACE mode=tap step=move5 cur=975,580 期望=+125,+50 win=500,300 实际=+0,+0
+TRACE mode=tap step=move6 cur=1000,590 期望=+150,+60 win=500,300 实际=+0,+0
+RESULT mode=tap 起始=500,300 结束=500,300 总位移=+0,+0 (点按一下左键：用户期望窗口被'抓住'并跟随鼠标)
+
+======== mode=taphold  起始窗口=500,300
+TRACE mode=taphold step=start win=500,300 cur=1000,590
+   指针定在目标中心 850,530（窗口=500,300 700x460）
+TRACE mode=taphold step=afterActivate(未移动) win=500,300 cur=850,530
+TRACE mode=taphold step=move1 cur=875,540 期望=+25,+10 win=525,310 实际=+25,+10
+TRACE mode=taphold step=move2 cur=900,550 期望=+50,+20 win=550,320 实际=+50,+20
+TRACE mode=taphold step=move3 cur=925,560 期望=+75,+30 win=575,330 实际=+75,+30
+TRACE mode=taphold step=move4 cur=950,570 期望=+100,+40 win=600,340 实际=+100,+40
+TRACE mode=taphold step=move5 cur=975,580 期望=+125,+50 win=625,350 实际=+125,+50
+TRACE mode=taphold step=move6 cur=1000,590 期望=+150,+60 win=650,360 实际=+150,+60
+RESULT mode=taphold 起始=500,300 结束=650,360 总位移=+150,+60 (期望 +150,+60)
+
+======== mode=fastmove  起始窗口=500,300
+TRACE mode=fastmove step=start win=500,300 cur=1000,590
+   指针定在目标中心 850,530（窗口=500,300 700x460）
+TRACE mode=fastmove step=afterActivate(未移动) win=500,300 cur=850,530
+TRACE mode=fastmove step=move1 cur=875,540 期望=+25,+10 win=500,300 实际=+0,+0
+TRACE mode=fastmove step=move2 cur=900,550 期望=+50,+20 win=500,300 实际=+0,+0
+TRACE mode=fastmove step=move3 cur=925,560 期望=+75,+30 win=500,300 实际=+0,+0
+TRACE mode=fastmove step=move4 cur=950,570 期望=+100,+40 win=500,300 实际=+0,+0
+TRACE mode=fastmove step=move5 cur=975,580 期望=+125,+50 win=500,300 实际=+0,+0
+TRACE mode=fastmove step=move6 cur=1000,590 期望=+150,+60 win=500,300 实际=+0,+0
+TRACE mode=fastmove step=move7 cur=1025,600 期望=+175,+70 win=500,300 实际=+0,+0
+TRACE mode=fastmove step=move8 cur=1050,610 期望=+200,+80 win=500,300 实际=+0,+0
+TRACE mode=fastmove step=move9 cur=1075,620 期望=+225,+90 win=500,300 实际=+0,+0
+TRACE mode=fastmove step=move10 cur=1100,630 期望=+250,+100 win=500,300 实际=+0,+0
+TRACE mode=fastmove step=move11 cur=1125,640 期望=+275,+110 win=500,300 实际=+0,+0
+TRACE mode=fastmove step=move12 cur=1150,650 期望=+300,+120 win=500,300 实际=+0,+0
+RESULT mode=fastmove 起始=500,300 结束=500,300 总位移=+0,+0 (左键全程按住，最末一步期望 +300,+120)
+DONE
