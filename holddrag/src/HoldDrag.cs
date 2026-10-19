@@ -59,7 +59,7 @@ internal static class AppInfo
 	public const string ReleasesApiUrl = "https://api.github.com/repos/QQQOrange/holddrag/releases/latest";
 
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.1.0";
+	public const string FallbackVersion = "1.2.0";
 
 	public static string Version
 	{
@@ -8192,9 +8192,15 @@ internal sealed class ActivationFrame : LayeredBitmapOverlay
 }
 internal static class Program
 {
-	private const string MutexName = "Local\\HoldDrag.SingleInstance.v1";
+	internal const string MutexName = "Local\\HoldDrag.SingleInstance.v1";
 
-	private const string ShowEventName = "Local\\HoldDrag.ShowSettings.v1";
+	internal const string ShowEventName = "Local\\HoldDrag.ShowSettings.v1";
+
+	/// <summary>自检用：互斥体名（冻结契约，改名会让新旧版本互不识别 → 又能开出两个）。</summary>
+	internal static string MutexNameForTest => MutexName;
+
+	/// <summary>自检用：唤起设置窗口的命名事件名。</summary>
+	internal static string ShowEventNameForTest => ShowEventName;
 
 	public const string ArgNoElevate = "--no-elevate";
 
@@ -8950,6 +8956,7 @@ internal static class SelfTest
 		Safe("T88 阈值内按下 + 激活前已在移动：激活后仍必须补起拖动（用户『外框出现却拖不动』复现）", TestAdoptAfterEarlyMove);
 		Safe("T89 关于页 GitHub 链接 + 自动更新开关 + 检查更新按钮（v1.1 更新功能）", TestUpdateFeatures);
 		Safe("T90 更新重启的单实例竞态：新版本必须等旧进程释放互斥体再接管", TestUpdateRestartSingleInstance);
+		Safe("T91 单实例：同一时间只能开一个（重复启动必须自己退出并唤起已有窗口）", TestSingleInstanceOnlyOne);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();
@@ -13676,7 +13683,7 @@ internal static class SelfTest
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
 		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
-		Check(SettingsForm.AppVersionForTest == "1.1.0", "★ 版本号已升到 1.1.0", "实际=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == "1.2.0", "★ 版本号已升到 1.2.0", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
 
@@ -13830,6 +13837,113 @@ internal static class SelfTest
 		Check(!string.IsNullOrEmpty(text), "★ 带 --updated-from 时判据成立 → 会等待旧进程释放互斥体");
 		string text2 = Program.ProbeArgValueForTest(new string[1] { "--smoke" }, argUpdatedFrom);
 		Check(string.IsNullOrEmpty(text2), "★ 普通启动（无 --updated-from）判据不成立 → 立即让位，不等待");
+	}
+
+	/// <summary>
+	/// T91 单实例：同一时间只能开一个（用户需求："同一时间只能开一个程序，不能够开好几个"）。
+	///
+	/// 这里做【真端到端】验证，而不是只读常量字符串：
+	///   ① 本进程先占住互斥体，扮演"已经在运行的那个实例"；
+	///   ② 真的再启动一个 HoldDrag.exe；
+	///   ③ 断言第二个实例在限时内【自己退出】（不会驻留成第二个进程）；
+	///   ④ 断言它通过命名事件【唤起了已有实例】（设置窗口会被弹出来）。
+	/// </summary>
+	private static void TestSingleInstanceOnlyOne()
+	{
+		// 契约冻结：名字一改，新旧版本就互不识别，于是又能同时开出两个。
+		Eq(Program.MutexNameForTest, "Local\\HoldDrag.SingleInstance.v1", "★ 单实例互斥体名已冻结（改名会导致新旧版本各开一个）");
+		Eq(Program.ShowEventNameForTest, "Local\\HoldDrag.ShowSettings.v1", "★ 唤起设置窗口的命名事件名已冻结");
+
+		bool createdNew;
+		Mutex mutex = null;
+		try
+		{
+			mutex = new Mutex(initiallyOwned: true, Program.MutexNameForTest, out createdNew);
+			if (!createdNew)
+			{
+				// 本机真的已经有一个实例在跑 —— 这恰恰说明互斥体在起作用。
+				Line("（环境限制）本机已有 HoldDrag 实例在运行，单实例端到端验证跳过。");
+				return;
+			}
+			Check(true, "★ 本进程占住了单实例互斥体（模拟「已有一个实例在运行」）");
+
+			// 必须先建好命名事件：第二个实例用 OpenExisting 打开它，建晚了它会打不开而静默退出。
+			using (EventWaitHandle showEvent = new EventWaitHandle(initialState: false, EventResetMode.AutoReset, Program.ShowEventNameForTest))
+			{
+				string exe = AppPaths.ExePath;
+				Check(File.Exists(exe), "找得到被测 exe 本体（否则无法做真实第二实例）", exe);
+				if (!File.Exists(exe))
+				{
+					return;
+				}
+				Process process = null;
+				try
+				{
+					// --no-elevate：避免第二个实例因为提权逻辑又拉起一个进程，干扰判定。
+					process = Process.Start(new ProcessStartInfo
+					{
+						FileName = exe,
+						Arguments = "--no-elevate",
+						UseShellExecute = false
+					});
+				}
+				catch (Exception ex)
+				{
+					Bad("启动第二个实例失败（宿主可能禁止创建进程）", ex.Message);
+					return;
+				}
+				if (process == null)
+				{
+					Bad("启动第二个实例失败", "Process.Start 返回 null");
+					return;
+				}
+				bool exited;
+				try
+				{
+					// 第二个实例应该立刻让位退出，正常在 1~3 秒内，给足 20 秒余量。
+					exited = process.WaitForExit(20000);
+					if (exited)
+					{
+						int exitCode = process.ExitCode;
+						Check(exitCode == 0, "第二个实例以退出码 0 正常让位", "实际 " + exitCode);
+					}
+				}
+				finally
+				{
+					if (!process.HasExited)
+					{
+						try
+						{
+							process.Kill();
+						}
+						catch (Exception ex2)
+						{
+							Log.Error(ex2);
+						}
+					}
+					process.Dispose();
+				}
+				Check(exited, "★★ 第二个实例【自己退出】了，不会同时驻留两个进程", exited ? null : "等了 20 秒仍在运行");
+				bool signaled = showEvent.WaitOne(3000);
+				Check(signaled, "★★ 第二个实例唤起了已有实例（命名事件被 Set → 会弹出设置窗口）");
+			}
+		}
+		catch (Exception ex)
+		{
+			Bad("（单实例端到端验证自身抛异常）", ex.Message);
+		}
+		finally
+		{
+			try
+			{
+				mutex?.ReleaseMutex();
+			}
+			catch (Exception ex3)
+			{
+				Log.Error(ex3);
+			}
+			mutex?.Dispose();
+		}
 	}
 
 	/// <summary>
