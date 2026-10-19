@@ -121,6 +121,7 @@ HoldDrag.exe --no-elevate
 | `--smoke` | 冒烟模式：正常启动，2 秒后开设置窗口，9 秒后自动退出 |
 | `--trace` | 手感类问题的取证开关：逐帧把光标 / 期望矩形 / 实际矩形 / 是否贴边写入日志 |
 | `--updated-from <path>` | 更新接续：新版启动后删除该路径指向的 `.old` 旧版本备份 |
+| `--checkupdate` | 只做一次更新检查并把结果打到控制台与日志（排查更新链路用） |
 | `--dragbench` / `--probe` / `--windowhost` / `--visualcheck` / `--previewtest` | 基准、渲染探针、外部窗口宿主、视觉核对、样式预览导出 |
 
 ---
@@ -169,8 +170,8 @@ dotnet publish holddrag/src/HoldDrag.csproj -c Release -o out `
 | 项 | 值 |
 | --- | --- |
 | 输出目录内容 | 仅 `HoldDrag.exe` + `HoldDrag.pdb` |
-| exe 字节数 | 667,815 |
-| exe SHA-256 | `9BC03390F59951F6852178DB74EEF4E28690C0CC748EA5EA9790F6AFDD7A7E3E` |
+| exe 字节数 | 668,839 |
+| exe SHA-256 | `CC58ED991DD11D905B184BFA2751386E5F5F6E695D639EC6B979A013F0194FB5` |
 | 文件版本 | `1.1.0.0` |
 
 ---

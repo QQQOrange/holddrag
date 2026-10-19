@@ -8206,6 +8206,9 @@ internal static class Program
 
 	public const string ArgStress = "--stress";
 
+	/// <summary>只做一次更新检查并把结果打到控制台/报告，便于排查更新链路（不启动托盘）。</summary>
+	public const string ArgCheckUpdate = "--checkupdate";
+
 	internal const string WindowHostTitle = "HoldDrag 外部测试窗口";
 
 	public static bool SmokeMode { get; private set; }
@@ -8286,6 +8289,12 @@ internal static class Program
 		catch (Exception ex11)
 		{
 			Log.Error(ex11);
+		}
+		// 排查用：只做一次更新检查，把结果写到控制台与日志，不进托盘。
+		if (HasArg(args, "--checkupdate"))
+		{
+			RunCheckUpdateOnly();
+			return;
 		}
 		if (flag2 | flag3 | flag4 | flag5)
 		{
@@ -8467,6 +8476,69 @@ internal static class Program
 		catch (Exception ex)
 		{
 			Log.Error(ex);
+		}
+	}
+
+	/// <summary>
+	/// `--checkupdate`：只跑一次更新检查并把结果打到控制台与日志。
+	/// 用途：用户反馈"检查更新没反应/总是失败"时，让他跑这一条就能拿到确切原因，
+	/// 不必去翻 GUI 状态。
+	/// </summary>
+	private static void RunCheckUpdateOnly()
+	{
+		Console.WriteLine("当前版本：" + AppInfo.Version);
+		Log.Info("--checkupdate：当前版本 " + AppInfo.Version);
+		string text = null;
+		try
+		{
+			// 附着到父控制台，--checkupdate 的输出才能被调用方捕获
+			SelfTest.AttachConsoleForTest(uint.MaxValue);
+		}
+		catch
+		{
+		}
+		try
+		{
+			string error;
+			bool upToDate;
+			UpdateInfo updateInfo = Updater.CheckLatest(out error, out upToDate);
+			if (updateInfo != null)
+			{
+				text = "发现新版本 " + updateInfo.Tag + "（当前 v" + AppInfo.Version + "）";
+				Console.WriteLine(text);
+				Console.WriteLine("下载地址：" + updateInfo.AssetUrl);
+				Console.WriteLine("发布页　：" + updateInfo.PageUrl);
+			}
+			else if (upToDate)
+			{
+				text = "已是最新版本（v" + AppInfo.Version + "）";
+				Console.WriteLine(text);
+			}
+			else
+			{
+				text = "检查失败：" + error;
+				Console.WriteLine(text);
+				Console.WriteLine("发布页　：" + AppInfo.ReleasesUrl);
+			}
+			Log.Info("--checkupdate 结果：" + text);
+		}
+		catch (Exception ex)
+		{
+			text = "检查抛异常：" + Updater.Describe(ex);
+			Console.WriteLine(text);
+			Log.Error(ex);
+		}
+		finally
+		{
+			try
+			{
+				Log.FlushAsyncQueue();
+				Log.FlushAndClose();
+			}
+			catch
+			{
+			}
+			StressTest.HardExit((text != null && text.StartsWith("检查失败")) ? 1 : 0);
 		}
 	}
 
@@ -8718,6 +8790,12 @@ internal static class SelfTest
 
 	[DllImport("kernel32.dll", SetLastError = true)]
 	private static extern bool AttachConsole(uint dwProcessId);
+
+	/// <summary>给 Program 的控制台诊断输出复用（AttachConsole 是 private 的）。</summary>
+	internal static void AttachConsoleForTest(uint processId)
+	{
+		AttachConsole(processId);
+	}
 
 	public static void Run(string dir)
 	{
@@ -23420,7 +23498,11 @@ internal sealed class TrayContext : ApplicationContext
 					UpdateInfo updateInfo = Updater.CheckLatest(out error, out upToDate);
 					if (updateInfo == null)
 					{
-						if (!upToDate && !string.IsNullOrEmpty(error))
+						if (upToDate)
+						{
+							Log.Info("启动自动检查更新：当前已是最新（v" + AppInfo.Version + "）");
+						}
+						else if (!string.IsNullOrEmpty(error))
 						{
 							Log.Info("启动自动检查更新未成功：" + error);
 						}

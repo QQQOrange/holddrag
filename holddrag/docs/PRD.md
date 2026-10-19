@@ -598,6 +598,7 @@ Windows 原生拖动窗口只有两条路：拖标题栏，或者先按 `Win + �
 | `--visualcheck` | 视觉核对快照，产物落临时目录 | 0 |
 | `--previewtest` | 导出全部外框样式预览 | —— |
 | `--updated-from <path>` | v1.1 新增；更新接续用。新版本启动后删除该路径指向的 `.old` 旧版本备份 | —— |
+| `--checkupdate` | v1.1 新增；只做一次更新检查并把结果打到控制台与日志（排查更新链路用） | 0 = 已最新或有新版；1 = 检查失败 |
 
 > `--selftest` / `--stress` / `--dragbench` / `--probe` / `--windowhost` 分支会绕过单实例互斥；
 > 真实链路验收前必须先让桌面上的旧实例退出，否则旧实例排在钩子链更前面会吞掉触发键。
@@ -636,8 +637,8 @@ Windows 原生拖动窗口只有两条路：拖标题栏，或者先按 `Win + �
 | --- | --- | --- |
 | A1 | 源码零错误编译 | `dotnet build -c Release` 返回 0，`0 个错误` |
 | A2 | 发布为单文件 | `dotnet publish -c Release -o <out> --self-contained false -p:PublishSingleFile=true` 后目标目录**只有 1 个 exe + 1 个 pdb** |
-| A3 | 产物字节数 | exe = **667,815 字节**（v1.1.0 交付态） |
-| A4 | 产物哈希 | SHA-256 = `9BC03390F59951F6852178DB74EEF4E28690C0CC748EA5EA9790F6AFDD7A7E3E` |
+| A3 | 产物字节数 | exe = **668,839 字节**（v1.1.0 交付态） |
+| A4 | 产物哈希 | SHA-256 = `CC58ED991DD11D905B184BFA2751386E5F5F6E695D639EC6B979A013F0194FB5` |
 | A5 | 交付副本一致 | 仓库内 `holddrag/dist/HoldDrag.exe` 与从 Release 下载回的附件哈希一致 |
 | A6 | 源文件形态 | `holddrag/src/HoldDrag.cs` 纯 CRLF（无裸 LF）；行数随版本增长，不做冻结 |
 | A7 | 版本号一致性 | `AssemblyFileVersion` = `1.1.0.0`、`AssemblyInformationalVersion` = `1.1.0`、`AppInfo.FallbackVersion` = `1.1.0`、可执行文件 `FileVersion` = `1.1.0.0` 四者一致 |
