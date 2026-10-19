@@ -116,7 +116,7 @@ HoldDrag.exe --no-elevate
 | --- | --- |
 | （无） | 正常启动，需要时自动提权重启 |
 | `--no-elevate` | 不提权启动，便于排查问题 |
-| `--selftest` | 跑全部自检（T01–T89），结果写入 `%APPDATA%\HoldDrag\selftest.txt`；全通过返回 0 |
+| `--selftest` | 跑全部自检（T01–T90），结果写入 `%APPDATA%\HoldDrag\selftest.txt`；全通过返回 0 |
 | `--stress` | 泄漏压力测试：40 次预热 + 320 次完整拖动，采样 GDI / USER / 句柄 / 私有内存 |
 | `--smoke` | 冒烟模式：正常启动，2 秒后开设置窗口，9 秒后自动退出 |
 | `--trace` | 手感类问题的取证开关：逐帧把光标 / 期望矩形 / 实际矩形 / 是否贴边写入日志 |
@@ -170,8 +170,8 @@ dotnet publish holddrag/src/HoldDrag.csproj -c Release -o out `
 | 项 | 值 |
 | --- | --- |
 | 输出目录内容 | 仅 `HoldDrag.exe` + `HoldDrag.pdb` |
-| exe 字节数 | 668,839 |
-| exe SHA-256 | `CC58ED991DD11D905B184BFA2751386E5F5F6E695D639EC6B979A013F0194FB5` |
+| exe 字节数 | 669,863 |
+| exe SHA-256 | `FAAF80F0E6874FE70EF8C68803BC9EB7D34361F8C9E052B45A565CE1460E3847` |
 | 文件版本 | `1.1.0.0` |
 
 ---

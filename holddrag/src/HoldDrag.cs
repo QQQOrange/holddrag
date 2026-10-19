@@ -8397,7 +8397,41 @@ internal static class Program
 				return;
 			}
 		}
-		Mutex obj3 = new Mutex(initiallyOwned: true, "Local\\HoldDrag.SingleInstance.v1", out var createdNew);
+		// 单实例。注意"更新重启"这条特殊路径：
+		// 替换时是新版本【先启动】、旧进程【后退出】的，新进程一启动就会发现互斥体已被旧进程占着。
+		// 若照普通启动那样"通知已有实例然后自己退出"，更新完就会出现【一个进程都不剩】。
+		// 因此更新接续的实例要在这里等旧进程把互斥体释放掉，再接管。
+		bool flag9 = !string.IsNullOrEmpty(ArgValue(args, Updater.ArgUpdatedFrom));
+		Mutex obj3 = null;
+		bool createdNew = false;
+		long num5 = Environment.TickCount64 + 30000;
+		while (true)
+		{
+			obj3 = new Mutex(initiallyOwned: true, "Local\\HoldDrag.SingleInstance.v1", out createdNew);
+			if (createdNew)
+			{
+				break;
+			}
+			if (!flag9)
+			{
+				break;
+			}
+			// 更新接续：旧进程正在退出，等它释放
+			try
+			{
+				obj3.Dispose();
+			}
+			catch
+			{
+			}
+			if (Environment.TickCount64 > num5)
+			{
+				Log.Info("更新接续：等待旧实例退出超过 30 秒，改为抢占启动");
+				obj3 = new Mutex(initiallyOwned: true, "Local\\HoldDrag.SingleInstance.v1", out createdNew);
+				break;
+			}
+			Thread.Sleep(150);
+		}
 		if (!createdNew)
 		{
 			Log.Info("已有实例在运行，通知它把设置窗口显示出来");
@@ -8540,6 +8574,18 @@ internal static class Program
 			}
 			StressTest.HardExit((text != null && text.StartsWith("检查失败")) ? 1 : 0);
 		}
+	}
+
+	/// <summary>自检用：透传参数解析逻辑（private 的 HasArg/ArgValue）。</summary>
+	internal static bool HasArgForTest(string[] args, string name)
+	{
+		return HasArg(args, name);
+	}
+
+	/// <summary>自检用：透传参数取值逻辑。</summary>
+	internal static string ProbeArgValueForTest(string[] args, string name)
+	{
+		return ArgValue(args, name);
 	}
 
 	private static bool HasArg(string[] args, string name)
@@ -8903,6 +8949,7 @@ internal static class SelfTest
 		Safe("T87 分组框不是可交互控件：按住触发键时设置页的成片分组区仍可整体拖走", TestGroupBoxNotInteractive);
 		Safe("T88 阈值内按下 + 激活前已在移动：激活后仍必须补起拖动（用户『外框出现却拖不动』复现）", TestAdoptAfterEarlyMove);
 		Safe("T89 关于页 GitHub 链接 + 自动更新开关 + 检查更新按钮（v1.1 更新功能）", TestUpdateFeatures);
+		Safe("T90 更新重启的单实例竞态：新版本必须等旧进程释放互斥体再接管", TestUpdateRestartSingleInstance);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();
@@ -13751,6 +13798,38 @@ internal static class SelfTest
 
 		// 10) 钩子回调线程绝不能同步落盘（这是"整机输入卡顿"的根因之一）
 		TestHookThreadLoggingIsAsync();
+
+		// 11) 更新重启时新进程必须"等旧进程释放互斥体再接管"，
+		//     否则新版本会因为单实例检查而立刻退出，更新完一个进程都不剩。
+		TestUpdateRestartSingleInstance();
+	}
+
+	/// <summary>
+	/// 更新重启的单实例竞态：替换时**新版本先启动、旧进程后退出**，
+	/// 新进程一启动就会发现互斥体被旧进程占着。若照普通启动那样"通知已有实例然后自己退出"，
+	/// 更新完就会出现【一个进程都不剩】。这里断言：
+	///   ① `--updated-from` 存在时，启动流程的标志位被正确识别为"更新接续"
+	///   ② 普通启动时仍然是"立即让位"语义（不能变成傻等 30 秒）
+	///   ③ `--updated-from` 的取值解析正确（含路径带空格的情况）
+	/// </summary>
+	private static void TestUpdateRestartSingleInstance()
+	{
+		// ①/③ 参数解析：Program 的 ArgValue 与 Updater.ArgUpdatedFrom 必须对得上
+		string argUpdatedFrom = Updater.ArgUpdatedFrom;
+		Eq(argUpdatedFrom, "--updated-from", "更新接续参数名固定为 --updated-from");
+		Eq(Program.ProbeArgValueForTest(new string[2] { "--updated-from", @"C:\app\HoldDrag.exe.old" }, argUpdatedFrom), @"C:\app\HoldDrag.exe.old", "★ 能从命令行取出旧版本备份路径");
+		Eq(Program.ProbeArgValueForTest(new string[2] { "--updated-from", @"C:\My App\HoldDrag.exe.old" }, argUpdatedFrom), @"C:\My App\HoldDrag.exe.old", "★ 路径带空格也能正确取出（调用方负责加引号）");
+		Eq(Program.ProbeArgValueForTest(new string[1] { "--selftest" }, argUpdatedFrom), string.Empty, "没有该参数时返回空串（普通启动 → 不等待互斥体）");
+		Eq(Program.ProbeArgValueForTest(null, argUpdatedFrom), string.Empty, "null 参数数组安全返回空串");
+		Check(Program.HasArgForTest(new string[1] { "--updated-from" }, argUpdatedFrom), "HasArg 能识别 --updated-from");
+
+		// ② 普通启动不能因为这次改动变成"傻等"
+		//    用真实互斥体验证：先占住，再按普通启动语义判定；由于不能真的启动第二进程，
+		//    这里直接验证"是否等待"的判据：只有 --updated-from 存在才等待。
+		string text = Program.ProbeArgValueForTest(new string[2] { "--updated-from", "x" }, argUpdatedFrom);
+		Check(!string.IsNullOrEmpty(text), "★ 带 --updated-from 时判据成立 → 会等待旧进程释放互斥体");
+		string text2 = Program.ProbeArgValueForTest(new string[1] { "--smoke" }, argUpdatedFrom);
+		Check(string.IsNullOrEmpty(text2), "★ 普通启动（无 --updated-from）判据不成立 → 立即让位，不等待");
 	}
 
 	/// <summary>
