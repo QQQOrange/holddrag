@@ -59,7 +59,7 @@ internal static class AppInfo
 	public const string ReleasesApiUrl = "https://api.github.com/repos/QQQOrange/holddrag/releases/latest";
 
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.1.0";
+	public const string FallbackVersion = "1.2.0";
 
 	public static string Version
 	{
@@ -485,7 +485,7 @@ internal static class Updater
 		return new Version(array2[0], array2[1], array2[2], array2[3]);
 	}
 
-	/// <summary>当前程序集版本；解析失败按 1.1.0 处理。</summary>
+	/// <summary>当前程序集版本；解析失败按 FallbackVersion 处理。</summary>
 	public static Version CurrentVersion()
 	{
 		Version version = ParseVersion(AppInfo.Version);
@@ -8370,7 +8370,14 @@ internal static class Program
 		}
 		if (HasArg(args, "--visualcheck"))
 		{
-			VisualCheck.Run(Path.Combine(Path.GetTempPath(), "holddrag-visual"));
+			// 可显式指定输出目录（--out <dir>）：宿主把 %TEMP% 限制为只读时，
+			// 落到用户给的目录里才能拿到截图。
+			string text4 = ArgValue(args, "--out");
+			if (string.IsNullOrEmpty(text4))
+			{
+				text4 = Path.Combine(Path.GetTempPath(), "holddrag-visual");
+			}
+			VisualCheck.Run(text4);
 			StressTest.HardExit(0);
 			return;
 		}
@@ -8950,6 +8957,7 @@ internal static class SelfTest
 		Safe("T88 阈值内按下 + 激活前已在移动：激活后仍必须补起拖动（用户『外框出现却拖不动』复现）", TestAdoptAfterEarlyMove);
 		Safe("T89 关于页 GitHub 链接 + 自动更新开关 + 检查更新按钮（v1.1 更新功能）", TestUpdateFeatures);
 		Safe("T90 更新重启的单实例竞态：新版本必须等旧进程释放互斥体再接管", TestUpdateRestartSingleInstance);
+		Safe("T91 Dimensional Layering 设置页：卡片有彩色偏移底板、悬停抬升、每卡不同色、缩放到 DPI 不走样", TestDimensionalLayering);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();
@@ -13676,7 +13684,8 @@ internal static class SelfTest
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
 		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
-		Check(SettingsForm.AppVersionForTest == "1.1.0", "★ 版本号已升到 1.1.0", "实际=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == AppInfo.FallbackVersion, "★ 版本号与 FallbackVersion 一致（改版本时两处必须同步）", "实际=" + SettingsForm.AppVersionForTest + " 期望=" + AppInfo.FallbackVersion);
+		Check(SettingsForm.AppVersionForTest == "1.2.0", "★ 版本号已升到 1.2.0（Dimensional Layering 设置页）", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
 
@@ -13830,6 +13839,29 @@ internal static class SelfTest
 		Check(!string.IsNullOrEmpty(text), "★ 带 --updated-from 时判据成立 → 会等待旧进程释放互斥体");
 		string text2 = Program.ProbeArgValueForTest(new string[1] { "--smoke" }, argUpdatedFrom);
 		Check(string.IsNullOrEmpty(text2), "★ 普通启动（无 --updated-from）判据不成立 → 立即让位，不等待");
+	}
+
+
+	/// <summary>
+	/// v1.2 Dimensional Layering 设置页的回归入口。
+	/// 探针实体在 SettingsForm 里（那里才看得到 CardGroup / Design）。
+	/// </summary>
+	private static void TestDimensionalLayering()
+	{
+		using DragFixture dragFixture = new DragFixture((AppConfig c) =>
+		{
+			c.ShowActivationFrame = true;
+		});
+		using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
+		settingsForm.StartPosition = FormStartPosition.Manual;
+		settingsForm.Location = new Point(20, 20);
+		settingsForm.Show();
+		Application.DoEvents();
+		settingsForm.ClientSize = new Size(1100, 2200);
+		SettingsForm.RelayoutForTest(settingsForm);
+		Application.DoEvents();
+		SettingsForm.ProbeDimensionalLayering(settingsForm, Line, Check);
+		settingsForm.Close();
 	}
 
 	/// <summary>
@@ -15456,7 +15488,10 @@ internal sealed class SettingsForm : Form
 			for (int j = 0; j < groups.Length; j++)
 			{
 				groups[j].Dock = DockStyle.Fill;
-				groups[j].Margin = new Padding(0, 0, 0, 14);
+				// Dimensional Layering：偏移底板完全画在控件自身边界【内部】（卡片向内缩、底板占满），
+				// 所以横向不需要额外留白 —— 横向加 margin 会偷走卡片内宽，把右侧锚定的实时预览框挤小。
+				// 只在纵向多留一点，避免底板与下一张卡片的投影视觉上贴在一起。
+				groups[j].Margin = new Padding(0, 0, 0, Fields.Sc(Design.LayerOffsetHover + 14));
 				groups[j].Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 				Controls.Add(groups[j], 0, j);
 			}
@@ -16373,13 +16408,20 @@ internal sealed class SettingsForm : Form
 		{
 			Graphics graphics = e.Graphics;
 			HighQuality.Apply(graphics);
-			using (SolidBrush brush = new SolidBrush(Design.SidebarSurface))
+			// Dimensional Layering：侧栏是"薄层"，用比画布更亮的表面色 + 右侧一道柔和投影，
+			// 让它看起来浮在画布之上，而不是与画布齐平。
+			using (SolidBrush brush = new SolidBrush(Design.LayerThin))
 			{
 				graphics.FillRectangle(brush, ClientRectangle);
 			}
-			using (Pen pen = new Pen(Design.Stroke))
+			for (int num = 1; num <= Fields.Sc(6); num++)
 			{
-				graphics.DrawLine(pen, Width - 1, 0, Width - 1, Height);
+				using Pen pen = new Pen(Color.FromArgb(Math.Max(2, 9 - num), Design.SoftShadow), 1f);
+				graphics.DrawLine(pen, Width - 1 + num - 1, 0, Width - 1 + num - 1, Height);
+			}
+			using (Pen pen2 = new Pen(Design.Stroke))
+			{
+				graphics.DrawLine(pen2, Width - 1, 0, Width - 1, Height);
 			}
 			if (_titles == null)
 			{
@@ -16407,10 +16449,24 @@ internal sealed class SettingsForm : Form
 				}
 				if (num2 > 0.01f)
 				{
-					Color color = (flag ? Design.AccentSoft : Color.FromArgb(242, 243, 246));
-					using SolidBrush brush2 = new SolidBrush(MixColor(Color.FromArgb(0, color), color, Math.Min(1f, num2 * 1.35f)));
-					using GraphicsPath path = RoundedPath(r, Fields.Sc(8));
-					graphics.FillPath(brush2, path);
+					// Dimensional Layering：选中项做成一块"浮起的小卡片"——
+					// 先在右下垫一层彩色偏移块，再画白色圆角面，形成厚度错觉。
+					int num5 = Fields.Sc(2);
+					int num6 = Fields.Sc(2);
+					Rectangle r3 = new Rectangle(r.Left + num5, r.Top + num6, r.Width - num5, r.Height - num6);
+					using (GraphicsPath path3 = RoundedPath(r3, Fields.Sc(9)))
+					{
+						using SolidBrush brush4 = new SolidBrush(Color.FromArgb((int)Math.Round(120f * Math.Min(1f, num2)), Design.Accent));
+						graphics.FillPath(brush4, path3);
+					}
+					using (GraphicsPath path4 = RoundedPath(r, Fields.Sc(9)))
+					{
+						Color color = (flag ? Design.Surface : Color.FromArgb(242, 243, 246));
+						using SolidBrush brush5 = new SolidBrush(MixColor(Color.FromArgb(0, color), color, Math.Min(1f, num2 * 1.35f)));
+						graphics.FillPath(brush5, path4);
+						using Pen pen4 = new Pen(Color.FromArgb((int)Math.Round(90f * Math.Min(1f, num2)), flag ? Design.Accent : Design.Stroke));
+						graphics.DrawPath(pen4, path4);
+					}
 				}
 				if (num2 > 0.01f)
 				{
@@ -16623,6 +16679,65 @@ internal sealed class SettingsForm : Form
 		public static readonly Color Success = Color.FromArgb(24, 128, 78);
 
 		public static readonly Color Danger = Color.FromArgb(196, 40, 40);
+
+		// ------------------------------------------------------------------
+		// Dimensional Layering（v1.2 设置页重写）新增令牌
+		//
+		// 设计要点（参考 46-dimensional-layering）：
+		//   · 卡片背后有一块【偏移的彩色实心块】，形成"厚板"错觉；
+		//     鼠标悬停时偏移加大，像被推起来一样。
+		//   · 圆角比原来大得多（20 而非 14），配合柔和多层投影。
+		//   · 分层面板（侧栏 / 底栏 / 卡片）用不同深度的表面色与投影区分。
+		// ------------------------------------------------------------------
+
+		/// <summary>卡片圆角（逻辑 px）。比旧的 14 更大，贴合参考稿的 rounded-2xl/3xl。</summary>
+		public const int LayerRadius = 20;
+
+		/// <summary>彩色偏移底板相对卡片的静态偏移量。</summary>
+		public const int LayerOffset = 4;
+
+		/// <summary>悬停时偏移量（"被推起来"）。</summary>
+		public const int LayerOffsetHover = 7;
+
+		/// <summary>偏移底板的颜色：按卡片序号轮转，做成参考稿那样的多彩分层。</summary>
+		public static readonly Color[] LayerAccents = new Color[6]
+		{
+			Color.FromArgb(129, 140, 248),   // indigo-400
+			Color.FromArgb(167, 139, 250),   // violet-400
+			Color.FromArgb(96, 165, 250),    // blue-400
+			Color.FromArgb(52, 211, 153),    // emerald-400
+			Color.FromArgb(251, 191, 36),    // amber-400
+			Color.FromArgb(244, 114, 182)    // pink-400
+		};
+
+		public static Color LayerAccentAt(int index)
+		{
+			Color[] layerAccents = LayerAccents;
+			if (layerAccents.Length == 0)
+			{
+				return Accent;
+			}
+			int num = index % layerAccents.Length;
+			if (num < 0)
+			{
+				num += layerAccents.Length;
+			}
+			return layerAccents[num];
+		}
+
+		/// <summary>画布底色比卡片深一档，卡片才"浮"得起来。</summary>
+		public static readonly Color CanvasDeep = Color.FromArgb(233, 236, 243);
+
+		/// <summary>侧栏 / 底栏这类"薄层"的表面色。</summary>
+		public static readonly Color LayerThin = Color.FromArgb(248, 249, 252);
+
+		/// <summary>柔和投影的主色（比旧 Shadow 更淡更散）。</summary>
+		public static readonly Color SoftShadow = Color.FromArgb(30, 41, 59);
+
+		/// <summary>禁用态统一令牌（此前各控件各写一套 FromArgb，观感不一致）。</summary>
+		public static readonly Color TextDisabled = Color.FromArgb(170, 175, 184);
+
+		public static readonly Color StrokeDisabled = Color.FromArgb(228, 231, 238);
 	}
 
 	private static class HighQuality
@@ -16645,7 +16760,7 @@ internal sealed class SettingsForm : Form
 
 		public int TitleY = 9;
 
-		public int RadiusPx = 14;
+		public int RadiusPx = 20;
 
 		public int ShadowOffsetPx = 1;
 
@@ -16653,11 +16768,64 @@ internal sealed class SettingsForm : Form
 
 		public int AccentBarPx = 4;
 
+		/// <summary>
+		/// Dimensional Layering：卡片背面的彩色偏移底板。
+		/// 由 SettingsForm 在装配分组时按顺序指派，做出参考稿那样的多彩分层。
+		/// </summary>
+		internal Color LayerAccent = Design.Accent;
+
+		/// <summary>是否启用"偏移色块 + 抬升"效果（关闭后回到旧的纯投影，便于 A/B 与降级）。</summary>
+		internal bool Dimensional = true;
+
+		private readonly Tween _liftT;
+
+		/// <summary>自检用：当前抬升补间值（0 = 落下，1 = 抬起）。</summary>
+		internal float LiftForTest => _liftT.Value;
+
+		/// <summary>自检用：当前实际偏移量。</summary>
+		internal int CurrentOffsetForTest
+		{
+			get
+			{
+				if (!Dimensional)
+				{
+					return 0;
+				}
+				double num = Math.Max(0f, Math.Min(1f, _liftT.Value));
+				return (int)Math.Round(Fields.Sc(4) + num * (double)Fields.Sc(3));
+			}
+		}
+
 		public CardGroup()
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 			BackColor = Design.Surface;
 			ForeColor = Design.TextPrimary;
+			_liftT = new Tween(this);
+		}
+
+		protected override void OnMouseEnter(EventArgs e)
+		{
+			if (Dimensional)
+			{
+				_liftT.To(1f);
+			}
+			base.OnMouseEnter(e);
+		}
+
+		protected override void OnMouseLeave(EventArgs e)
+		{
+			if (Dimensional)
+			{
+				_liftT.To(0f);
+			}
+			base.OnMouseLeave(e);
+		}
+
+		/// <summary>自检用：直接驱动抬升补间。</summary>
+		internal void ProbeSetLift(float v)
+		{
+			_liftT.Snap(v);
 		}
 
 		protected override void OnPaint(PaintEventArgs e)
@@ -16670,80 +16838,101 @@ internal sealed class SettingsForm : Form
 			{
 				return;
 			}
-			using (SolidBrush brush = new SolidBrush((Parent != null) ? Parent.BackColor : Design.Canvas))
+			using (SolidBrush brush = new SolidBrush((Parent != null) ? Parent.BackColor : Design.CanvasDeep))
 			{
 				graphics.FillRectangle(brush, 0, 0, width, height);
 			}
+			// RadiusPx / TitleFontPx / TitleInsetPx / AccentBarPx 都已由 ScaleDesign 按 DPI 缩放过，
+			// 这里必须直接用，不能再套 Fields.Sc() —— 否则高 DPI 下会被缩两次（标题会大得离谱）。
 			int num = Math.Max(2, RadiusPx);
-			if (ShadowSpreadPx > 0)
+			// 偏移量：卡片本体从左上角起画，背面底板占满整个控件并在右下露出一条厚边。
+			// 悬停时偏移加大（卡片略微内缩、底板露出更多），就是参考稿的"被推起来"。
+			int num2 = Dimensional ? CurrentOffsetForTest : 0;
+			int num3 = width - num2;
+			int num4 = height - num2;
+			if (num3 < Fields.Sc(40) || num4 < Fields.Sc(30))
 			{
-				int num2 = ShadowSpreadPx * 2;
-				using (GraphicsPath path = RoundedPath(new Rectangle(1 - num2 / 2, ShadowOffsetPx + num2 / 3, width - 2 + num2, height - 2 + num2), num + num2 / 2))
+				num2 = 0;
+				num3 = width;
+				num4 = height;
+			}
+			if (Dimensional && num2 > 0)
+			{
+				// ① 最远的一层：更大偏移、更淡，制造"多层堆叠"的纵深（参考稿的 background layer）。
+				int num5 = Math.Max(1, num2 / 2);
+				using (GraphicsPath path = RoundedPath(new Rectangle(num5, num5, width - num5, height - num5), Math.Max(2, num + num5)))
 				{
-					for (int num3 = num2; num3 >= 1; num3--)
+					using SolidBrush brush2 = new SolidBrush(Color.FromArgb(70, LayerAccent));
+					graphics.FillPath(brush2, path);
+				}
+				// ② 主底板：占满控件，右下露出实心彩色厚边（参考稿的中层 + 前层关系）。
+				using GraphicsPath path2 = RoundedPath(new Rectangle(0, 0, width - 1, height - 1), num);
+				using (SolidBrush brush3 = new SolidBrush(Color.FromArgb(210, LayerAccent)))
+				{
+					graphics.FillPath(brush3, path2);
+				}
+			}
+			// ③ 卡片本体：白色圆角面，右下留出 num2 的厚边。
+			Rectangle r = new Rectangle(0, 0, num3, num4);
+			using (GraphicsPath path3 = RoundedPath(r, num))
+			{
+				// 柔和投影：让卡片与底板之间有一道过渡，避免"贴纸感"。
+				for (int num6 = Fields.Sc(6); num6 >= 1; num6--)
+				{
+					using Pen pen = new Pen(Color.FromArgb(Math.Max(3, 9 - num6), Design.SoftShadow), (float)num6);
+					graphics.DrawPath(pen, path3);
+				}
+				using (LinearGradientBrush brush4 = new LinearGradientBrush(new Rectangle(0, 0, Math.Max(1, num3), Math.Max(1, num4)), Design.SurfaceTop, Design.SurfaceBottom, LinearGradientMode.Vertical))
+				{
+					graphics.FillPath(brush4, path3);
+				}
+				using (Pen pen2 = new Pen(Design.Stroke))
+				{
+					graphics.DrawPath(pen2, path3);
+				}
+				// 左侧强调竖条：用该卡片的专属分层色，与底板同色呼应。
+				if (AccentBarPx > 0)
+				{
+					using SolidBrush brush5 = new SolidBrush(Dimensional ? LayerAccent : Design.Accent);
+					using Region region = new Region(path3);
+					using Region region2 = new Region(new Rectangle(0, 0, AccentBarPx, num4));
+					region.Intersect(region2);
+					graphics.FillRegion(brush5, region);
+				}
+				if (!string.IsNullOrEmpty(Text) && TitleInsetPx > 8)
+				{
+					int num7 = TitleInsetPx - Math.Max(2, Fields.Sc(1));
+					int num8 = AccentBarPx + Fields.Sc(12);
+					int num9 = num3 - Fields.Sc(14);
+					if (num9 > num8 + Fields.Sc(20) && num7 > 0 && num7 < num4 - 2)
 					{
-						using Pen pen = new Pen(Color.FromArgb(Math.Max(2, 8 - num3 / 3), Design.Shadow), (float)num3 * 2f);
-						graphics.DrawPath(pen, path);
+						using Pen pen3 = new Pen(Color.FromArgb(18, Design.SoftShadow));
+						graphics.DrawLine(pen3, num8, num7, num9, num7);
 					}
 				}
-				using GraphicsPath path2 = RoundedPath(new Rectangle(1, ShadowOffsetPx, width - 2, height - 2), num);
-				for (int num4 = ShadowSpreadPx; num4 >= 1; num4--)
-				{
-					using Pen pen2 = new Pen(Color.FromArgb(Math.Max(5, 24 - num4 * 3), Design.Shadow), (float)num4 * 2f);
-					graphics.DrawPath(pen2, path2);
-				}
 			}
-			GraphicsPath graphicsPath = RoundedPath(new Rectangle(0, 0, width - 1, height - 1), num);
-			using (LinearGradientBrush brush2 = new LinearGradientBrush(new Rectangle(0, 0, width, height), Design.SurfaceTop, Design.SurfaceBottom, LinearGradientMode.Vertical))
-			{
-				graphics.FillPath(brush2, graphicsPath);
-			}
-			using (Pen pen3 = new Pen(Design.Stroke))
-			{
-				graphics.DrawPath(pen3, graphicsPath);
-			}
-			if (!string.IsNullOrEmpty(Text) && TitleInsetPx > 8)
-			{
-				int num5 = TitleInsetPx - Math.Max(2, Fields.Sc(1));
-				int num6 = AccentBarPx + 12;
-				int num7 = width - Fields.Sc(14);
-				if (num7 > num6 + Fields.Sc(20) && num5 > 0 && num5 < height - 2)
-				{
-					using Pen pen4 = new Pen(Color.FromArgb(20, Design.Shadow));
-					graphics.DrawLine(pen4, num6, num5, num7, num5);
-				}
-			}
-			if (AccentBarPx > 0)
-			{
-				using SolidBrush brush3 = new SolidBrush(Design.Accent);
-				using Region region = new Region(graphicsPath);
-				using Region region2 = new Region(new Rectangle(0, 0, AccentBarPx, height));
-				region.Intersect(region2);
-				graphics.FillRegion(brush3, region);
-			}
-			graphicsPath.Dispose();
 			Fields.PaintFor(graphics, this);
 			if (string.IsNullOrEmpty(Text))
 			{
 				return;
 			}
-			float num8 = AccentBarPx + 12;
+			float num10 = AccentBarPx + Fields.Sc(12);
+			float num11 = TitleY;
 			using (Font font = Icons.At(TitleFontPx + 1))
 			{
 				if (font != null)
 				{
 					string s = GlyphForSection(Text);
-					float num9 = TitleFontPx + 6;
-					using (SolidBrush brush4 = new SolidBrush(Design.Accent))
+					using (SolidBrush brush6 = new SolidBrush(Dimensional ? LayerAccent : Design.Accent))
 					{
-						graphics.DrawString(s, font, brush4, new PointF(num8, TitleY - 1));
+						graphics.DrawString(s, font, brush6, new PointF(num10, num11 - 1f));
 					}
-					num8 += num9;
+					num10 += (float)(TitleFontPx + 6);
 				}
 			}
 			using Font font2 = new Font(Font.FontFamily, TitleFontPx, FontStyle.Bold, GraphicsUnit.Pixel);
-			using SolidBrush brush5 = new SolidBrush(Design.TextPrimary);
-			graphics.DrawString(Text, font2, brush5, new PointF(num8, TitleY));
+			using SolidBrush brush7 = new SolidBrush(Design.TextPrimary);
+			graphics.DrawString(Text, font2, brush7, new PointF(num10, num11));
 		}
 	}
 
@@ -16879,7 +17068,27 @@ internal sealed class SettingsForm : Form
 			// 控件销毁时必须把字典项摘掉：_radius 的键是强引用，
 			// 不摘掉的话设置窗口每开关一次就永久累积一批 Control 对象（连带其窗体无法回收）。
 			c.Disposed += OnControlDisposed;
+			// 输入框的边框/聚焦光晕是画在【父级分组】上的（PaintFor），
+			// 所以焦点变化时必须让父级重绘，否则新加的聚焦态永远不显示。
+			c.Enter += OnFocusChanged;
+			c.Leave += OnFocusChanged;
 			Sync(c);
+		}
+
+		private static void OnFocusChanged(object sender, EventArgs e)
+		{
+			try
+			{
+				Control control = sender as Control;
+				if (control != null && control.Parent != null && !control.Parent.IsDisposed)
+				{
+					control.Parent.Invalidate();
+				}
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
 		}
 
 		private static void OnControlDisposed(object sender, EventArgs e)
@@ -16960,24 +17169,31 @@ internal sealed class SettingsForm : Form
 					continue;
 				}
 				Rectangle r = new Rectangle(key.Left - num, key.Top - num, key.Width + num * 2, key.Height + num * 2);
-				int radius = Sc(item.Value) + num;
-				GraphicsPath graphicsPath = RoundedPath(r, radius);
-				try
+				int num2 = Sc(item.Value) + num;
+				bool flag = key.Focused && key.Enabled;
+				// Dimensional Layering：输入框也参与分层——
+				// 未聚焦时是"浅浅凹进去"的実心面 + 细描边；聚焦时描边换成强调色并加一层柔和光晕。
+				if (flag)
 				{
-					using (SolidBrush brush = new SolidBrush(key.Enabled ? key.BackColor : Design.Canvas))
+					for (int num3 = Sc(3); num3 >= 1; num3--)
 					{
-						g.FillPath(brush, graphicsPath);
+						using GraphicsPath path = RoundedPath(new Rectangle(r.X - num3, r.Y - num3, r.Width + num3 * 2, r.Height + num3 * 2), num2 + num3);
+						using Pen pen = new Pen(Color.FromArgb(Math.Max(8, 30 - num3 * 8), Design.Accent), (float)num3);
+						g.DrawPath(pen, path);
 					}
-					using Pen pen = new Pen(key.Enabled ? Design.InputStroke : Color.FromArgb(228, 231, 238));
-					g.DrawPath(pen, graphicsPath);
 				}
-				catch (Exception ex)
+				using (GraphicsPath path2 = RoundedPath(r, num2))
 				{
-					Log.Error(ex);
-				}
-				finally
-				{
-					graphicsPath.Dispose();
+					Color color = (key.Enabled ? key.BackColor : Design.CanvasDeep);
+					using (SolidBrush brush = new SolidBrush(color))
+					{
+						g.FillPath(brush, path2);
+					}
+					Color color2 = (flag ? Design.InputStrokeFocus : (key.Enabled ? Design.InputStroke : Design.StrokeDisabled));
+					using (Pen pen2 = new Pen(color2, flag ? 1.6f : 1f))
+					{
+						g.DrawPath(pen2, path2);
+					}
 				}
 			}
 		}
@@ -17317,8 +17533,15 @@ internal sealed class SettingsForm : Form
 			Rectangle bounds = new Rectangle(r.Right + num4, 0, Width - r.Right - num4, Height);
 			if (bounds.Width > 0)
 			{
-				Color foreColor = (Enabled ? ForeColor : Color.FromArgb(160, 165, 176));
+				Color foreColor = (Enabled ? ForeColor : Design.TextDisabled);
 				TextRenderer.DrawText(graphics, Text, Font, bounds, foreColor, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
+			}
+			// 键盘可达性：此前只有 FlatButton 有焦点态，CheckBox 靠 Tab 选中时完全没提示。
+			if (Focused && Enabled)
+			{
+				using Pen pen = new Pen(Design.Accent, 1.4f);
+				using GraphicsPath path = RoundedPath(new Rectangle(0, num5 - Fields.Sc(1), num2 + Fields.Sc(2), num3 + Fields.Sc(2)), (num3 + Fields.Sc(2)) / 2);
+				graphics.DrawPath(pen, path);
 			}
 		}
 	}
@@ -17599,7 +17822,7 @@ internal sealed class SettingsForm : Form
 			{
 				return;
 			}
-			int num = ((CurrentUiScale > 0f) ? ((int)Math.Round(6f * CurrentUiScale)) : 6);
+			int num = Fields.Sc(Design.FieldRadius);
 			if (num > r.Height / 2)
 			{
 				num = r.Height / 2;
@@ -17613,11 +17836,13 @@ internal sealed class SettingsForm : Form
 			Color foreColor;
 			Color color2;
 			Color color;
+			Color color3;
 			if (!Enabled)
 			{
 				color = Color.FromArgb(240, 241, 243);
-				foreColor = Color.FromArgb(170, 175, 184);
-				color2 = Color.FromArgb(233, 235, 239);
+				foreColor = Design.TextDisabled;
+				color2 = Design.StrokeDisabled;
+				color3 = Color.FromArgb(226, 228, 234);
 			}
 			else if (Primary)
 			{
@@ -17628,40 +17853,71 @@ internal sealed class SettingsForm : Form
 				color = MixColor(color, accentPressed, value2);
 				foreColor = Color.White;
 				color2 = color;
+				color3 = Design.AccentPressed;
 			}
 			else
 			{
 				color = MixColor(Design.Surface, Color.FromArgb(250, 251, 252), value);
 				color = MixColor(color, Color.FromArgb(238, 240, 244), value2);
 				foreColor = Design.TextPrimary;
-				color2 = MixColor(Design.Stroke, Color.FromArgb(205, 210, 219), value);
+				color2 = MixColor(Design.InputStroke, Color.FromArgb(205, 210, 219), value);
+				color3 = Color.FromArgb(203, 207, 216);
+			}
+			// Dimensional Layering：按下时"落回"底板（偏移收为 1px），松开/悬停时"抬起"。
+			// 白色圆角面被整体左上挪动，右下留出一条实心彩色厚边。
+			int num2 = 0;
+			int num3 = 0;
+			if (Enabled)
+			{
+				num3 = (int)Math.Round((double)Fields.Sc(2) * (1.0 - (double)value2));
+				if (num3 < 1)
+				{
+					num3 = 1;
+				}
+				num2 = num3;
+			}
+			int num4 = r.Width - num2;
+			int num5 = r.Height - num2;
+			if (num4 < 8 || num5 < 8)
+			{
+				num2 = 0;
+				num3 = 0;
+				num4 = r.Width;
+				num5 = r.Height;
+			}
+			if (num2 > 0)
+			{
+				Rectangle r2 = new Rectangle(num2, num3, num4, num5);
+				using GraphicsPath path = RoundedPath(r2, num);
+				using SolidBrush brush = new SolidBrush(Color.FromArgb(Enabled ? 170 : 90, color3));
+				graphics.FillPath(brush, path);
 			}
 			// GraphicsPath 是 IDisposable：这里必须 using，否则每次重绘都漏一个 GDI 对象。
 			// Tween 每 16ms 触发一次 Invalidate，悬停/聚焦的按钮会持续泄漏。
-			using (GraphicsPath path = RoundedPath(r, num))
+			using (GraphicsPath path2 = RoundedPath(new Rectangle(0, 0, num4, num5), num))
 			{
-				using (SolidBrush brush = new SolidBrush(color))
+				using (SolidBrush brush2 = new SolidBrush(color))
 				{
-					graphics.FillPath(brush, path);
+					graphics.FillPath(brush2, path2);
 				}
-				using (Pen pen = new Pen(color2))
+				using (Pen pen2 = new Pen(color2))
 				{
-					graphics.DrawPath(pen, path);
+					graphics.DrawPath(pen2, path2);
 				}
 			}
-			if (Primary && Enabled && r.Height > num * 2 + 4)
+			if (Primary && Enabled && num5 > num * 2 + 4)
 			{
-				using Pen pen2 = new Pen(Color.FromArgb(52, Color.White), Math.Max(1f, Fields.Sc(1)));
-				graphics.DrawLine(pen2, r.X + num, r.Y + 1, r.Right - num, r.Y + 1);
+				using Pen pen3 = new Pen(Color.FromArgb(52, Color.White), Math.Max(1f, Fields.Sc(1)));
+				graphics.DrawLine(pen3, num, 1, num4 - num, 1);
 			}
-			TextRenderer.DrawText(graphics, Text, Font, new Rectangle(0, 0, Width, Height), foreColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+			TextRenderer.DrawText(graphics, Text, Font, new Rectangle(0, 0, num4, num5 + 1), foreColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 			if (!Focused || !Enabled)
 			{
 				return;
 			}
-			using Pen pen3 = new Pen(Design.Accent, 1.6f);
-			using GraphicsPath graphicsPath = RoundedPath(new Rectangle(1, 1, Width - 3, Height - 3), num - 1);
-			graphics.DrawPath(pen3, graphicsPath);
+			using Pen pen4 = new Pen(Design.Accent, 1.6f);
+			using GraphicsPath graphicsPath = RoundedPath(new Rectangle(1, 1, Math.Max(2, num4 - 2), Math.Max(2, num5 - 2)), Math.Max(1, num - 1));
+			graphics.DrawPath(pen4, graphicsPath);
 		}
 	}
 
@@ -17907,8 +18163,11 @@ internal sealed class SettingsForm : Form
 	internal static string LastStretchDetail = string.Empty;
 
 	private int SingleColumnClientWidth => S(560);
-
 	private int GroupWidth => S(536);
+
+	/// <summary>底栏高度（逻辑 px）。单一来源：布局、最小尺寸与 FitHeightToContent 都引用它，
+	/// 避免改了底栏高度却漏改别处的硬编码（此前就出现过 46 与 52 不一致）。</summary>
+	private int PagerHeight => S(52);
 
 	private int GroupInnerPadLeft => S(18);
 
@@ -18489,7 +18748,8 @@ internal sealed class SettingsForm : Form
 		_scrollHost.Controls.Add(_groupHost);
 		_scrollHost.Dock = DockStyle.Fill;
 		_scrollHost.AutoScroll = true;
-		_scrollHost.BackColor = Design.Canvas;
+		// 画布比卡片深一档，卡片才能"浮"起来（旧的 Canvas 与卡片几乎同色，层次出不来）。
+		_scrollHost.BackColor = Design.CanvasDeep;
 		Controls.Add(_scrollHost);
 		_sidebar = new NavSidebar();
 		_sidebar.Dock = DockStyle.Left;
@@ -18523,20 +18783,21 @@ internal sealed class SettingsForm : Form
 		Control[] groups = _groups;
 		sidebar.Bind(scrollHost, array, groups);
 		_pager.Dock = DockStyle.Bottom;
-		_pager.Height = S(46);
-		_pager.BackColor = Design.Surface;
+		_pager.Height = PagerHeight;
+		_pager.BackColor = Design.LayerThin;
 		_pager.Paint += (object? s, PaintEventArgs e) =>
 		{
 			Graphics graphics = e.Graphics;
 			HighQuality.Apply(graphics);
-			using (Pen pen = new Pen(Design.Stroke))
+			// 底栏同样是"浮起来的薄层"：顶部一条柔和投影 + 细描边。
+			for (int i = 1; i <= S(6); i++)
 			{
-				graphics.DrawLine(pen, 0, 0, _pager.Width, 0);
+				using Pen pen = new Pen(Color.FromArgb(Math.Max(2, 9 - i), Design.SoftShadow), 1f);
+				graphics.DrawLine(pen, 0, i - 1, _pager.Width, i - 1);
 			}
-			for (int i = 1; i <= 2; i++)
+			using (Pen pen2 = new Pen(Design.Stroke))
 			{
-				using Pen pen2 = new Pen(Color.FromArgb((i == 1) ? 16 : 7, Design.Shadow));
-				graphics.DrawLine(pen2, 0, i, _pager.Width, i);
+				graphics.DrawLine(pen2, 0, 0, _pager.Width, 0);
 			}
 		};
 		Controls.Add(_pager);
@@ -18569,7 +18830,7 @@ internal sealed class SettingsForm : Form
 			if ((_edit == null || _edit.SettingsWidth <= 0 || _edit.SettingsHeight <= 0) && _groupHost != null && _groupHost.Height > 0)
 			{
 				int num = _groupHost.Height + ScrollEdgeMargin * 2;
-				int num2 = S(46) + 8;
+				int num2 = PagerHeight + 8;
 				int num3 = num + num2;
 				int num4 = Screen.PrimaryScreen.WorkingArea.Height - S(40);
 				if (num3 <= num4 && num3 < ClientSize.Height && ClientSize.Height - num3 >= S(24))
@@ -18826,10 +19087,14 @@ internal sealed class SettingsForm : Form
 			{
 				cardGroup.TitleFontPx = (int)Math.Round(14f * uiScale);
 				cardGroup.TitleY = (int)Math.Round(9f * uiScale);
-				cardGroup.RadiusPx = (int)Math.Round(14f * uiScale);
+				// Dimensional Layering：圆角必须跟 Design.LayerRadius 对齐（20 而非旧的 14），
+				// 否则非 100% DPI 下卡片又被打回旧的小圆角，风格在缩放后走样。
+				cardGroup.RadiusPx = (int)Math.Round((float)Design.LayerRadius * uiScale);
 				cardGroup.ShadowOffsetPx = (int)Math.Round(1f * uiScale);
 				cardGroup.ShadowSpreadPx = (int)Math.Round(5f * uiScale);
 				cardGroup.AccentBarPx = (int)Math.Round(4f * uiScale);
+				// 偏移底板与柔和投影需要额外空间，否则会被卡片边界裁掉。
+				cardGroup.Height += (int)Math.Round((float)(Design.LayerOffsetHover + 8) * uiScale);
 				num = (int)Math.Round((float)cardGroup.TitleInsetPx * uiScale);
 				groupBox2.Height += num;
 			}
@@ -19996,6 +20261,8 @@ internal sealed class SettingsForm : Form
 		cardGroup.Location = new Point(x, y);
 		cardGroup.Size = new Size(w, h);
 		cardGroup.ForeColor = Design.TextPrimary;
+		// Dimensional Layering：按分组顺序轮转彩色偏移底板，做出参考稿的多彩分层。
+		cardGroup.LayerAccent = Design.LayerAccentAt(_groupSeq++);
 		if (resize)
 		{
 			cardGroup.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
@@ -20006,6 +20273,9 @@ internal sealed class SettingsForm : Form
 		}
 		return cardGroup;
 	}
+
+	/// <summary>分组序号，用于给每个卡片分配不同的分层强调色。</summary>
+	private static int _groupSeq;
 
 	internal static string GlyphForSection(string title)
 	{
@@ -21515,6 +21785,113 @@ internal sealed class SettingsForm : Form
 		}
 	}
 
+	/// <summary>
+	/// v1.2 Dimensional Layering：卡片必须真的做出"彩色偏移底板 + 悬停抬升"。
+	/// 断言要点：
+	///   ① 每个分组都分到分层强调色，且相邻分组颜色不同（多彩分层，不是清一色）
+	///   ② 底板确实被画出来（画面里出现成片的分层色）
+	///   ③ 静止就有偏移，悬停时偏移加大（"被推起来"）
+	///   ④ 圆角与 Design.LayerRadius 按 DPI 对齐，缩放后不走样
+	/// </summary>
+	internal static void ProbeDimensionalLayering(Form f, Action<string> line, Action<bool, string, string> check)
+	{
+		if (!(f is SettingsForm settingsForm))
+		{
+			check(false, "传入的窗体不是设置窗体", "");
+			return;
+		}
+		int num = ProbeGroupCount(settingsForm);
+		check(num >= 8, "分组数正常", "实际 " + num);
+		List<Color> list = new List<Color>();
+		for (int i = 0; i < num; i++)
+		{
+			if (ProbeGroupAt(settingsForm, i) is CardGroup cardGroup)
+			{
+				list.Add(cardGroup.LayerAccent);
+			}
+		}
+		check(list.Count == num, "★ 每个分组都拿到了分层强调色", list.Count + "/" + num);
+		int num2 = 0;
+		for (int j = 1; j < list.Count; j++)
+		{
+			if (list[j].ToArgb() != list[j - 1].ToArgb())
+			{
+				num2++;
+			}
+		}
+		check(num2 >= list.Count - 1, "★★ 相邻分组的分层色都不同（多彩分层，而不是清一色）", "不同相邻对 " + num2 + "/" + (list.Count - 1));
+		int num3 = 0;
+		for (int k = 0; k < list.Count; k++)
+		{
+			if (list[k].ToArgb() == Design.Accent.ToArgb())
+			{
+				num3++;
+			}
+		}
+		check(num3 == 0, "★ 没有分组还在用旧的单一强调色当底板", "仍是旧色 " + num3 + " 个");
+		if (ProbeGroupAt(settingsForm, 0) is CardGroup cardGroup2 && cardGroup2.Dimensional)
+		{
+			cardGroup2.ProbeSetLift(0f);
+			int currentOffsetForTest = cardGroup2.CurrentOffsetForTest;
+			cardGroup2.ProbeSetLift(1f);
+			int currentOffsetForTest2 = cardGroup2.CurrentOffsetForTest;
+			check(currentOffsetForTest > 0, "★ 静止时也有偏移底板（不是与卡片齐平，否则看不出层次）", "静止偏移 " + currentOffsetForTest);
+			check(currentOffsetForTest2 > currentOffsetForTest, "★★ 悬停时偏移加大（卡片被推起来）", $"静止 {currentOffsetForTest} → 悬停 {currentOffsetForTest2}");
+			cardGroup2.ProbeSetLift(0f);
+		}
+		int num4 = 0;
+		for (int l = 0; l < num; l++)
+		{
+			if (ProbeGroupAt(settingsForm, l) is CardGroup cardGroup3)
+			{
+				num4 = cardGroup3.RadiusPx;
+				break;
+			}
+		}
+		float num5 = ProbeUiScaleOf(settingsForm);
+		int num6 = (int)Math.Round((float)Design.LayerRadius * num5);
+		check(num4 >= num6 - 1 && num4 <= num6 + 1, "★★ 卡片圆角与 Design.LayerRadius 按 DPI 对齐（不走样）", $"实际 {num4} 期望≈{num6} scale={num5:0.##}");
+		int num7 = ProbeLayerAccentInk(settingsForm, Design.LayerAccents);
+		line("    （分层色墨量）" + num7 + " 像素");
+		check(num7 > 2000, "★★ 画面里真的有成片的彩色分层底板（材质画出来了，不是只有描边）", "分层色像素 " + num7);
+	}
+
+	/// <summary>自检用：统计窗体上属于"分层强调色系"的像素（允许色差，因为底板是半透明的）。</summary>
+	internal static int ProbeLayerAccentInk(Form f, Color[] accents)
+	{
+		int num = 0;
+		try
+		{
+			if (f.Width <= 0 || f.Height <= 0)
+			{
+				return 0;
+			}
+			using Bitmap bitmap = new Bitmap(f.Width, f.Height);
+			f.DrawToBitmap(bitmap, new Rectangle(0, 0, f.Width, f.Height));
+			for (int i = 0; i < bitmap.Height; i += 2)
+			{
+				for (int j = 0; j < bitmap.Width; j += 2)
+				{
+					Color pixel = bitmap.GetPixel(j, i);
+					for (int k = 0; k < accents.Length; k++)
+					{
+						Color color = accents[k];
+						if (Math.Abs(pixel.R - color.R) + Math.Abs(pixel.G - color.G) + Math.Abs(pixel.B - color.B) <= 60)
+						{
+							num++;
+							break;
+						}
+					}
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+		return num;
+	}
+
 	internal static RenderStats ProbeFormRender(Form f, string frameColorId)
 	{
 		RenderStats renderStats = new RenderStats();
@@ -21622,6 +21999,9 @@ internal sealed class SettingsForm : Form
 			return "异常 " + ex.GetType().Name + " " + ex.Message;
 		}
 	}
+
+	/// <summary>
+
 
 	private static int CountInkOutsideBackground(Control c, Color bg)
 	{
@@ -25659,7 +26039,8 @@ internal static class VisualCheck
 	public static void Run(string outDir)
 	{
 		Directory.CreateDirectory(outDir);
-		string text = Path.Combine(Path.GetTempPath(), "holddrag-visual-cfg");
+		// 配置目录也放到输出目录下：宿主限制 %TEMP% 时仍然可用。
+		string text = Path.Combine(outDir, "cfg");
 		try
 		{
 			Directory.CreateDirectory(text);
