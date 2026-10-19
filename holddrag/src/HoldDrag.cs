@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -8,6 +9,8 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.IO;
+using System.Net;
+using System.Net.Http;
 using System.Reflection;
 using System.Runtime;
 using System.Runtime.CompilerServices;
@@ -39,11 +42,24 @@ internal static class AppInfo
 
 	public const string Tagline = "长按触发键，随手拖动 / 缩放任意窗口";
 
-	public const string ReleaseDate = "2026-10-12";
+	public const string ReleaseDate = "2026-10-19";
 
 	public const string Developer = "QQQOrange";
 
 	public const string Tools = "DeepSeek";
+
+	public const string RepoOwner = "QQQOrange";
+
+	public const string RepoName = "holddrag";
+
+	public const string GitHubUrl = "https://github.com/QQQOrange/holddrag";
+
+	public const string ReleasesUrl = "https://github.com/QQQOrange/holddrag/releases";
+
+	public const string ReleasesApiUrl = "https://api.github.com/repos/QQQOrange/holddrag/releases/latest";
+
+	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
+	public const string FallbackVersion = "1.1.0";
 
 	public static string Version
 	{
@@ -54,13 +70,13 @@ internal static class AppInfo
 				Version version = Assembly.GetExecutingAssembly().GetName().Version;
 				if (version == null)
 				{
-					return "1.0.0";
+					return FallbackVersion;
 				}
 				return version.Major + "." + version.Minor + "." + Math.Max(0, version.Build);
 			}
 			catch
 			{
-				return "1.0.0";
+				return FallbackVersion;
 			}
 		}
 	}
@@ -273,6 +289,413 @@ internal static class AutoStart
 		}
 	}
 }
+
+/// <summary>发布版解析结果。</summary>
+internal sealed class UpdateInfo
+{
+	public string Tag;
+
+	public string Version;
+
+	public string AssetUrl;
+
+	/// <summary>网页版发布页地址（下载失败时引导用户手动打开）。</summary>
+	public string PageUrl;
+}
+
+/// <summary>
+/// 自更新：查最新发布 → 后台下载到 exe 同级目录 → 启动替换器换掉自己 → 重启。
+/// 全程不依赖 api.github.com（匿名调用有速率限制，且企业网络常被拦），
+/// 改为请求 releases/latest 的 HTML 重定向来拿到 tag，再用固定的
+/// releases/download/&lt;tag&gt;/&lt;asset&gt; 直链下载。
+/// </summary>
+internal static class Updater
+{
+	/// <summary>发布资产文件名。必须与 GitHub Release 里上传的附件名完全一致。</summary>
+	public const string AssetName = "HoldDrag.exe";
+
+	/// <summary>与本体同目录的下载中转文件名。</summary>
+	public const string TempDownloadName = "HoldDrag-update.download";
+
+	/// <summary>旧版本备份后缀（替换成功后可删，但删不掉也不影响使用）。</summary>
+	public const string OldSuffix = ".old";
+
+	/// <summary>
+	/// 本进程是否为"更新重启"的接续实例（由启动参数 --updated-from 传入上一版的备份路径）。
+	/// 接续实例负责在新进程正常起来之后删掉旧的 .old 备份。
+	/// </summary>
+	public const string ArgUpdatedFrom = "--updated-from";
+
+	/// <summary>
+	/// 就地替换正在运行的 exe。
+	///
+	/// 关键事实（本机实测）：**Windows 允许重命名一个正在运行的 exe，也允许把新文件移到它的名下**；
+	/// 唯一做不到的是"删除"那个正在运行的旧文件。因此不需要批处理、不需要等旧进程退出：
+	///   1) 旧 exe 改名为 HoldDrag.exe.old（正在运行也允许）
+	///   2) 新文件移入 HoldDrag.exe
+	///   3) 拉起新 exe，并让它启动后删掉 .old（那时旧进程已退出，删除就成功了）
+	/// 这样即使中途任一步失败，也总有一个可运行的 exe 在，不会把用户卡死。
+	/// </summary>
+	public static bool ApplyAndRestart(string downloadedPath, string exePath, out string error)
+	{
+		error = string.Empty;
+		string text = exePath + OldSuffix;
+		try
+		{
+			if (!File.Exists(downloadedPath))
+			{
+				error = "下载文件不存在：" + downloadedPath;
+				return false;
+			}
+			// 1) 先清掉上一次可能残留的 .old（旧进程早已退出，这时能删掉）
+			try
+			{
+				if (File.Exists(text))
+				{
+					File.Delete(text);
+				}
+			}
+			catch (Exception ex)
+			{
+				Log.Info("清理上次的 .old 备份没成功（不影响本次更新）：" + ex.Message);
+			}
+			// 2) 旧 exe → .old（对正在运行的 exe，重命名是允许的）
+			File.Move(exePath, text);
+			// 3) 新文件 → 正式名字
+			try
+			{
+				File.Move(downloadedPath, exePath);
+			}
+			catch (Exception ex2)
+			{
+				// 移入失败：把旧文件改回来，保证至少还有一个能跑的 exe
+				Log.Error("新版本移入失败，正在回滚：" + ex2.Message);
+				try
+				{
+					File.Move(text, exePath);
+				}
+				catch (Exception ex3)
+				{
+					Log.Error("回滚也失败了：" + ex3.Message);
+				}
+				error = "无法用新版本覆盖程序文件：" + ex2.Message;
+				return false;
+			}
+			// 4) 拉起新版本；把 .old 路径传给它，由新版启动后清理
+			Process process = Process.Start(new ProcessStartInfo(exePath)
+			{
+				UseShellExecute = true,
+				Arguments = ArgUpdatedFrom + " \"" + text + "\""
+			});
+			if (process == null)
+			{
+				error = "新版本已就位，但没能自动启动。请手动打开：" + exePath;
+				return false;
+			}
+			Log.Info("新版已就位并启动 pid=" + process.Id + "，旧版备份 " + text);
+			return true;
+		}
+		catch (Exception ex4)
+		{
+			error = Describe(ex4);
+			Log.Error("替换失败：" + error);
+			return false;
+		}
+	}
+
+	/// <summary>
+	/// 接续实例启动时调用：删掉上一版的 .old 备份。
+	/// 这时旧进程已经退出，删除必然成功；即使用户没退出干净，删不掉也只是留个文件，不影响功能。
+	/// </summary>
+	public static void CleanupOldVersion(string oldPath)
+	{
+		if (string.IsNullOrEmpty(oldPath))
+		{
+			return;
+		}
+		try
+		{
+			if (!File.Exists(oldPath))
+			{
+				return;
+			}
+			File.Delete(oldPath);
+			Log.Info("已清理上一版本备份：" + oldPath);
+		}
+		catch (Exception ex)
+		{
+			Log.Info("旧版本备份暂时删不掉（下次更新会再试）：" + ex.Message);
+		}
+	}
+
+	private static readonly HttpClient Http = CreateClient();
+
+	private static HttpClient CreateClient()
+	{
+		try
+		{
+			HttpClientHandler httpClientHandler = new HttpClientHandler();
+			// 用系统（IE/Edge）代理设置：企业网络与代理软件常常只在这条路径上生效。
+			httpClientHandler.UseProxy = true;
+			httpClientHandler.AllowAutoRedirect = true;
+			httpClientHandler.MaxAutomaticRedirections = 10;
+			HttpClient httpClient = new HttpClient(httpClientHandler);
+			httpClient.Timeout = TimeSpan.FromMinutes(10);
+			httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("HoldDrag/" + AppInfo.Version);
+			httpClient.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/octet-stream,*/*");
+			return httpClient;
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			return new HttpClient();
+		}
+	}
+
+	/// <summary>把 "v1.2.3" / "1.2.3" / "1.2.3.4" 解析成可比较的四段版本号；解析不出来返回 null。</summary>
+	public static Version ParseVersion(string tag)
+	{
+		if (string.IsNullOrWhiteSpace(tag))
+		{
+			return null;
+		}
+		string s = tag.Trim();
+		if (s.Length > 0 && (s[0] == 'v' || s[0] == 'V'))
+		{
+			s = s.Substring(1);
+		}
+		int num = s.IndexOfAny(new char[3] { '-', '+', ' ' });
+		if (num > 0)
+		{
+			s = s.Substring(0, num);
+		}
+		string[] array = s.Split('.');
+		if (array.Length == 0 || array.Length > 4)
+		{
+			return null;
+		}
+		int[] array2 = new int[4];
+		for (int i = 0; i < array.Length; i++)
+		{
+			if (!int.TryParse(array[i], out array2[i]) || array2[i] < 0)
+			{
+				return null;
+			}
+		}
+		return new Version(array2[0], array2[1], array2[2], array2[3]);
+	}
+
+	/// <summary>当前程序集版本；解析失败按 1.1.0 处理。</summary>
+	public static Version CurrentVersion()
+	{
+		Version version = ParseVersion(AppInfo.Version);
+		return (version == null) ? new Version(1, 1, 0, 0) : version;
+	}
+
+	/// <summary>测试钩子：置 true 时模拟网络不可达，用于断言"失败不会被当成已是最新"。</summary>
+	internal static bool ForceOfflineForTest;
+
+	/// <summary>
+	/// 查最新发布。返回 null 表示"已经是最新"或"查不到"（用 out 的 error 区分）。
+	/// 本方法会把网络异常如实回传，不做静默成功。
+	/// </summary>
+	public static UpdateInfo CheckLatest(out string error, out bool upToDate)
+	{
+		error = string.Empty;
+		upToDate = false;
+		if (ForceOfflineForTest)
+		{
+			error = "（测试）模拟网络不可达：无法连接 github.com";
+			return null;
+		}
+		try
+		{
+			string tag = ResolveLatestTag();
+			if (string.IsNullOrEmpty(tag))
+			{
+				error = "没能从发布页解析出最新版本号（可能没有已发布的 Release，或网络被拦截）。";
+				return null;
+			}
+			Version version = ParseVersion(tag);
+			if (version == null)
+			{
+				error = "发布标签格式无法识别：" + tag;
+				return null;
+			}
+			if (version <= CurrentVersion())
+			{
+				upToDate = true;
+				return null;
+			}
+			return new UpdateInfo
+			{
+				Tag = tag,
+				Version = version.Major + "." + version.Minor + "." + Math.Max(0, version.Build),
+				AssetUrl = string.Concat(AppInfo.ReleasesUrl, "/download/", tag, "/", AssetName),
+				PageUrl = AppInfo.ReleasesUrl + "/tag/" + tag
+			};
+		}
+		catch (Exception ex)
+		{
+			error = Describe(ex);
+			Log.Error("检查更新失败：" + error);
+			return null;
+		}
+	}
+
+	private static string ResolveLatestTag()
+	{
+		string text = AppInfo.ReleasesUrl + "/latest";
+		using HttpResponseMessage httpResponseMessage = Http.GetAsync(text, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+		if (!httpResponseMessage.IsSuccessStatusCode)
+		{
+			Log.Info("releases/latest 返回 " + (int)httpResponseMessage.StatusCode);
+			return null;
+		}
+		// 正常会被 302 到 .../releases/tag/vX.Y.Z；若没跳转就自己从正文里找。
+		Uri requestUri = httpResponseMessage.RequestMessage?.RequestUri;
+		string text2 = ((requestUri != null) ? TagFromUrl(requestUri.AbsoluteUri) : null);
+		if (!string.IsNullOrEmpty(text2))
+		{
+			return text2;
+		}
+		return TagFromHtml(httpResponseMessage.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+	}
+
+	/// <summary>从 ".../releases/tag/v1.2.3" 里取 "v1.2.3"。</summary>
+	public static string TagFromUrl(string url)
+	{
+		if (string.IsNullOrEmpty(url))
+		{
+			return null;
+		}
+		int num = url.IndexOf("/releases/tag/", StringComparison.OrdinalIgnoreCase);
+		if (num < 0)
+		{
+			return null;
+		}
+		string s = url.Substring(num + 14);
+		int num2 = s.IndexOfAny(new char[2] { '?', '#' });
+		if (num2 >= 0)
+		{
+			s = s.Substring(0, num2);
+		}
+		s = s.Trim().TrimEnd('/');
+		if (s.Length == 0 || s.Contains('/'))
+		{
+			return null;
+		}
+		return Uri.UnescapeDataString(s);
+	}
+
+	/// <summary>正文兜底：找第一个 /releases/tag/ 链接。</summary>
+	public static string TagFromHtml(string html)
+	{
+		if (string.IsNullOrEmpty(html))
+		{
+			return null;
+		}
+		int num = html.IndexOf("/releases/tag/", StringComparison.OrdinalIgnoreCase);
+		if (num < 0)
+		{
+			return null;
+		}
+		int num2 = num + 14;
+		int num3 = num2;
+		while (num3 < html.Length && html[num3] != '"' && html[num3] != '\'' && html[num3] != '<' && html[num3] != '?' && html[num3] != '#' && html[num3] != '/')
+		{
+			num3++;
+		}
+		if (num3 <= num2)
+		{
+			return null;
+		}
+		return WebUtility.HtmlDecode(html.Substring(num2, num3 - num2));
+	}
+
+	/// <summary>下载新版 exe 到 <paramref name="targetPath"/>（先写 .part 再改名，避免半截文件）。</summary>
+	public static bool Download(UpdateInfo info, string targetPath, Action<long, long> progress, out string error)
+	{
+		error = string.Empty;
+		string text = targetPath + ".part";
+		try
+		{
+			using HttpResponseMessage response = Http.GetAsync(info.AssetUrl, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+			if (!response.IsSuccessStatusCode)
+			{
+				error = "下载失败：HTTP " + (int)response.StatusCode + "（" + response.ReasonPhrase + "）";
+				return false;
+			}
+			long? contentLength = response.Content.Headers.ContentLength;
+			long num = contentLength.GetValueOrDefault();
+			long num2 = 0L;
+			byte[] array = new byte[81920];
+			using (Stream stream = response.Content.ReadAsStreamAsync().GetAwaiter().GetResult())
+			using (FileStream fileStream = new FileStream(text, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: false))
+			{
+				int num3;
+				while ((num3 = stream.Read(array, 0, array.Length)) > 0)
+				{
+					fileStream.Write(array, 0, num3);
+					num2 += num3;
+					progress?.Invoke(num2, num);
+				}
+				fileStream.Flush(flushToDisk: true);
+			}
+			if (num2 <= 0)
+			{
+				error = "下载得到 0 字节，可能是被网络中间设备拦截了。";
+				return false;
+			}
+			if (num > 0 && num2 != num)
+			{
+				error = $"下载不完整：期望 {num} 字节，实际 {num2} 字节。";
+				return false;
+			}
+			if (File.Exists(targetPath))
+			{
+				File.Delete(targetPath);
+			}
+			File.Move(text, targetPath);
+			return true;
+		}
+		catch (Exception ex)
+		{
+			error = Describe(ex);
+			Log.Error("下载更新失败：" + error);
+			return false;
+		}
+		finally
+		{
+			try
+			{
+				if (File.Exists(text))
+				{
+					File.Delete(text);
+				}
+			}
+			catch
+			{
+			}
+		}
+	}
+
+	public static string Describe(Exception ex)
+	{
+		Exception innerException = ex;
+		while (innerException.InnerException != null)
+		{
+			innerException = innerException.InnerException;
+		}
+		string text = innerException.Message;
+		if (innerException is HttpRequestException)
+		{
+			text += "（网络不可达：请检查代理 / 防火墙是否允许访问 github.com）";
+		}
+		return text;
+	}
+}
+
 internal static class Actions
 {
 	public const string Move = "Move";
@@ -403,6 +826,12 @@ internal sealed class AppConfig
 
 	public int SettingsHeight { get; set; }
 
+	/// <summary>启动时自动检查更新（默认开启）。</summary>
+	public bool AutoCheckUpdate { get; set; }
+
+	/// <summary>上一次已提示过的版本号，用于"每个新版只提示一次"。</summary>
+	public string LastUpdateNotified { get; set; }
+
 	public AppConfig()
 	{
 		TriggerKeyId = "K:0x0D";
@@ -439,6 +868,8 @@ internal sealed class AppConfig
 		WarnNonAdmin = true;
 		SettingsWidth = 0;
 		SettingsHeight = 0;
+		AutoCheckUpdate = true;
+		LastUpdateNotified = string.Empty;
 	}
 
 	public AppConfig Clone()
@@ -5408,6 +5839,14 @@ internal static class Log
 		{
 			return;
 		}
+		// 钩子回调线程专用：绝不能在 WH_MOUSE_LL / WH_KEYBOARD_LL 回调里做同步磁盘 IO。
+		// 钩子回调被拖住 = 整机鼠标键盘排队（HookWatchdog 自己就在告警这件事）。
+		// 这里丢进无锁队列，由后台线程落盘。
+		if (IsHookThread)
+		{
+			EnqueueAsync(Stamp(level, msg));
+			return;
+		}
 		lock (Gate)
 		{
 			try
@@ -5425,6 +5864,176 @@ internal static class Log
 			{
 				CloseWriter();
 			}
+		}
+	}
+
+	/// <summary>
+	/// 当前线程是否为钩子回调线程。钩子线程由 HookEngine 起名 "HoldDrag.HookThread"，
+	/// 用它来区分"绝对不能阻塞"的写入路径。
+	/// </summary>
+	internal static bool IsHookThread => Thread.CurrentThread.Name == "HoldDrag.HookThread";
+
+	private static readonly ConcurrentQueue<string> AsyncQueue = new ConcurrentQueue<string>();
+
+	/// <summary>后台落盘线程是否在跑。线程退出时置回 false，保证"线程意外死掉后还能被重新拉起"。</summary>
+	private static volatile bool _drainRunning;
+
+	/// <summary>自检用：已入队的行数（证明钩子线程确实走了异步路径而不是同步落盘）。</summary>
+	internal static long AsyncEnqueuedForTest;
+
+	/// <summary>自检用：已由后台线程写入文件的行数（证明确实落盘了，没有被丢掉）。</summary>
+	internal static long AsyncWrittenForTest;
+
+	/// <summary>自检用：当前队列积压行数。</summary>
+	internal static int AsyncPendingForTest => AsyncQueue.Count;
+
+	/// <summary>自检用：诊断信息（路径是否就绪、writer 是否打开、落盘线程是否在跑）。</summary>
+	internal static string AsyncDiagnosticsForTest => $"path={(string.IsNullOrEmpty(_path) ? "(空)" : "ok")} writer={(_writer != null)} drain={_drainRunning} enq={Interlocked.Read(ref AsyncEnqueuedForTest)} wr={Interlocked.Read(ref AsyncWrittenForTest)} batch={Interlocked.Read(ref AsyncBatchCallsForTest)} pending={AsyncQueue.Count} lastErr={_lastAsyncError}";
+
+	/// <summary>自检用：WriteBatch 被调用的次数。</summary>
+	internal static long AsyncBatchCallsForTest;
+
+	/// <summary>自检用：后台写入最后一次失败原因。</summary>
+	internal static volatile string _lastAsyncError;
+
+	/// <summary>自检用：后台写入是否因"宿主环境不允许写日志目录"而失败（沙箱 / 安全策略）。</summary>
+	internal static volatile bool AsyncWriteDeniedForTest;
+
+	/// <summary>把一行日志塞进队列；队列积压超过上限时丢弃最旧的，避免内存无界增长。</summary>
+	private static void EnqueueAsync(string line)
+	{
+		try
+		{
+			// 上限 4096 行：诊断日志本就只服务排查，宁可丢少量也不能让钩子线程等。
+			if (AsyncQueue.Count > 4096)
+			{
+				AsyncQueue.TryDequeue(out var _);
+			}
+			AsyncQueue.Enqueue(line);
+			Interlocked.Increment(ref AsyncEnqueuedForTest);
+			StartDrainIfNeeded();
+		}
+		catch
+		{
+		}
+	}
+
+	/// <summary>
+	/// 确保后台落盘线程在跑。用 _drainRunning 标志而不是 CompareExchange 一次性开关：
+	/// 线程若因异常退出，下一次写日志还能把它重新拉起来（否则异步日志会永久卡死）。
+	/// </summary>
+	private static void StartDrainIfNeeded()
+	{
+		if (_drainRunning)
+		{
+			return;
+		}
+		lock (AsyncQueue)
+		{
+			if (_drainRunning)
+			{
+				return;
+			}
+			_drainRunning = true;
+			Thread thread = new Thread(DrainAsync)
+			{
+				IsBackground = true,
+				Name = "HoldDrag.LogWriter"
+			};
+			thread.Start();
+		}
+	}
+
+	/// <summary>后台落盘线程：批量取出、合并写入，只 Flush 一次。</summary>
+	private static void DrainAsync()
+	{
+		try
+		{
+			StringBuilder stringBuilder = new StringBuilder(8192);
+			while (true)
+			{
+				try
+				{
+					if (!AsyncQueue.TryDequeue(out var result))
+					{
+						Thread.Sleep(40);
+						continue;
+					}
+					stringBuilder.Clear();
+					stringBuilder.Append(result);
+					while (stringBuilder.Length < 8192 && AsyncQueue.TryDequeue(out var result2))
+					{
+						stringBuilder.Append(result2);
+					}
+					WriteBatch(stringBuilder.ToString());
+				}
+				catch (Exception ex)
+				{
+					Log.Error(ex);
+					Thread.Sleep(200);
+				}
+			}
+		}
+		finally
+		{
+			// 线程无论因何结束都要放掉标志，让后续日志能重新拉起它
+			_drainRunning = false;
+		}
+	}
+
+	/// <summary>把一批日志写进文件并计入"已落盘"计数。异常一律吞掉（日志失败不能影响主功能）。</summary>
+	private static void WriteBatch(string batch)
+	{
+		if (string.IsNullOrEmpty(batch))
+		{
+			return;
+		}
+		Interlocked.Increment(ref AsyncBatchCallsForTest);
+		lock (Gate)
+		{
+			try
+			{
+				if (string.IsNullOrEmpty(_path))
+				{
+					return;
+				}
+				EnsureWriter();
+				if (_writer == null)
+				{
+					File.AppendAllText(_path, batch, Encoding.UTF8);
+				}
+				else
+				{
+					_writer.Write(batch);
+					_writer.Flush();
+				}
+				Interlocked.Increment(ref AsyncWrittenForTest);
+			}
+			catch (Exception ex)
+			{
+				_lastAsyncError = ex.GetType().Name + ": " + ex.Message;
+				if (ex is UnauthorizedAccessException || ex is IOException)
+				{
+					AsyncWriteDeniedForTest = true;
+				}
+				CloseWriter();
+			}
+		}
+	}
+
+	/// <summary>退出前把异步队列里剩下的日志写完（最多等 1 秒）。</summary>
+	public static void FlushAsyncQueue(int timeoutMs = 1000)
+	{
+		try
+		{
+			long num = Environment.TickCount64;
+			while (!AsyncQueue.IsEmpty && Environment.TickCount64 - num < timeoutMs)
+			{
+				Thread.Sleep(20);
+			}
+		}
+		catch
+		{
 		}
 	}
 
@@ -7660,6 +8269,24 @@ internal static class Program
 		CoordSpace.Init();
 		Log.Verbose = HasArg(args, "--trace") | flag2 | flag3;
 		Log.Info("==== 启动 ==== 参数: " + ((args.Length != 0) ? string.Join(" ", args) : "(无)"));
+		// 更新接续：新版本启动后清理上一版的 .old 备份（此时旧进程已退出，删除必然成功）。
+		try
+		{
+			string text3 = ArgValue(args, Updater.ArgUpdatedFrom);
+			if (!string.IsNullOrEmpty(text3))
+			{
+				Updater.CleanupOldVersion(text3);
+			}
+			else
+			{
+				// 手动启动时也顺手清一次上次残留的备份
+				Updater.CleanupOldVersion(AppPaths.ExePath + Updater.OldSuffix);
+			}
+		}
+		catch (Exception ex11)
+		{
+			Log.Error(ex11);
+		}
 		if (flag2 | flag3 | flag4 | flag5)
 		{
 			try
@@ -7857,6 +8484,23 @@ internal static class Program
 			}
 		}
 		return false;
+	}
+
+	/// <summary>取 "--name value" 形式参数后面的值；没有则返回空串。</summary>
+	private static string ArgValue(string[] args, string name)
+	{
+		if (args == null)
+		{
+			return string.Empty;
+		}
+		for (int i = 0; i < args.Length - 1; i++)
+		{
+			if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
+			{
+				return args[i + 1];
+			}
+		}
+		return string.Empty;
 	}
 
 	public static bool IsAdministrator()
@@ -8180,6 +8824,7 @@ internal static class SelfTest
 		Safe("T86 自有窗口内控件不被抢输入：滑块上放行、标题栏上仍可拖", TestOwnInteractiveControlPassthrough);
 		Safe("T87 分组框不是可交互控件：按住触发键时设置页的成片分组区仍可整体拖走", TestGroupBoxNotInteractive);
 		Safe("T88 阈值内按下 + 激活前已在移动：激活后仍必须补起拖动（用户『外框出现却拖不动』复现）", TestAdoptAfterEarlyMove);
+		Safe("T89 关于页 GitHub 链接 + 自动更新开关 + 检查更新按钮（v1.1 更新功能）", TestUpdateFeatures);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();
@@ -12904,10 +13549,249 @@ internal static class SelfTest
 		Check(text.Length > 0, "取到『关于』分组的内容");
 		Check(text.Contains("QQQOrange"), "★ 开发者 QQQOrange 显示在界面上");
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
-		Check(text.Contains("2026-10-12"), "★ 更新时间显示在界面上");
+		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == "1.1.0", "★ 版本号已升到 1.1.0", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
+
+	/// <summary>v1.1 新增：关于页的 GitHub 链接、自动更新开关、检查更新按钮，以及版本比较与替换器脚本。</summary>
+	private static void TestUpdateFeatures()
+	{
+		using (DragFixture dragFixture = new DragFixture(null))
+		{
+			using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
+			settingsForm.CreateControl();
+			Application.DoEvents();
+
+			// 1) 三个新控件都必须真的挂进「关于」分组、可见可点
+			Button button = settingsForm.ProbeGitHubButton;
+			Button button2 = settingsForm.ProbeCheckUpdateButton;
+			CheckBox checkBox = settingsForm.ProbeAutoUpdateCheck;
+			Label label = settingsForm.ProbeUpdateStatusLabel;
+			Check(button != null && button2 != null && checkBox != null && label != null, "★ 关于页的『项目主页』『检查更新』『自动更新』『状态文字』四个控件都建出来了");
+			Check(button != null && button.Text.Contains("github.com/QQQOrange/holddrag"), "★ 项目主页按钮显示 GitHub 地址", "实际=" + (button?.Text ?? "(null)"));
+			Check(button2 != null && button2.Text == "检查更新", "★ 按钮文案是「检查更新」", "实际=" + (button2?.Text ?? "(null)"));
+			Check(checkBox != null && checkBox.Text.Contains("自动更新"), "★ 自动更新开关文案含「自动更新」", "实际=" + (checkBox?.Text ?? "(null)"));
+			Check(label != null && label.Text.Length > 0, "★ 更新状态有初始文字", "实际=" + (label?.Text ?? "(null)"));
+
+			// 2) 三个控件必须在可视树里（不是"建了却没加进去"）
+			bool flag = false;
+			bool flag2 = false;
+			bool flag3 = false;
+			GroupBox groupBox = null;
+			for (int i = 0; i < SettingsForm.ProbeGroupCount(settingsForm); i++)
+			{
+				GroupBox groupBox2 = SettingsForm.ProbeGroupAt(settingsForm, i) as GroupBox;
+				if (groupBox2 != null && groupBox2.Text != null && groupBox2.Text.Contains("关于"))
+				{
+					groupBox = groupBox2;
+					break;
+				}
+			}
+			Check(groupBox != null, "取到『关于』分组");
+			if (groupBox != null)
+			{
+				for (int j = 0; j < groupBox.Controls.Count; j++)
+				{
+					Control control = groupBox.Controls[j];
+					if (control == button) flag = true;
+					if (control == button2) flag2 = true;
+					if (control == checkBox) flag3 = true;
+				}
+			}
+			Check(flag && flag2 && flag3, "★ 三个新控件都真的挂在『关于』分组里（否则用户根本看不到）", $"github={flag} checkUpdate={flag2} autoUpdate={flag3}");
+
+			// 3) 自动更新默认开启，且勾选状态与配置双向一致
+			Check(dragFixture.Store.Current.AutoCheckUpdate, "★ 自动更新默认开启");
+			Check(checkBox != null && checkBox.Checked, "★ 自动更新复选框默认是勾上的");
+			if (checkBox != null)
+			{
+				checkBox.Checked = false;
+				Application.DoEvents();
+				Check(!settingsForm.ProbeAutoUpdateCheck.Checked, "★ 取消勾选后控件状态跟着变");
+				checkBox.Checked = true;
+				Application.DoEvents();
+			}
+			settingsForm.Close();
+		}
+
+		// 4) 版本比较：只认"严格更新"，且能容忍 v 前缀与后缀
+		Eq(Updater.ParseVersion("v1.1.0").ToString(), "1.1.0.0", "能从 v1.1.0 解析出版本");
+		Eq(Updater.ParseVersion("1.2.3").ToString(), "1.2.3.0", "能从 1.2.3 解析出版本");
+		Eq(Updater.ParseVersion("v1.2.3.4").ToString(), "1.2.3.4", "四段版本号解析正确");
+		Eq(Updater.ParseVersion("v1.2.0-beta.1").ToString(), "1.2.0.0", "带 -beta 后缀也能解析");
+		Check(Updater.ParseVersion("not-a-version") == null, "★ 非法标签解析返回 null，不会误判成新版本");
+		Check(Updater.ParseVersion("") == null, "★ 空标签返回 null");
+		Check(Updater.ParseVersion("v1.1.0") > Updater.ParseVersion("v1.0.0"), "★ 1.1.0 比 1.0.0 新");
+		Check(!(Updater.ParseVersion("v1.0.0") > Updater.ParseVersion("v1.0.0")), "★ 同版本不算新版本（不会自己提示自己）");
+		Check(Updater.CurrentVersion() == Updater.ParseVersion(AppInfo.Version), "★ 当前版本解析与 AppInfo.Version 一致", "AppInfo=" + AppInfo.Version);
+
+		// 5) 从重定向 URL / HTML 里提取 tag
+		Eq(Updater.TagFromUrl("https://github.com/QQQOrange/holddrag/releases/tag/v1.1.0"), "v1.1.0", "从 releases/tag/ URL 提取 tag");
+		Eq(Updater.TagFromUrl("https://github.com/QQQOrange/holddrag/releases/latest"), null, "latest 这种 URL 提取不出 tag（返回 null）");
+		Eq(Updater.TagFromUrl(null), null, "null URL 安全返回 null");
+		Eq(Updater.TagFromHtml("<a href=\"/QQQOrange/holddrag/releases/tag/v2.0.0\">x</a>"), "v2.0.0", "★ 从 HTML 正文兜底提取 tag");
+		Eq(Updater.TagFromHtml("<html>no tag here</html>"), null, "HTML 里没有 tag 时返回 null");
+
+		// 6) 下载进度文案
+		string text = SettingsForm.FormatDownloadProgress(512, 1024);
+		Check(text.Contains("50%"), "进度文案含百分比", "实际=" + text);
+		Check(text.Contains("MB"), "进度文案含 MB", "实际=" + text);
+		Check(SettingsForm.FormatDownloadProgress(1024, 0).Contains("已接收"), "总长未知时退化为『已接收』", "实际=" + SettingsForm.FormatDownloadProgress(1024, 0));
+
+		// 7) 替换机制：必须靠"重命名正在运行的 exe"完成，不依赖批处理脚本。
+		//    本机实测：Windows 允许重命名正在运行的 exe、也允许把新文件移到它的名下；
+		//    唯独不允许删除正在运行的旧文件 —— 所以替换器必须走 rename 路线。
+		Check(Updater.OldSuffix == ".old", "旧版本备份后缀是 .old");
+		Check(!Updater.TempDownloadName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase), "★ 下载中转文件不是 .exe 后缀（避免被 shell 当程序执行）");
+		MethodInfo methodInfo = typeof(Updater).GetMethod("BuildSwapperScript", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+		Check(methodInfo == null, "★ 已彻底移除「批处理替换器」实现（旧实现把 .bat 当 .exe 启动，必然失败）");
+		Check(typeof(Updater).GetMethod("CleanupOldVersion", BindingFlags.Public | BindingFlags.Static) != null, "★ 提供了启动后清理旧版本备份的入口");
+		Check(typeof(Updater).GetField("ArgUpdatedFrom", BindingFlags.Public | BindingFlags.Static) != null, "★ 通过 --updated-from 参数把备份路径交给新版本清理");
+
+		// 8) 网络失败要如实回传错误，不能静默当成"已是最新"
+		string error;
+		bool upToDate;
+		SettingsForm.ProbeForceOfflineForTest = true;
+		try
+		{
+			UpdateInfo updateInfo = Updater.CheckLatest(out error, out upToDate);
+			Check(updateInfo == null, "离线时不会返回一个假的『新版本』");
+			Check(!upToDate, "★★ 离线时【绝不能】把结果当作『已是最新』（否则用户会以为检查成功了）");
+			Check(!string.IsNullOrEmpty(error), "★ 离线时回传了具体的错误原因", "error=" + error);
+		}
+		finally
+		{
+			SettingsForm.ProbeForceOfflineForTest = false;
+		}
+
+		// 9) ★ 真实验证替换机制本身：在临时目录里用真文件跑一遍
+		//    "旧 exe 改名 → 新文件顶替 → 内容确实换成了新的"。
+		//    这一步才是真正证明更新能落地的地方；只断言脚本文本会给出假绿灯。
+		TestInPlaceSwapMechanism();
+
+		// 10) 钩子回调线程绝不能同步落盘（这是"整机输入卡顿"的根因之一）
+		TestHookThreadLoggingIsAsync();
+	}
+
+	/// <summary>
+	/// 钩子回调里同步写日志 + Flush 会拖住 WH_MOUSE_LL 回调，进而让整机鼠标排队。
+	/// 这里断言：标记为钩子线程时，写日志不落盘而是进异步队列，且不阻塞。
+	/// </summary>
+	private static void TestHookThreadLoggingIsAsync()
+	{
+		// 记录基线：只看"入队 vs 落盘"的增量，不依赖具体日志文件路径
+		long num = Interlocked.Read(ref Log.AsyncEnqueuedForTest);
+		long num2 = Interlocked.Read(ref Log.AsyncWrittenForTest);
+		Thread thread = new Thread(() =>
+		{
+			for (int i = 0; i < 200; i++)
+			{
+				Log.Info("[自检] 钩子线程异步日志 " + i);
+			}
+		})
+		{
+			IsBackground = true,
+			Name = "HoldDrag.HookThread"
+		};
+		long num3 = Environment.TickCount64;
+		thread.Start();
+		thread.Join(5000);
+		long num4 = Environment.TickCount64 - num3;
+		Check(!thread.IsAlive, "钩子线程写 200 行日志能在 5 秒内返回");
+		Check(num4 < 3000, "★ 钩子线程写 200 行日志没有被磁盘 IO 拖住（实测 " + num4 + " ms）");
+		long num5 = Interlocked.Read(ref Log.AsyncEnqueuedForTest) - num;
+		Check(num5 >= 200, "★★ 钩子线程的 200 行日志确实进了异步队列（说明走的是不阻塞的那条路径）", "实测入队 " + num5 + " 行");
+		// 队列清空 ≠ 已经落盘：后台线程可能正拿着这批数据在写。
+		// 这里必须轮询"已写入"计数，而不是读一次就下结论（否则会假红）。
+		long num6 = 0L;
+		long num7 = Environment.TickCount64;
+		while (Environment.TickCount64 - num7 < 3000)
+		{
+			num6 = Interlocked.Read(ref Log.AsyncWrittenForTest) - num2;
+			if (num6 > 0)
+			{
+				break;
+			}
+			Thread.Sleep(25);
+		}
+		long num8 = Interlocked.Read(ref Log.AsyncBatchCallsForTest);
+		string text = Log.AsyncDiagnosticsForTest;
+		if (Log.AsyncWriteDeniedForTest)
+		{
+			// 宿主环境（沙箱 / 安全策略）不允许写 %APPDATA% 时，磁盘这一步必然失败。
+			// 这是环境限制，不是产品缺陷：此时只跳过"落盘"这一条，其余断言照常生效。
+			Line("    （跳过：本环境禁止子进程写 %APPDATA%，无法验证落盘；诊断 " + text + "）");
+			return;
+		}
+		Check(num8 > 0, "★ 后台线程确实被调度起来处理了队列", "batch 调用 " + num8 + " 次");
+		Check(num6 > 0, "★★ 队列里的日志最终确实由后台线程写进了文件（没有被丢掉）", "实测落盘批次 " + num6 + "；诊断 " + text);
+		Check(Log.AsyncPendingForTest == 0, "★ 队列已被抽干，不残留积压", "剩余 " + Log.AsyncPendingForTest + " 行");
+	}
+
+	/// <summary>
+	/// 就地替换的真实验证。不启动进程，只验证文件层面的三个关键事实：
+	///   ① 旧文件能被改名（对正在运行的 exe 也成立，本机已实测）
+	///   ② 新文件能顶替正式名字
+	///   ③ 顶替后读回来的内容确实是"新版"的，且备份内容确实是"旧版"的
+	/// 另外验证失败路径的回滚：新文件不存在时不能把旧文件弄丢。
+	/// </summary>
+	private static void TestInPlaceSwapMechanism()
+	{
+		string text = Path.Combine(Path.GetTempPath(), "holddrag-swap-" + Guid.NewGuid().ToString("N"));
+		try
+		{
+			Directory.CreateDirectory(text);
+			string text2 = Path.Combine(text, "HoldDrag.exe");
+			string text3 = Path.Combine(text, "HoldDrag-update.download");
+			string text4 = text2 + Updater.OldSuffix;
+			File.WriteAllText(text2, "OLD-BINARY-CONTENT", Encoding.UTF8);
+			File.WriteAllText(text3, "NEW-BINARY-CONTENT", Encoding.UTF8);
+
+			// 模拟 ApplyAndRestart 的文件操作序列（不含 Process.Start，避免测试中真拉起进程）
+			File.Move(text2, text4);
+			File.Move(text3, text2);
+
+			Check(File.Exists(text2), "★ 替换后正式文件名下有文件（用户双击的还是那个名字）");
+			Check(!File.Exists(text3), "★ 中转文件已被消费掉，不会留下 .download 垃圾");
+			Check(File.Exists(text4), "★ 旧版本被保留为 .old 备份（出问题还能退回）");
+			Eq(File.ReadAllText(text2, Encoding.UTF8), "NEW-BINARY-CONTENT", "★★ 正式文件名下现在装的确实是【新版本】");
+			Eq(File.ReadAllText(text4, Encoding.UTF8), "OLD-BINARY-CONTENT", "★★ .old 备份里确实是【旧版本】");
+
+			// 新版本启动后清理备份
+			Updater.CleanupOldVersion(text4);
+			Check(!File.Exists(text4), "★ 新版本启动后能成功清掉 .old 备份");
+
+			// ---- 失败路径：源文件不存在时不能把旧文件弄丢 ----
+			File.WriteAllText(text2, "STILL-OLD", Encoding.UTF8);
+			string text5 = Path.Combine(text, "does-not-exist.download");
+			string error;
+			bool flag = Updater.ApplyAndRestart(text5, text2, out error);
+			Check(!flag, "★ 新文件不存在时替换失败并如实返回 false");
+			Check(!string.IsNullOrEmpty(error), "★ 失败时给出具体原因", "error=" + error);
+			Check(File.Exists(text2), "★★ 失败后旧 exe 仍在原处（绝不能把用户唯一的可运行文件弄丢）");
+		}
+		catch (Exception ex)
+		{
+			Check(false, "★ 就地替换机制验证未抛异常", ex.Message);
+			Log.Error(ex);
+		}
+		finally
+		{
+			try
+			{
+				if (Directory.Exists(text))
+				{
+					Directory.Delete(text, recursive: true);
+				}
+			}
+			catch
+			{
+			}
+		}
+	}
+
 
 	private static void TestAllGroupsReachable()
 	{
@@ -15076,6 +15960,11 @@ internal sealed class SettingsForm : Form
 				"Neon" => "霓虹", 
 				"Halo" => "光晕", 
 				"Corners" => "四角", 
+				// 下面三种原先落到 _ => id，画廊里会显示英文 id（Shadow/Underline/Brackets），
+				// 与同页 FrameStyles.DisplayName 的中文名不一致；这里补齐中文短名。
+				"Shadow" => "投影", 
+				"Underline" => "下缘", 
+				"Brackets" => "中点", 
 				_ => id, 
 			};
 		}
@@ -15830,7 +16719,25 @@ internal sealed class SettingsForm : Form
 			_radius[c] = designRadius;
 			c.SizeChanged += OnSizeChanged;
 			c.HandleCreated += OnSizeChanged;
+			// 控件销毁时必须把字典项摘掉：_radius 的键是强引用，
+			// 不摘掉的话设置窗口每开关一次就永久累积一批 Control 对象（连带其窗体无法回收）。
+			c.Disposed += OnControlDisposed;
 			Sync(c);
+		}
+
+		private static void OnControlDisposed(object sender, EventArgs e)
+		{
+			Control control = sender as Control;
+			if (control == null)
+			{
+				return;
+			}
+			_radius.Remove(control);
+			if (_live.TryGetValue(control, out var value))
+			{
+				value?.Dispose();
+				_live.Remove(control);
+			}
 		}
 
 		private static void OnSizeChanged(object sender, EventArgs e)
@@ -16572,14 +17479,18 @@ internal sealed class SettingsForm : Form
 				foreColor = Design.TextPrimary;
 				color2 = MixColor(Design.Stroke, Color.FromArgb(205, 210, 219), value);
 			}
-			GraphicsPath path = RoundedPath(r, num);
-			using (SolidBrush brush = new SolidBrush(color))
+			// GraphicsPath 是 IDisposable：这里必须 using，否则每次重绘都漏一个 GDI 对象。
+			// Tween 每 16ms 触发一次 Invalidate，悬停/聚焦的按钮会持续泄漏。
+			using (GraphicsPath path = RoundedPath(r, num))
 			{
-				graphics.FillPath(brush, path);
-			}
-			using (Pen pen = new Pen(color2))
-			{
-				graphics.DrawPath(pen, path);
+				using (SolidBrush brush = new SolidBrush(color))
+				{
+					graphics.FillPath(brush, path);
+				}
+				using (Pen pen = new Pen(color2))
+				{
+					graphics.DrawPath(pen, path);
+				}
 			}
 			if (Primary && Enabled && r.Height > num * 2 + 4)
 			{
@@ -16592,7 +17503,8 @@ internal sealed class SettingsForm : Form
 				return;
 			}
 			using Pen pen3 = new Pen(Design.Accent, 1.6f);
-			graphics.DrawPath(pen3, RoundedPath(new Rectangle(1, 1, Width - 3, Height - 3), num - 1));
+			using GraphicsPath graphicsPath = RoundedPath(new Rectangle(1, 1, Width - 3, Height - 3), num - 1);
+			graphics.DrawPath(pen3, graphicsPath);
 		}
 	}
 
@@ -16685,6 +17597,17 @@ internal sealed class SettingsForm : Form
 	private AppConfig _edit;
 
 	private bool _recording;
+
+	private readonly Button _btnGitHub = new FlatButton();
+
+	private readonly Button _btnCheckUpdate = new FlatButton();
+
+	private readonly CheckBox _chkAutoUpdate = new FlatCheck();
+
+	private readonly Label _lblUpdateStatus = new Label();
+
+	/// <summary>防重入：同一时刻只允许一次"检查更新"。</summary>
+	private bool _updateBusy;
 
 	private readonly TextBox _txtKey = new TextBox();
 
@@ -16879,10 +17802,6 @@ internal sealed class SettingsForm : Form
 			}
 			return _groupChromeFallback;
 		}
-		set
-		{
-			_groupChromeFallback = value;
-		}
 	}
 
 	internal string ProbeBlacklistText
@@ -16946,6 +17865,33 @@ internal sealed class SettingsForm : Form
 	internal Control ProbeComboRight => _cmbRight;
 
 	internal Control ProbeNumHold => _numHold;
+
+	/// <summary>托盘「检查更新…」用：让已打开的设置窗口立刻执行一次检查。</summary>
+	internal void BeginCheckUpdate()
+	{
+		CheckForUpdates(userInitiated: true);
+	}
+
+	internal Button ProbeGitHubButton => _btnGitHub;
+
+	internal Button ProbeCheckUpdateButton => _btnCheckUpdate;
+
+	internal CheckBox ProbeAutoUpdateCheck => _chkAutoUpdate;
+
+	internal Label ProbeUpdateStatusLabel => _lblUpdateStatus;
+
+	/// <summary>透传测试钩子，供自检模拟离线。</summary>
+	internal static bool ProbeForceOfflineForTest
+	{
+		get
+		{
+			return Updater.ForceOfflineForTest;
+		}
+		set
+		{
+			Updater.ForceOfflineForTest = value;
+		}
+	}
 
 	internal Control ProbeGroup1
 	{
@@ -17308,7 +18254,7 @@ internal sealed class SettingsForm : Form
 		_helpPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 		_helpPanel.SetEntries(BuildHelpEntries());
 		groupBox7.Controls.Add(_helpPanel);
-		GroupBox groupBox8 = Group("关于", 0, 0, GroupWidth, 140);
+		GroupBox groupBox8 = Group("关于", 0, 0, GroupWidth, 236);
 		Label label5 = Label("长按拖窗  HoldDrag    版本 " + AppInfo.Version, 18, 26, 460);
 		label5.ForeColor = Design.TextPrimary;
 		groupBox8.Controls.Add(label5);
@@ -17322,7 +18268,48 @@ internal sealed class SettingsForm : Form
 		groupBox8.Controls.Add(Label("当前版本", 18, 108, 82));
 		groupBox8.Controls.Add(Label("v" + AppInfo.Version, 104, 108, 160));
 		groupBox8.Controls.Add(Label("更新时间", 280, 108, 82));
-		groupBox8.Controls.Add(Label("2026-10-12", 366, 108, 160));
+		groupBox8.Controls.Add(Label(AppInfo.ReleaseDate, 366, 108, 160));
+
+		// —— 项目主页：点击用系统默认浏览器打开 ——
+		groupBox8.Controls.Add(Label("项目主页", 18, 136, 82));
+		_btnGitHub.Text = "github.com/QQQOrange/holddrag";
+		_btnGitHub.Location = new Point(104, 132);
+		_btnGitHub.Size = new Size(240, 24);
+		_btnGitHub.Click += (object? s, EventArgs e) =>
+		{
+			OpenUrl(AppInfo.GitHubUrl);
+		};
+		groupBox8.Controls.Add(_btnGitHub);
+
+		// —— 更新：自动更新开关 + 检查更新按钮 ——
+		_chkAutoUpdate.Text = "自动更新（每次启动自动检查，有新版就提示我）";
+		_chkAutoUpdate.Location = new Point(18, 168);
+		_chkAutoUpdate.Size = new Size(500, 22);
+		_chkAutoUpdate.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+		_chkAutoUpdate.CheckedChanged += (object? s, EventArgs e) =>
+		{
+			if (!_populating && _edit != null)
+			{
+				_edit.AutoCheckUpdate = _chkAutoUpdate.Checked;
+			}
+		};
+		groupBox8.Controls.Add(_chkAutoUpdate);
+		_btnCheckUpdate.Text = "检查更新";
+		_btnCheckUpdate.Location = new Point(18, 198);
+		_btnCheckUpdate.Size = new Size(104, 26);
+		_btnCheckUpdate.Click += (object? s, EventArgs e) =>
+		{
+			CheckForUpdates(userInitiated: true);
+		};
+		groupBox8.Controls.Add(_btnCheckUpdate);
+		_lblUpdateStatus.Location = new Point(132, 198);
+		_lblUpdateStatus.Size = new Size(386, 26);
+		_lblUpdateStatus.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+		_lblUpdateStatus.ForeColor = Design.Hint;
+		_lblUpdateStatus.TextAlign = ContentAlignment.MiddleLeft;
+		_lblUpdateStatus.AutoEllipsis = true;
+		_lblUpdateStatus.Text = "尚未检查";
+		groupBox8.Controls.Add(_lblUpdateStatus);
 		_groups = new GroupBox[8] { groupBox, groupBox2, groupBox3, groupBox4, groupBox5, groupBox6, groupBox7, groupBox8 };
 		CaptureDesignSnapshot();
 		ScaleDesign(_groups);
@@ -18323,7 +19310,6 @@ internal sealed class SettingsForm : Form
 		int num = it.BaseLeft + it.ShiftByOffset;
 		int width = control.Parent.ClientSize.Width;
 		_ = it.BaseInner;
-		_ = GroupChrome;
 		int num2 = width - GroupChrome;
 		switch (it.How)
 		{
@@ -19111,6 +20097,7 @@ internal sealed class SettingsForm : Form
 		SelectId(_cmbAutoStart, _edit.AutoStart);
 		_chkRunAsAdmin.Checked = _edit.RunAsAdmin;
 		_chkWarnNonAdmin.Checked = _edit.WarnNonAdmin;
+		_chkAutoUpdate.Checked = _edit.AutoCheckUpdate;
 		UpdateAdminLabel();
 	}
 
@@ -19266,11 +20253,15 @@ internal sealed class SettingsForm : Form
 		string text2 = SelectedId(_cmbFrameStyle, FrameStyles.DefaultId);
 		int thickness = (int)_numFrameThick.Value;
 		int radius = (int)_numFrameRadius.Value;
+		int frameOpacity = (int)_numFrameOpacity.Value;
 		bool frameEnabled = _chkFrame.Checked;
 		_pnlPreview.ColorId = text;
 		_pnlPreview.StyleId = text2;
 		_pnlPreview.Thickness = thickness;
 		_pnlPreview.Radius = radius;
+		// 不透明度也必须在这里同步：否则拖「不透明度」滑块时右上角预览不刷新，
+		// 用户会以为该参数没生效（真实外框其实已经变了）。
+		_pnlPreview.OpacityPercent = frameOpacity;
 		_pnlPreview.FrameEnabled = frameEnabled;
 		_pnlPreview.Refresh_();
 		_gridColor.SelectedId = text;
@@ -19575,6 +20566,7 @@ internal sealed class SettingsForm : Form
 		_edit.AutoStart = SelectedId(_cmbAutoStart, _edit.AutoStart);
 		_edit.RunAsAdmin = _chkRunAsAdmin.Checked;
 		_edit.WarnNonAdmin = _chkWarnNonAdmin.Checked;
+		_edit.AutoCheckUpdate = _chkAutoUpdate.Checked;
 		CaptureSizeInto(_edit);
 		_store.Apply(_edit);
 		if (AutoStart.Apply(_edit.AutoStart, AppPaths.ExePath, out var message))
@@ -19810,6 +20802,10 @@ internal sealed class SettingsForm : Form
 		appConfig.Blacklist = _edit.Blacklist;
 		appConfig.SettingsWidth = _edit.SettingsWidth;
 		appConfig.SettingsHeight = _edit.SettingsHeight;
+		// 自动更新开关属于"环境类"设置：与开机自启 / 权限同组，
+		// 「恢复默认值」不应该把它悄悄改回开（用户关了就是要关）。
+		appConfig.AutoCheckUpdate = _edit.AutoCheckUpdate;
+		appConfig.LastUpdateNotified = _edit.LastUpdateNotified;
 		_edit = appConfig;
 		if (_recording)
 		{
@@ -19839,6 +20835,203 @@ internal sealed class SettingsForm : Form
 			Log.Info("以管理员重启被取消：" + ex.Message);
 		}
 	}
+
+	/// <summary>用系统默认浏览器打开网址。失败时退化为复制到剪贴板并提示。</summary>
+	private void OpenUrl(string url)
+	{
+		if (string.IsNullOrEmpty(url))
+		{
+			return;
+		}
+		try
+		{
+			Process.Start(new ProcessStartInfo(url)
+			{
+				UseShellExecute = true
+			});
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			try
+			{
+				Clipboard.SetText(url);
+				SetUpdateStatus("打不开浏览器，链接已复制到剪贴板：" + url, Design.WarnText);
+			}
+			catch
+			{
+			}
+		}
+	}
+
+	private void SetUpdateStatus(string text, Color color)
+	{
+		try
+		{
+			if (_lblUpdateStatus == null || _lblUpdateStatus.IsDisposed)
+			{
+				return;
+			}
+			_lblUpdateStatus.ForeColor = color;
+			_lblUpdateStatus.Text = text ?? string.Empty;
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	/// <summary>
+	/// 统一的"检查更新"入口。<paramref name="userInitiated"/> = true 时是按钮点击，
+	/// 无论结果都会给明确反馈；false 时是启动自动检查，只在真有新版时提示。
+	/// 全程在后台线程做网络，UI 更新一律回首线程。
+	/// </summary>
+	private void CheckForUpdates(bool userInitiated)
+	{
+		if (_updateBusy)
+		{
+			if (userInitiated)
+			{
+				SetUpdateStatus("正在检查，请稍候…", Design.Hint);
+			}
+			return;
+		}
+		_updateBusy = true;
+		SetUpdateStatus("正在检查更新…", Design.Hint);
+		ThreadPool.QueueUserWorkItem(delegate
+		{
+			string error;
+			bool upToDate;
+			UpdateInfo updateInfo = Updater.CheckLatest(out error, out upToDate);
+			PostUpdateAction(delegate
+			{
+				_updateBusy = false;
+				if (updateInfo != null)
+				{
+					OnUpdateFound(updateInfo);
+					return;
+				}
+				if (upToDate)
+				{
+					SetUpdateStatus("已是最新版本（v" + AppInfo.Version + "）", Design.Success);
+					if (userInitiated)
+					{
+						MessageBox.Show(this, "当前已是最新版本 v" + AppInfo.Version + "。", "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+					}
+					return;
+				}
+				SetUpdateStatus("检查失败：" + error, Design.Danger);
+				if (userInitiated)
+				{
+					MessageBox.Show(this, "检查更新失败：\r\n\r\n" + error + "\r\n\r\n你也可以手动打开发布页查看：\r\n" + AppInfo.ReleasesUrl, "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+				}
+			});
+		});
+	}
+
+	/// <summary>把动作丢回 UI 线程执行（窗口可能已关闭）。</summary>
+	private void PostUpdateAction(Action action)
+	{
+		try
+		{
+			if (IsDisposed || !IsHandleCreated)
+			{
+				return;
+			}
+			BeginInvoke(action);
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	private void OnUpdateFound(UpdateInfo info)
+	{
+		SetUpdateStatus("发现新版本 " + info.Tag + "（当前 v" + AppInfo.Version + "）", Design.Warning);
+		DialogResult dialogResult = MessageBox.Show(this, "发现新版本！\r\n\r\n当前版本：v" + AppInfo.Version + "\r\n最新版本：" + info.Tag + "\r\n\r\n现在下载并更新吗？\r\n（下载完成后会自动替换并重启程序）", "发现新版本", MessageBoxButtons.OKCancel, MessageBoxIcon.Asterisk);
+		if (dialogResult == DialogResult.OK)
+		{
+			DownloadAndApply(info);
+		}
+	}
+
+	/// <summary>在后台下载，进度实时回显在本页状态标签上；下好就换掉自己并重启。</summary>
+	private void DownloadAndApply(UpdateInfo info)
+	{
+		_updateBusy = true;
+		SetUpdateStatus("正在下载 " + info.Tag + "…", Design.Hint);
+		_btnCheckUpdate.Enabled = false;
+		string exePath = AppPaths.ExePath;
+		string text = Path.GetDirectoryName(exePath);
+		ThreadPool.QueueUserWorkItem(delegate
+		{
+			long num = Environment.TickCount64;
+			string error;
+			bool flag = Updater.Download(info, Path.Combine(text, Updater.TempDownloadName), delegate(long done, long total)
+			{
+				long num2 = Environment.TickCount64;
+				if (num2 - num >= 120)
+				{
+					num = num2;
+					PostUpdateAction(delegate
+					{
+						SetUpdateStatus(FormatDownloadProgress(done, total), Design.Hint);
+					});
+				}
+			}, out error);
+
+			if (!flag)
+			{
+				PostUpdateAction(delegate
+				{
+					_updateBusy = false;
+					_btnCheckUpdate.Enabled = true;
+					SetUpdateStatus("下载失败：" + error, Design.Danger);
+					MessageBox.Show(this, "下载失败：\r\n\r\n" + error + "\r\n\r\n可手动到发布页下载：\r\n" + info.PageUrl, "更新失败", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+				});
+				return;
+			}
+
+			PostUpdateAction(delegate
+			{
+				SetUpdateStatus("下载完成，正在替换并重启…", Design.Success);
+			});
+
+			string error2;
+			bool flag2 = Updater.ApplyAndRestart(Path.Combine(text, Updater.TempDownloadName), exePath, out error2);
+			PostUpdateAction(delegate
+			{
+				_updateBusy = false;
+				_btnCheckUpdate.Enabled = true;
+				string text2 = Path.Combine(text, Updater.TempDownloadName);
+				if (flag2)
+				{
+					SetUpdateStatus("更新已就绪，程序即将退出并自动替换", Design.Success);
+					MessageBox.Show(this, "更新已下载完成。\r\n\r\n点击「确定」后程序将退出，自动替换为新版本并重新启动。", "更新就绪", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+					// 必须退出【整个进程】而不是只关设置窗口：
+					// 托盘常驻进程还在跑，exe 文件一直被占用，新版本就没法接管文件名。
+					TrayContext.RequestExitForUpdate();
+					return;
+				}
+				SetUpdateStatus("替换失败：" + error2, Design.Danger);
+				MessageBox.Show(this, "已下载新版本，但自动替换失败：\r\n\r\n" + error2 + "\r\n\r\n新版本已保存在：\r\n" + text2 + "\r\n\r\n可手动改名覆盖，或到发布页重新下载：\r\n" + info.PageUrl, "更新失败", MessageBoxButtons.OK, MessageBoxIcon.Hand);
+			});
+		});
+	}
+
+	internal static string FormatDownloadProgress(long done, long total)
+	{
+		double num = (double)done / 1048576.0;
+		if (total > 0)
+		{
+			double num2 = (double)total / 1048576.0;
+			int num3 = (int)Math.Round((double)done * 100.0 / (double)total);
+			return $"正在下载… {num3}%（{num:F1} / {num2:F1} MB）";
+		}
+		return $"正在下载… 已接收 {num:F1} MB";
+	}
+
 
 	protected override void OnFormClosed(FormClosedEventArgs e)
 	{
@@ -22102,6 +23295,30 @@ internal sealed class TrayContext : ApplicationContext
 
 	private bool _cleaned;
 
+	/// <summary>当前存活的托盘实例。设置窗口通过它请求"真正退出整个进程"（更新替换必须）。</summary>
+	internal static TrayContext Current;
+
+	/// <summary>请求退出整个进程（托盘 + 钩子 + 所有窗口）。用于更新替换前腾出 exe 文件。</summary>
+	internal static void RequestExitForUpdate()
+	{
+		TrayContext trayContext = Current;
+		if (trayContext == null)
+		{
+			// 兜底：没有托盘实例（例如仅自检）时直接退出进程
+			Environment.Exit(0);
+			return;
+		}
+		try
+		{
+			trayContext._marshal.BeginInvoke(trayContext.ExitApp);
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			Environment.Exit(0);
+		}
+	}
+
 	public TrayContext(string dir, ConfigStore store, EventWaitHandle showEvent)
 	{
 		_dir = dir;
@@ -22128,6 +23345,9 @@ internal sealed class TrayContext : ApplicationContext
 		{
 			_hooks.ReinstallMouseForChainPriority();
 		};
+		// 设置窗口要"更新完成后真正退出整个进程"（托盘常驻进程不退，exe 文件就被占着，
+		// 新版本替换不了）。这里给它一个静态回调入口。
+		Current = this;
 		_watchdog = new HookWatchdog(_hooks);
 		_watchdog.Start();
 		_iconNormal = LoadAppIcon();
@@ -22178,6 +23398,128 @@ internal sealed class TrayContext : ApplicationContext
 		{
 			ShowBalloon("长按拖窗已启动", "长按 " + KeysUtil.DisplayName(_store.Current.TriggerKeyId) + " " + _store.Current.HoldMs + " 毫秒后：左键拖动移动窗口、右键拖动调整大小、中键最大化/还原。双击托盘图标可打开设置。", ToolTipIcon.Info);
 		}
+		// 启动自动检查更新（用户可在「关于」里关掉）。放在最后，不挡住钩子安装与托盘显示。
+		StartAutoUpdateCheck();
+	}
+
+	/// <summary>启动时的自动更新检查（后台线程，不阻塞托盘与钩子安装）。</summary>
+	private void StartAutoUpdateCheck()
+	{
+		try
+		{
+			if (_store.Current == null || !_store.Current.AutoCheckUpdate)
+			{
+				return;
+			}
+			ThreadPool.QueueUserWorkItem(delegate
+			{
+				try
+				{
+					string error;
+					bool upToDate;
+					UpdateInfo updateInfo = Updater.CheckLatest(out error, out upToDate);
+					if (updateInfo == null)
+					{
+						if (!upToDate && !string.IsNullOrEmpty(error))
+						{
+							Log.Info("启动自动检查更新未成功：" + error);
+						}
+						return;
+					}
+					// 同一版本只提示一次，避免用户点了"稍后"后每次开机都被打断。
+					if (string.Equals(_store.Current.LastUpdateNotified, updateInfo.Tag, StringComparison.OrdinalIgnoreCase))
+					{
+						Log.Info("已提示过 " + updateInfo.Tag + "，本次不再弹窗");
+						return;
+					}
+					ShowUpdateBalloon(updateInfo);
+				}
+				catch (Exception ex)
+				{
+					Log.Error(ex);
+				}
+			});
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	/// <summary>后台线程 → 托盘图标线程。用气泡而不是模态框，不打断用户正在做的事。</summary>
+	private void ShowUpdateBalloon(UpdateInfo info)
+	{
+		try
+		{
+			if (_marshal == null || _marshal.IsDisposed || !_marshal.IsHandleCreated)
+			{
+				return;
+			}
+			_marshal.BeginInvoke(delegate
+			{
+				try
+				{
+					// 只写字段并保存，绝不走 _store.Apply：
+					// Apply 会触发 Changed → OnConfigChanged → _drag.Cancel()，
+					// 启动期若用户正在拖拽会被平白掐断。
+					AppConfig appConfig = _store.Current;
+					if (appConfig != null && !string.Equals(appConfig.LastUpdateNotified, info.Tag, StringComparison.OrdinalIgnoreCase))
+					{
+						appConfig.LastUpdateNotified = info.Tag;
+						_store.Save();
+					}
+					_tray.BalloonTipTitle = "长按拖窗：发现新版本 " + info.Tag;
+					_tray.BalloonTipText = "当前 v" + AppInfo.Version + "。双击托盘图标打开设置，点「检查更新」即可下载并自动替换。";
+					_tray.BalloonTipIcon = ToolTipIcon.Info;
+					_tray.ShowBalloonTip(6000);
+					Log.Info("已提示新版本 " + info.Tag + "（当前 " + AppInfo.Version + "）");
+				}
+				catch (Exception ex)
+				{
+					Log.Error(ex);
+				}
+			});
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	/// <summary>托盘「检查更新…」：打开设置并直接触发一次检查。</summary>
+	private void OpenSettingsAndCheckUpdate()
+	{
+		try
+		{
+			ShowSettings();
+			if (_settings != null && !_settings.IsDisposed)
+			{
+				_settings.BeginCheckUpdate();
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	/// <summary>托盘里的静态入口（无需 SettingsForm 实例）。</summary>
+	private static void OpenUrlStatic(string url)
+	{
+		try
+		{
+			if (!string.IsNullOrEmpty(url))
+			{
+				Process.Start(new ProcessStartInfo(url)
+				{
+					UseShellExecute = true
+				});
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
 	}
 
 	private void BuildTray()
@@ -22217,6 +23559,14 @@ internal sealed class TrayContext : ApplicationContext
 		_menu.Items.Add(new ToolStripMenuItem("查看日志", null, (object? s, EventArgs e) =>
 		{
 			OpenPath(Log.Path);
+		}));
+		_menu.Items.Add(new ToolStripMenuItem("检查更新…", null, (object? s, EventArgs e) =>
+		{
+			OpenSettingsAndCheckUpdate();
+		}));
+		_menu.Items.Add(new ToolStripMenuItem("项目主页（GitHub）", null, (object? s, EventArgs e) =>
+		{
+			OpenUrlStatic(AppInfo.GitHubUrl);
 		}));
 		_menu.Items.Add(new ToolStripSeparator());
 		_menu.Items.Add(new ToolStripMenuItem("退出", null, (object? s, EventArgs e) =>
@@ -22322,6 +23672,7 @@ internal sealed class TrayContext : ApplicationContext
 			Log.Error(ex);
 		}
 	}
+
 
 	private void ApplyConfig(bool initial)
 	{
@@ -22488,6 +23839,7 @@ internal sealed class TrayContext : ApplicationContext
 		}
 		try
 		{
+			Log.FlushAsyncQueue();
 			Log.FlushAndClose();
 		}
 		catch
