@@ -59,7 +59,7 @@ internal static class AppInfo
 	public const string ReleasesApiUrl = "https://api.github.com/repos/QQQOrange/holddrag/releases/latest";
 
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.2.0";
+	public const string FallbackVersion = "1.3.0";
 
 	public static string Version
 	{
@@ -3434,6 +3434,11 @@ internal sealed class DragEngine : IDisposable
 			{
 				Log.Error(ex);
 			}
+			// v1.3 空闲内存回收：拖动结束后外框位图就是一块纯闲置的大缓冲
+			//（4K 屏上每个外框 ~33MB 托管 + ~33MB 非托管）。旧版一直攥着不放，
+			// "用完一次拖窗，常驻内存就高几十 MB"。这里延迟 15 秒释放：
+			// 期间若又开始拖动（位图会被 Rebuild 复用）就取消，避免抖动。
+			ScheduleIdleBufferRelease();
 		}
 		catch (Exception ex2)
 		{
@@ -3447,6 +3452,60 @@ internal sealed class DragEngine : IDisposable
 				_session.Hwnd = IntPtr.Zero;
 				_session.Button = -1;
 			}
+		}
+	}
+
+	private System.Windows.Forms.Timer _idleReleaseTimer;
+
+	private int _idleReleaseGeneration;
+
+	private void ScheduleIdleBufferRelease()
+	{
+		try
+		{
+			int num = 0;
+			lock (_gate)
+			{
+				num = _generation;
+			}
+			_idleReleaseGeneration = num;
+			if (_idleReleaseTimer == null)
+			{
+				_idleReleaseTimer = new System.Windows.Forms.Timer
+				{
+					Interval = 15000
+				};
+				_idleReleaseTimer.Tick += (object? s, EventArgs e) =>
+				{
+					_idleReleaseTimer.Stop();
+					try
+					{
+						int num2 = 0;
+						bool dragging = _dragging;
+						lock (_gate)
+						{
+							num2 = _generation;
+						}
+						if (dragging || num2 != _idleReleaseGeneration || _frameWanted || (_hoverRectValid && _hoverHwnd != IntPtr.Zero))
+						{
+							return;
+						}
+						// 真闲着：把外框的像素缓冲放掉（窗口句柄保留，下次拖动 Rebuild 会重建）。
+						_frame.ReleaseBuffersForIdle();
+						Log.Trace("[内存] 拖动已结束 15 秒，外框像素缓冲已释放");
+					}
+					catch (Exception ex)
+					{
+						Log.Error(ex);
+					}
+				};
+			}
+			_idleReleaseTimer.Stop();
+			_idleReleaseTimer.Start();
+		}
+		catch (Exception ex2)
+		{
+			Log.Error(ex2);
 		}
 	}
 
@@ -5839,32 +5898,12 @@ internal static class Log
 		{
 			return;
 		}
-		// 钩子回调线程专用：绝不能在 WH_MOUSE_LL / WH_KEYBOARD_LL 回调里做同步磁盘 IO。
-		// 钩子回调被拖住 = 整机鼠标键盘排队（HookWatchdog 自己就在告警这件事）。
-		// 这里丢进无锁队列，由后台线程落盘。
-		if (IsHookThread)
-		{
-			EnqueueAsync(Stamp(level, msg));
-			return;
-		}
-		lock (Gate)
-		{
-			try
-			{
-				EnsureWriter();
-				if (_writer == null)
-				{
-					File.AppendAllText(_path, Stamp(level, msg), Encoding.UTF8);
-					return;
-				}
-				_writer.Write(Stamp(level, msg));
-				_writer.Flush();
-			}
-			catch
-			{
-				CloseWriter();
-			}
-		}
+		// v1.3：所有线程一律走异步队列。
+		// 旧版只有钩子线程异步，UI/拖动线程仍是"写一行 + Flush 一次"——
+		// Flush 是强制落盘的系统调用（几毫秒级），设置页一旦连续记日志，
+		// UI 线程就被磁盘卡住（表现为设置窗口操作有顿挫感）。
+		// 队列有 4096 行上限 + 退出前 FlushAsyncQueue 兜底，不会丢关键日志。
+		EnqueueAsync(Stamp(level, msg));
 	}
 
 	/// <summary>
@@ -5905,11 +5944,12 @@ internal static class Log
 		try
 		{
 			// 上限 4096 行：诊断日志本就只服务排查，宁可丢少量也不能让钩子线程等。
+			// 行结尾的 \r\n 在入队时补上（Stamp 只产出本体，避免再拼一次串）。
 			if (AsyncQueue.Count > 4096)
 			{
 				AsyncQueue.TryDequeue(out var _);
 			}
-			AsyncQueue.Enqueue(line);
+			AsyncQueue.Enqueue(line + "\r\n");
 			Interlocked.Increment(ref AsyncEnqueuedForTest);
 			StartDrainIfNeeded();
 		}
@@ -6039,14 +6079,44 @@ internal static class Log
 
 	private static string Stamp(string level, string msg)
 	{
-		StringBuilder stringBuilder = new StringBuilder(64);
-		stringBuilder.Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"));
-		stringBuilder.Append(' ');
-		stringBuilder.Append(level);
-		stringBuilder.Append(' ');
-		stringBuilder.Append(msg);
-		stringBuilder.Append("\r\n");
-		return stringBuilder.ToString();
+		// v1.3：热路径零分配版。旧版 DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff")
+		// 每行都分配一个 DateTime + 一个 string + 格式化器；诊断日志高频时
+		//（拖动期间每次鼠标键事件都记一行）这就是稳定的 GC 压力源。
+		// 现在只分配最终那一个 string。
+		DateTime now = DateTime.Now;
+		return string.Create(25 + level.Length + msg.Length, (now, level, msg), static (span, state) =>
+		{
+			DateTime dateTime = state.now;
+			int num = 0;
+			span[num++] = (char)(48 + dateTime.Year / 1000);
+			span[num++] = (char)(48 + dateTime.Year / 100 % 10);
+			span[num++] = (char)(48 + dateTime.Year / 10 % 10);
+			span[num++] = (char)(48 + dateTime.Year % 10);
+			span[num++] = '-';
+			span[num++] = (char)(48 + dateTime.Month / 10);
+			span[num++] = (char)(48 + dateTime.Month % 10);
+			span[num++] = '-';
+			span[num++] = (char)(48 + dateTime.Day / 10);
+			span[num++] = (char)(48 + dateTime.Day % 10);
+			span[num++] = ' ';
+			span[num++] = (char)(48 + dateTime.Hour / 10);
+			span[num++] = (char)(48 + dateTime.Hour % 10);
+			span[num++] = ':';
+			span[num++] = (char)(48 + dateTime.Minute / 10);
+			span[num++] = (char)(48 + dateTime.Minute % 10);
+			span[num++] = ':';
+			span[num++] = (char)(48 + dateTime.Second / 10);
+			span[num++] = (char)(48 + dateTime.Second % 10);
+			span[num++] = '.';
+			span[num++] = (char)(48 + dateTime.Millisecond / 100);
+			span[num++] = (char)(48 + dateTime.Millisecond / 10 % 10);
+			span[num++] = (char)(48 + dateTime.Millisecond % 10);
+			span[num++] = ' ';
+			state.level.AsSpan().CopyTo(span.Slice(num));
+			num += state.level.Length;
+			span[num++] = ' ';
+			state.msg.AsSpan().CopyTo(span.Slice(num));
+		});
 	}
 
 	private static void EnsureWriter()
@@ -7972,27 +8042,60 @@ internal abstract class LayeredBitmapOverlay : OverlayWindow
 	{
 		lock (_bufGate)
 		{
-			ReleaseBitmap();
-			Bitmap bitmap = new Bitmap(w, h, PixelFormat.Format32bppArgb);
-			try
+			// --------------------------------------------------------------
+			// v1.3 性能：尺寸没变就【复用】托管 Bitmap，只重画内容。
+			// 旧实现每次都：释放全部 → 新建 Bitmap → GetHbitmap()（一次完整像素
+			// 拷贝）→ DeleteObject 旧句柄。纯移动（尺寸不变）是拖动中最常见情形，
+			// 其中的托管 Bitmap 分配/GC 压力在这里省掉。
+			// 注意：GetHbitmap 产出的 HBITMAP 是当时像素的【快照】，重画托管
+			// Bitmap 不会同步过去——所以 HBITMAP 仍需重做（见下），但 Bitmap
+			// 对象本身与 GC 压力省了，且免去了"先释放再全建"的窗口期。
+			// --------------------------------------------------------------
+			bool flag = _bmp != null && _bw == w && _bh == h;
+			Bitmap bitmap;
+			if (flag)
 			{
-				using Graphics graphics = Graphics.FromImage(bitmap);
-				graphics.SmoothingMode = SmoothingMode.AntiAlias;
-				graphics.PixelOffsetMode = PixelOffsetMode.Half;
-				graphics.Clear(Color.Transparent);
-				RenderContent(graphics, w, h);
+				bitmap = _bmp;
+				try
+				{
+					using Graphics graphics = Graphics.FromImage(bitmap);
+					graphics.SmoothingMode = SmoothingMode.AntiAlias;
+					graphics.PixelOffsetMode = PixelOffsetMode.Half;
+					graphics.Clear(Color.Transparent);
+					RenderContent(graphics, w, h);
+				}
+				catch (Exception ex)
+				{
+					Log.Error(ex);
+					bitmap = null;
+				}
 			}
-			catch (Exception ex)
+			else
 			{
-				Log.Error(ex);
-				bitmap.Dispose();
+				bitmap = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+			}
+			if (bitmap == null)
+			{
 				return;
 			}
-			_bmp = bitmap;
-			_bw = w;
-			_bh = h;
-			_curW = w;
-			_curH = h;
+			if (!flag)
+			{
+				try
+				{
+					using Graphics graphics2 = Graphics.FromImage(bitmap);
+					graphics2.SmoothingMode = SmoothingMode.AntiAlias;
+					graphics2.PixelOffsetMode = PixelOffsetMode.Half;
+					graphics2.Clear(Color.Transparent);
+					RenderContent(graphics2, w, h);
+				}
+				catch (Exception ex2)
+				{
+					Log.Error(ex2);
+					bitmap.Dispose();
+					return;
+				}
+			}
+			// HBITMAP 阶段：无论是否复用 Bitmap，快照都要按当前像素重做。
 			if (_memDc == IntPtr.Zero)
 			{
 				nint dC = Native.GetDC(IntPtr.Zero);
@@ -8008,24 +8111,57 @@ internal abstract class LayeredBitmapOverlay : OverlayWindow
 					}
 				}
 			}
-			if (_memDc != IntPtr.Zero)
+			if (_memDc == IntPtr.Zero)
 			{
-				nint zero = IntPtr.Zero;
-				try
+				if (!flag)
 				{
-					zero = bitmap.GetHbitmap(Color.FromArgb(0));
+					bitmap.Dispose();
 				}
-				catch (Exception ex2)
-				{
-					Log.Error(ex2);
-					return;
-				}
-				if (zero != IntPtr.Zero)
-				{
-					_hBitmap = zero;
-					_oldBmp = Native.SelectObject(_memDc, zero);
-				}
+				return;
 			}
+			nint zero = IntPtr.Zero;
+			try
+			{
+				zero = bitmap.GetHbitmap(Color.FromArgb(0));
+			}
+			catch (Exception ex3)
+			{
+				Log.Error(ex3);
+				if (!flag)
+				{
+					bitmap.Dispose();
+				}
+				return;
+			}
+			if (zero == IntPtr.Zero)
+			{
+				return;
+			}
+			// 换新 HBITMAP：先把旧的从 DC 里换出来再删（顺序不能反，DC 里选着的不能删）。
+			if (_memDc != IntPtr.Zero && _oldBmp != IntPtr.Zero)
+			{
+				Native.SelectObject(_memDc, _oldBmp);
+				_oldBmp = IntPtr.Zero;
+			}
+			if (_hBitmap != IntPtr.Zero)
+			{
+				Native.DeleteObject(_hBitmap);
+				_hBitmap = IntPtr.Zero;
+			}
+			if (!flag)
+			{
+				if (_bmp != null)
+				{
+					_bmp.Dispose();
+				}
+				_bmp = bitmap;
+			}
+			_hBitmap = zero;
+			_bw = w;
+			_bh = h;
+			_curW = w;
+			_curH = h;
+			_oldBmp = Native.SelectObject(_memDc, zero);
 		}
 	}
 
@@ -8126,6 +8262,10 @@ internal abstract class LayeredBitmapOverlay : OverlayWindow
 			}
 			_bw = 0;
 			_bh = 0;
+			// v1.3：_curW/_curH 也必须归零。SetRectNow 靠"尺寸没变就跳过 Rebuild"省拷贝，
+			// 若这里不归零，空闲释放后同尺寸的矩形会带着已删除的 HBITMARK 去 Push（黑框/崩）。
+			_curW = 0;
+			_curH = 0;
 		}
 	}
 
@@ -8143,6 +8283,38 @@ internal abstract class LayeredBitmapOverlay : OverlayWindow
 				Native.DeleteDC(_memDc);
 				_memDc = IntPtr.Zero;
 			}
+		}
+	}
+
+	/// <summary>
+	/// v1.3：空闲时释放像素缓冲（托管 Bitmap + 非托管 HBITMAP），但保留 DC 与窗口句柄。
+	/// 下一次显示会经 Rebuild 重建缓冲；DC 不释放可以避免"频繁拖动时反复建 DC"的开销。
+	/// 必须先等在途的 Push 完成再放（UpdateLayeredWindow 还拿着那块内存）。
+	/// </summary>
+	internal void ReleaseBuffersForIdle()
+	{
+		try
+		{
+			HideNowSync();
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+		lock (_bufGate)
+		{
+			while (_pushInFlight > 0)
+			{
+				try
+				{
+					Monitor.Wait(_bufGate);
+				}
+				catch
+				{
+					break;
+				}
+			}
+			ReleaseBitmap();
 		}
 	}
 }
@@ -13683,7 +13855,7 @@ internal static class SelfTest
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
 		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
-		Check(SettingsForm.AppVersionForTest == "1.2.0", "★ 版本号已升到 1.2.0", "实际=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == "1.3.0", "★ 版本号已升到 1.3.0", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
 
@@ -16521,23 +16693,27 @@ internal sealed class SettingsForm : Form
 				}
 				if (num2 > 0.01f)
 				{
-					Color color = (flag ? Design.AccentSoft : Color.FromArgb(242, 243, 246));
+					// v1.3：选中 = 浅靛蓝胶囊 + 细描边；悬停 = 极浅灰。去掉了左侧彩色指示条
+					// （胶囊本身已足够指示选中，双重强调只显噪）。
+					Color color = (flag ? Design.AccentSoft : Color.FromArgb(243, 244, 246));
 					using SolidBrush brush2 = new SolidBrush(MixColor(Color.FromArgb(0, color), color, Math.Min(1f, num2 * 1.35f)));
-					using GraphicsPath path = RoundedPath(r, Fields.Sc(8));
-					graphics.FillPath(brush2, path);
-				}
-				if (num2 > 0.01f)
-				{
-					Rectangle r2 = new Rectangle(r.Left + Fields.Sc(2), r.Top + Fields.Sc(7), Fields.Sc(3), r.Height - Fields.Sc(14));
-					using SolidBrush brush3 = new SolidBrush(Color.FromArgb((int)Math.Round(255f * Math.Min(1f, num2)), Design.Accent));
-					using GraphicsPath path2 = RoundedPath(r2, Fields.Sc(2));
-					graphics.FillPath(brush3, path2);
+					using GraphicsPath path = RoundedPath(r, Fields.Sc(10));
+					{
+						graphics.FillPath(brush2, path);
+					}
+					if (flag)
+					{
+						using Pen pen4 = new Pen(MixColor(Color.FromArgb(0, Design.AccentSoftStroke), Design.AccentSoftStroke, Math.Min(1f, num2)));
+						{
+							graphics.DrawPath(pen4, path);
+						}
+					}
 				}
 				Rectangle rectangle = new Rectangle(r.Left + Fields.Sc(13), r.Top, r.Width - Fields.Sc(18), r.Height);
 				Color b;
 				if (flag)
 				{
-					b = Design.Accent;
+					b = Design.AccentPressed;
 				}
 				else
 				{
@@ -16688,45 +16864,71 @@ internal sealed class SettingsForm : Form
 
 	private static class Design
 	{
-		public static readonly Color Canvas = Color.FromArgb(240, 242, 245);
+		// ==================================================================
+		// v1.3 视觉语言：精致中性灰 + 单一靛蓝强调。
+		//   · 画布用暖灰（不带蓝调），卡片纯白，靠柔和两级投影建立层次；
+		//   · 全部圆角统一节奏：卡片 12 / 输入 8 / 按钮 8 / 侧栏选中 10；
+		//   · 强调色只用靛蓝一处（选中/主按钮/焦点），其余一律灰阶，
+		//     避免"处处有色 = 处处噪音"。
+		// ==================================================================
+
+		/// <summary>窗口画布：暖中性灰（旧值 240,242,245 偏蓝，显得廉价）。</summary>
+		public static readonly Color Canvas = Color.FromArgb(243, 244, 246);
 
 		public static readonly Color Surface = Color.White;
 
 		public static readonly Color SurfaceTop = Color.White;
 
-		public static readonly Color SurfaceBottom = Color.FromArgb(251, 252, 254);
+		public static readonly Color SurfaceBottom = Color.FromArgb(252, 253, 254);
 
-		public static readonly Color SidebarSurface = Color.FromArgb(250, 251, 252);
+		public static readonly Color SidebarSurface = Color.FromArgb(248, 249, 250);
 
-		public static readonly Color Stroke = Color.FromArgb(220, 224, 232);
+		/// <summary>卡片描边：足够浅，只在与画布交界处起"裁切"作用。</summary>
+		public static readonly Color Stroke = Color.FromArgb(226, 229, 234);
 
-		public const int Radius = 14;
+		/// <summary>标题下的发丝分隔线。</summary>
+		public static readonly Color Divider = Color.FromArgb(236, 238, 241);
 
-		public static readonly Color Shadow = Color.FromArgb(22, 28, 45);
+		public const int Radius = 12;
 
-		public const int ShadowOffset = 1;
+		/// <summary>投影基色：深蓝黑，配低透明度出"环境光"感。</summary>
+		public static readonly Color Shadow = Color.FromArgb(15, 23, 42);
 
-		public const int ShadowSpread = 5;
+		public const int ShadowOffset = 2;
 
-		public const int AccentBarWidth = 4;
+		public const int ShadowSpread = 4;
 
-		public static readonly Color TextPrimary = Color.FromArgb(24, 26, 33);
+		/// <summary>v1.3 起卡片不再画左侧强调条：彩色竖条 + 彩色图标双重噪音是旧版显丑的主因之一。</summary>
+		public const int AccentBarWidth = 0;
 
-		public static readonly Color TextSecondary = Color.FromArgb(122, 128, 142);
+		public static readonly Color TextPrimary = Color.FromArgb(17, 20, 24);
 
-		public static readonly Color Accent = Color.FromArgb(94, 84, 222);
+		public static readonly Color TextSecondary = Color.FromArgb(106, 112, 122);
 
-		public static readonly Color AccentPressed = Color.FromArgb(76, 66, 198);
+		public static readonly Color TextTertiary = Color.FromArgb(148, 153, 161);
 
-		public static readonly Color AccentSoft = Color.FromArgb(238, 237, 253);
+		/// <summary>唯一强调色：靛蓝（比旧的 94,84,222 更沉稳）。</summary>
+		public static readonly Color Accent = Color.FromArgb(79, 70, 229);
 
-		public static readonly Color InputStroke = Color.FromArgb(205, 210, 222);
+		public static readonly Color AccentPressed = Color.FromArgb(63, 56, 205);
 
-		public static readonly Color InputStrokeFocus = Color.FromArgb(94, 84, 222);
+		public static readonly Color AccentSoft = Color.FromArgb(238, 240, 252);
 
-		public const int FieldRadius = 6;
+		/// <summary>浅靛蓝底的描边（选中态胶囊用）。</summary>
+		public static readonly Color AccentSoftStroke = Color.FromArgb(206, 210, 245);
 
-		public static readonly Color Hint = Color.FromArgb(113, 113, 122);
+		/// <summary>焦点环外圈：靛蓝 18% 透明。</summary>
+		public static readonly Color FocusRing = Color.FromArgb(46, 79, 70, 229);
+
+		public static readonly Color InputStroke = Color.FromArgb(216, 219, 224);
+
+		public static readonly Color InputStrokeHover = Color.FromArgb(202, 206, 213);
+
+		public static readonly Color InputStrokeFocus = Color.FromArgb(79, 70, 229);
+
+		public const int FieldRadius = 8;
+
+		public static readonly Color Hint = Color.FromArgb(140, 145, 153);
 
 		public static readonly Color WarnText = Color.FromArgb(161, 98, 7);
 
@@ -16753,19 +16955,20 @@ internal sealed class SettingsForm : Form
 
 	private sealed class CardGroup : GroupBox
 	{
-		public int TitleFontPx = 13;
+		public int TitleFontPx = 14;
 
 		public int TitleInsetPx = 32;
 
 		public int TitleY = 9;
 
-		public int RadiusPx = 14;
+		public int RadiusPx = Design.Radius;
 
-		public int ShadowOffsetPx = 1;
+		public int ShadowOffsetPx = 2;
 
-		public int ShadowSpreadPx = 5;
+		public int ShadowSpreadPx = 4;
 
-		public int AccentBarPx = 4;
+		/// <summary>v1.3 起恒为 0：卡片不再画左侧彩色竖条（旧版"处处强调 = 处处噪音"）。</summary>
+		public int AccentBarPx = 0;
 
 		public CardGroup()
 		{
@@ -16789,51 +16992,53 @@ internal sealed class SettingsForm : Form
 				graphics.FillRectangle(brush, 0, 0, width, height);
 			}
 			int num = Math.Max(2, RadiusPx);
-			if (ShadowSpreadPx > 0)
+			// ------------------------------------------------------------------
+			// v1.3 投影：两级（环境光 + 主投影），共 4 笔。
+			// 旧实现是 ~15 笔粗描边（num2=10 到 1 的两个循环），既慢又生硬有色带。
+			// 新实现模拟 CSS 的 box-shadow 双层结构：
+			//   环境光：无偏移、很宽、极低透明度 ×3（宽度递增制造高斯式衰减）；
+			//   主投影：向下偏 2px、较窄、稍高透明度 ×1。
+			// 笔数 15 → 4，视觉上反而更柔。
+			// ------------------------------------------------------------------
+			int num2 = Math.Max(1, Fields.Sc(1));
+			int num3 = Math.Max(2, ShadowSpreadPx);
+			for (int i = 0; i < 3; i++)
 			{
-				int num2 = ShadowSpreadPx * 2;
-				using (GraphicsPath path = RoundedPath(new Rectangle(1 - num2 / 2, ShadowOffsetPx + num2 / 3, width - 2 + num2, height - 2 + num2), num + num2 / 2))
-				{
-					for (int num3 = num2; num3 >= 1; num3--)
-					{
-						using Pen pen = new Pen(Color.FromArgb(Math.Max(2, 8 - num3 / 3), Design.Shadow), (float)num3 * 2f);
-						graphics.DrawPath(pen, path);
-					}
-				}
-				using GraphicsPath path2 = RoundedPath(new Rectangle(1, ShadowOffsetPx, width - 2, height - 2), num);
-				for (int num4 = ShadowSpreadPx; num4 >= 1; num4--)
-				{
-					using Pen pen2 = new Pen(Color.FromArgb(Math.Max(5, 24 - num4 * 3), Design.Shadow), (float)num4 * 2f);
-					graphics.DrawPath(pen2, path2);
-				}
+				int num4 = (i + 1) * num3;
+				using GraphicsPath path = RoundedPath(new Rectangle(-num4 / 2 + num2, -num4 / 3 + num2, width - num2 * 2 + num4, height - num2 * 2 + num4), num + num4 / 2);
+				using Pen pen = new Pen(Color.FromArgb(7 - i * 2, Design.Shadow), (float)(num4 + num3));
+				pen.LineJoin = LineJoin.Round;
+				graphics.DrawPath(pen, path);
+			}
+			{
+				int num5 = Math.Max(1, ShadowOffsetPx);
+				using GraphicsPath path2 = RoundedPath(new Rectangle(num2, num5 + num2, width - num2 * 2 - 2, height - num2 * 2 - 2), num);
+				using Pen pen2 = new Pen(Color.FromArgb(16, Design.Shadow), (float)Math.Max(2, num3 * 2));
+				pen2.LineJoin = LineJoin.Round;
+				graphics.DrawPath(pen2, path2);
 			}
 			GraphicsPath graphicsPath = RoundedPath(new Rectangle(0, 0, width - 1, height - 1), num);
 			using (LinearGradientBrush brush2 = new LinearGradientBrush(new Rectangle(0, 0, width, height), Design.SurfaceTop, Design.SurfaceBottom, LinearGradientMode.Vertical))
 			{
 				graphics.FillPath(brush2, graphicsPath);
 			}
-			using (Pen pen3 = new Pen(Design.Stroke))
+			using Pen pen3 = new Pen(Design.Stroke);
 			{
 				graphics.DrawPath(pen3, graphicsPath);
 			}
+			// 标题区：图标（中性灰）+ 加粗近黑标题 + 发丝分隔线。
 			if (!string.IsNullOrEmpty(Text) && TitleInsetPx > 8)
 			{
-				int num5 = TitleInsetPx - Math.Max(2, Fields.Sc(1));
-				int num6 = AccentBarPx + 12;
-				int num7 = width - Fields.Sc(14);
-				if (num7 > num6 + Fields.Sc(20) && num5 > 0 && num5 < height - 2)
+				int num6 = TitleInsetPx - Math.Max(2, num2);
+				int num7 = AccentBarPx + Fields.Sc(14);
+				int num8 = width - Fields.Sc(16);
+				if (num8 > num7 + Fields.Sc(20) && num6 > 0 && num6 < height - 2)
 				{
-					using Pen pen4 = new Pen(Color.FromArgb(20, Design.Shadow));
-					graphics.DrawLine(pen4, num6, num5, num7, num5);
+					using Pen pen4 = new Pen(Design.Divider);
+					{
+						graphics.DrawLine(pen4, num7, num6, num8, num6);
+					}
 				}
-			}
-			if (AccentBarPx > 0)
-			{
-				using SolidBrush brush3 = new SolidBrush(Design.Accent);
-				using Region region = new Region(graphicsPath);
-				using Region region2 = new Region(new Rectangle(0, 0, AccentBarPx, height));
-				region.Intersect(region2);
-				graphics.FillRegion(brush3, region);
 			}
 			graphicsPath.Dispose();
 			Fields.PaintFor(graphics, this);
@@ -16841,23 +17046,22 @@ internal sealed class SettingsForm : Form
 			{
 				return;
 			}
-			float num8 = AccentBarPx + 12;
-			using (Font font = Icons.At(TitleFontPx + 1))
+			float num9 = AccentBarPx + Fields.Sc(14);
+			using (Font font = Icons.At(TitleFontPx))
 			{
 				if (font != null)
 				{
 					string s = GlyphForSection(Text);
-					float num9 = TitleFontPx + 6;
-					using (SolidBrush brush4 = new SolidBrush(Design.Accent))
+					using (SolidBrush brush4 = new SolidBrush(Design.TextSecondary))
 					{
-						graphics.DrawString(s, font, brush4, new PointF(num8, TitleY - 1));
+						graphics.DrawString(s, font, brush4, new PointF(num9, TitleY));
 					}
-					num8 += num9;
+					num9 += (float)Fields.Sc(TitleFontPx + 7);
 				}
 			}
 			using Font font2 = new Font(Font.FontFamily, TitleFontPx, FontStyle.Bold, GraphicsUnit.Pixel);
 			using SolidBrush brush5 = new SolidBrush(Design.TextPrimary);
-			graphics.DrawString(Text, font2, brush5, new PointF(num8, TitleY));
+			graphics.DrawString(Text, font2, brush5, new PointF(num9, TitleY - 1));
 		}
 	}
 
@@ -17069,6 +17273,10 @@ internal sealed class SettingsForm : Form
 			foreach (KeyValuePair<Control, int> item in _radius)
 			{
 				Control key = item.Key;
+				// v1.3：先做最廉价的淘汰（Parent 引用比较），再谈绘制。
+				// 旧实现对【每个卡片】的 OnPaint 都要遍历【全表】（所有卡片的全部输入控件），
+				// 复杂度是 O(卡片数 × 控件总数)；设置页 8 卡 × ~60 控件 = 每次重绘近 500 次无效迭代。
+				// Parent 比较一次指针即可淘汰绝大多数，只剩本卡片自己的控件进入绘制分支。
 				if (key == null || key.Parent != parent || !key.Visible || key.Width <= 0 || key.Height <= 0)
 				{
 					continue;
@@ -17078,12 +17286,24 @@ internal sealed class SettingsForm : Form
 				GraphicsPath graphicsPath = RoundedPath(r, radius);
 				try
 				{
+					bool flag = key.Focused;
 					using (SolidBrush brush = new SolidBrush(key.Enabled ? key.BackColor : Design.Canvas))
 					{
 						g.FillPath(brush, graphicsPath);
 					}
-					using Pen pen = new Pen(key.Enabled ? Design.InputStroke : Color.FromArgb(228, 231, 238));
-					g.DrawPath(pen, graphicsPath);
+					// 焦点态：输入框外圈淡靛蓝光环（与按钮焦点环同一套视觉语言）。
+					if (flag && key.Enabled)
+					{
+						using Pen penF = new Pen(Design.FocusRing, 2f);
+						{
+							g.DrawPath(penF, graphicsPath);
+						}
+					}
+					Color strokeColor = flag ? Design.InputStrokeFocus : Design.InputStroke;
+					using Pen pen = new Pen(key.Enabled ? strokeColor : Color.FromArgb(230, 232, 236));
+					{
+						g.DrawPath(pen, graphicsPath);
+					}
 				}
 				catch (Exception ex)
 				{
@@ -17394,8 +17614,10 @@ internal sealed class SettingsForm : Form
 			}
 			else
 			{
-				Color a = MixColor(Color.FromArgb(206, 210, 219), Color.FromArgb(186, 191, 202), value);
-				Color b = MixColor(Design.Accent, ControlPaint.Light(Design.Accent, 0.12f), value);
+				// v1.3：未选中轨道是中性灰（旧的带蓝调 206,210,219 偏脏）；
+				// 悬停只提亮一点点，选中才上靛蓝——开关的"开=彩色"语义更清晰。
+				Color a = MixColor(Color.FromArgb(224, 227, 232), Color.FromArgb(214, 217, 223), value);
+				Color b = MixColor(Design.Accent, ControlPaint.Light(Design.Accent, 0.08f), value);
 				color = MixColor(a, b, num6);
 			}
 			using (GraphicsPath path = RoundedPath(r, radius))
@@ -17713,7 +17935,7 @@ internal sealed class SettingsForm : Form
 			{
 				return;
 			}
-			int num = ((CurrentUiScale > 0f) ? ((int)Math.Round(6f * CurrentUiScale)) : 6);
+			int num = ((CurrentUiScale > 0f) ? ((int)Math.Round(8f * CurrentUiScale)) : 8);
 			if (num > r.Height / 2)
 			{
 				num = r.Height / 2;
@@ -17729,53 +17951,64 @@ internal sealed class SettingsForm : Form
 			Color color;
 			if (!Enabled)
 			{
-				color = Color.FromArgb(240, 241, 243);
-				foreColor = Color.FromArgb(170, 175, 184);
-				color2 = Color.FromArgb(233, 235, 239);
+				color = Color.FromArgb(243, 244, 246);
+				foreColor = Color.FromArgb(168, 173, 182);
+				color2 = Color.FromArgb(235, 237, 240);
 			}
 			else if (Primary)
 			{
 				Color accent = Design.Accent;
-				Color b = ControlPaint.Light(Design.Accent, 0.1f);
+				Color b = ControlPaint.Light(Design.Accent, 0.08f);
 				Color accentPressed = Design.AccentPressed;
 				color = MixColor(accent, b, value);
 				color = MixColor(color, accentPressed, value2);
 				foreColor = Color.White;
-				color2 = color;
+				color2 = Color.Transparent;
 			}
 			else
 			{
-				color = MixColor(Design.Surface, Color.FromArgb(250, 251, 252), value);
-				color = MixColor(color, Color.FromArgb(238, 240, 244), value2);
+				// 次级按钮：白底 + 灰描边，悬停加深一档（旧版悬停几乎无感）。
+				color = MixColor(Color.White, Color.FromArgb(249, 250, 251), value);
+				color = MixColor(color, Color.FromArgb(238, 240, 243), value2);
 				foreColor = Design.TextPrimary;
-				color2 = MixColor(Design.Stroke, Color.FromArgb(205, 210, 219), value);
+				color2 = MixColor(Design.InputStroke, Design.InputStrokeHover, value);
 			}
 			// GraphicsPath 是 IDisposable：这里必须 using，否则每次重绘都漏一个 GDI 对象。
 			// Tween 每 16ms 触发一次 Invalidate，悬停/聚焦的按钮会持续泄漏。
 			using (GraphicsPath path = RoundedPath(r, num))
 			{
-				using (SolidBrush brush = new SolidBrush(color))
+				using SolidBrush brush = new SolidBrush(color);
 				{
 					graphics.FillPath(brush, path);
 				}
-				using (Pen pen = new Pen(color2))
+				if (color2.A > 0)
 				{
-					graphics.DrawPath(pen, path);
+					using Pen pen = new Pen(color2);
+					{
+						graphics.DrawPath(pen, path);
+					}
 				}
 			}
 			if (Primary && Enabled && r.Height > num * 2 + 4)
 			{
 				using Pen pen2 = new Pen(Color.FromArgb(52, Color.White), Math.Max(1f, Fields.Sc(1)));
-				graphics.DrawLine(pen2, r.X + num, r.Y + 1, r.Right - num, r.Y + 1);
+				{
+					graphics.DrawLine(pen2, r.X + num, r.Y + 1, r.Right - num, r.Y + 1);
+				}
 			}
 			TextRenderer.DrawText(graphics, Text, Font, new Rectangle(0, 0, Width, Height), foreColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 			if (!Focused || !Enabled)
 			{
 				return;
 			}
-			using Pen pen3 = new Pen(Design.Accent, 1.6f);
-			using GraphicsPath graphicsPath = RoundedPath(new Rectangle(1, 1, Width - 3, Height - 3), num - 1);
-			graphics.DrawPath(pen3, graphicsPath);
+			// 焦点环：外圈淡靛蓝 + 内圈描边，Windows 11 Fluent 焦点样式。
+			using (Pen pen3 = new Pen(Design.FocusRing, 2f))
+			{
+				using GraphicsPath graphicsPath = RoundedPath(new Rectangle(1, 1, Width - 3, Height - 3), Math.Max(1, num - 1));
+				{
+					graphics.DrawPath(pen3, graphicsPath);
+				}
+			}
 		}
 	}
 
@@ -18940,10 +19173,10 @@ internal sealed class SettingsForm : Form
 			{
 				cardGroup.TitleFontPx = (int)Math.Round(14f * uiScale);
 				cardGroup.TitleY = (int)Math.Round(9f * uiScale);
-				cardGroup.RadiusPx = (int)Math.Round(14f * uiScale);
-				cardGroup.ShadowOffsetPx = (int)Math.Round(1f * uiScale);
-				cardGroup.ShadowSpreadPx = (int)Math.Round(5f * uiScale);
-				cardGroup.AccentBarPx = (int)Math.Round(4f * uiScale);
+				cardGroup.RadiusPx = (int)Math.Round(12f * uiScale);
+				cardGroup.ShadowOffsetPx = (int)Math.Round(2f * uiScale);
+				cardGroup.ShadowSpreadPx = (int)Math.Round(4f * uiScale);
+				cardGroup.AccentBarPx = 0;
 				num = (int)Math.Round((float)cardGroup.TitleInsetPx * uiScale);
 				groupBox2.Height += num;
 			}
