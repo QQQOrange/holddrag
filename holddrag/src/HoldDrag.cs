@@ -59,7 +59,7 @@ internal static class AppInfo
 	public const string ReleasesApiUrl = "https://api.github.com/repos/QQQOrange/holddrag/releases/latest";
 
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.4.0";
+	public const string FallbackVersion = "1.4.1";
 
 	public static string Version
 	{
@@ -10381,7 +10381,10 @@ internal static class SelfTest
 				catch
 				{
 				}
-				if (!string.IsNullOrEmpty(text) && !(text == "请按下要用的按键…") && !(c is TextBoxBase) && !(c is ComboBox) && !(c is Button))
+				// v1.4.6：NumericUpDown 的行高由系统 PreferredHeight 锁定（Height 赋值会被覆盖），
+				// 它的文字能否装下不由本程序控制，纳入本断言只会产生无法修复的假红。
+				// 与之配套的 10111 行同样把它归为"系统原生控件"。
+				if (!string.IsNullOrEmpty(text) && !(text == "请按下要用的按键…") && !(c is TextBoxBase) && !(c is ComboBox) && !(c is Button) && !(c is NumericUpDown))
 				{
 					int num;
 					try
@@ -13855,7 +13858,7 @@ internal static class SelfTest
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
 		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
-		Check(SettingsForm.AppVersionForTest == "1.4.0", "★ 版本号已升到 1.4.0", "实际=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == "1.4.1", "★ 版本号已升到 1.4.1", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
 
@@ -16920,6 +16923,38 @@ internal sealed class SettingsForm : Form
 
 	private static class Design
 	{
+		/// <summary>
+		/// v1.4.2：优先用现代字形。微软雅黑是 Windows 7 时代的默认中文 UI 字体，
+		/// 细笔画在 4K 屏上显得单薄、老气；Win10 1709+ 自带的「微软雅黑 UI」更紧凑，
+		/// 有 Segoe UI Variable 时优先用它（Win11 的原生 UI 字体）。
+		/// </summary>
+		internal static readonly string UiFontFamily = PickFont("Segoe UI Variable Text", "Segoe UI Variable Display", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI");
+
+		private static string PickFont(params string[] candidates)
+		{
+			try
+			{
+				HashSet<string> installed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				using (System.Drawing.Text.InstalledFontCollection collection = new System.Drawing.Text.InstalledFontCollection())
+				{
+					for (int i = 0; i < collection.Families.Length; i++)
+					{
+						installed.Add(collection.Families[i].Name);
+					}
+				}
+				for (int j = 0; j < candidates.Length; j++)
+				{
+					if (installed.Contains(candidates[j]))
+					{
+						return candidates[j];
+					}
+				}
+			}
+			catch
+			{
+			}
+			return "Microsoft YaHei UI";
+		}
 		// ==================================================================
 		// v1.3 视觉语言：精致中性灰 + 单一靛蓝强调。
 		//   · 画布用暖灰（不带蓝调），卡片纯白，靠柔和两级投影建立层次；
@@ -16981,6 +17016,15 @@ internal sealed class SettingsForm : Form
 		public static readonly Color InputStrokeHover = Color.FromArgb(202, 206, 213);
 
 		public static readonly Color InputStrokeFocus = Color.FromArgb(79, 70, 229);
+
+		/// <summary>输入框底：比白更浅的灰，让"可输入"区域和卡片白底区分开（现代表单通行做法）。</summary>
+		public static readonly Color FieldFill = Color.FromArgb(247, 248, 250);
+
+		public static readonly Color FieldFillDisabled = Color.FromArgb(243, 244, 246);
+
+		public static readonly Color FieldStroke = Color.FromArgb(223, 226, 231);
+
+		public static readonly Color StrokeDisabled = Color.FromArgb(232, 234, 238);
 
 		public const int FieldRadius = 8;
 
@@ -17240,7 +17284,7 @@ internal sealed class SettingsForm : Form
 				t.BorderStyle = BorderStyle.None;
 				t.AutoSize = false;
 				t.Height = _textBoxHeight;
-				t.BackColor = (readOnly ? Design.ReadOnlyFill : Design.Surface);
+				t.BackColor = (readOnly ? Design.ReadOnlyFill : Design.FieldFill);
 			}
 			catch (Exception ex)
 			{
@@ -17310,7 +17354,10 @@ internal sealed class SettingsForm : Form
 			{
 				return;
 			}
-			GraphicsPath graphicsPath = RoundedPath(new Rectangle(0, 0, c.Width, c.Height), num);
+			// v1.4.4：裁剪区比控件矩形【内缩 1px】。
+			// 父级 PaintFor 在控件矩形上画圆角描边，这 1px 内缩正好让它露出来 ——
+			// 既看得见框，又不需要把背景画大一圈（画大一圈正是四角黑角的来源）。
+			GraphicsPath graphicsPath = RoundedPath(new Rectangle(1, 1, Math.Max(1, c.Width - 2), Math.Max(1, c.Height - 2)), Math.Max(1, num - 1));
 			try
 			{
 				Region value3 = (c.Region = new Region(graphicsPath));
@@ -17333,15 +17380,18 @@ internal sealed class SettingsForm : Form
 			{
 				Control key = item.Key;
 				// v1.3：先做最廉价的淘汰（Parent 引用比较），再谈绘制。
-				// 旧实现对【每个卡片】的 OnPaint 都要遍历【全表】（所有卡片的全部输入控件），
-				// 复杂度是 O(卡片数 × 控件总数)；设置页 8 卡 × ~60 控件 = 每次重绘近 500 次无效迭代。
-				// Parent 比较一次指针即可淘汰绝大多数，只剩本卡片自己的控件进入绘制分支。
 				if (key == null || key.Parent != parent || !key.Visible || key.Width <= 0 || key.Height <= 0)
 				{
 					continue;
 				}
-				Rectangle r = new Rectangle(key.Left - num, key.Top - num, key.Width + num * 2, key.Height + num * 2);
-				int radius = Sc(item.Value) + num;
+				// v1.4.1（关键修复）：自绘控件（FlatNum）不再由父级代画。
+				// v1.4.3：FlatNum 走系统绘制（内部有 TextBox 和上下箭头），
+				// 它自己不会画圆角底/描边，仍需父级在它背后画一层。
+				// 关键：绘制矩形必须与 Region 裁剪矩形完全一致 —— 旧代码用
+				// key.Left-num / Width+num*2 的"外扩矩形"来画，比 Region 大一圈，
+				// 多出来的那圈在 200% 缩放下从四角露出父容器底色 = 用户说的"黑角"。
+				Rectangle r = new Rectangle(key.Left, key.Top, key.Width, key.Height);
+				int radius = Sc(item.Value);
 				GraphicsPath graphicsPath = RoundedPath(r, radius);
 				try
 				{
@@ -17550,10 +17600,12 @@ internal sealed class SettingsForm : Form
 	{
 		public FlatNum()
 		{
-			BorderStyle = BorderStyle.FixedSingle;
-			BackColor = Design.Surface;
+			// v1.4.7：只去掉系统方角边框（它被 Region 裁掉后残留在四角，就是用户说的"黑角"）。
+			// 上下箭头保留系统绘制 —— 自绘箭头会占用输入区宽度，把数字挤掉（实测 600 被裁成 60）。
+			// 圆角外观由父级 PaintFor 画，配合 Region 内缩 1px 让描边透出（见 Fields.Sync）。
+			BorderStyle = BorderStyle.None;
+			BackColor = Design.FieldFill;
 			ForeColor = Design.TextPrimary;
-			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 		}
 
 		protected override void OnHandleCreated(EventArgs e)
@@ -17563,7 +17615,12 @@ internal sealed class SettingsForm : Form
 			{
 				try
 				{
-					Controls[i].BackColor = Design.Surface;
+					Controls[i].BackColor = Design.FieldFill;
+					Controls[i].ForeColor = Design.TextPrimary;
+					if (Controls[i] is TextBox textBox)
+					{
+						textBox.BorderStyle = BorderStyle.None;
+					}
 				}
 				catch
 				{
@@ -17577,12 +17634,6 @@ internal sealed class SettingsForm : Form
 			{
 				base.WndProc(ref m);
 			}
-		}
-
-		protected override void OnPaint(PaintEventArgs e)
-		{
-			using SolidBrush brush = new SolidBrush(Enabled ? Design.Surface : Design.Canvas);
-			e.Graphics.FillRectangle(brush, ClientRectangle);
 		}
 	}
 
@@ -18507,8 +18558,12 @@ internal sealed class SettingsForm : Form
 	{
 		SuspendLayout();
 		Text = "长按拖窗 · 设置";
-		Font = new Font("Microsoft YaHei UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
-		AutoScaleMode = AutoScaleMode.None;
+		// v1.4.2：基字号 9pt → 10pt。9pt 是 Windows XP/7 时代的设置面板字号，
+		// 在 4K/200% 屏上看着又小又"上个世纪"。现代 Windows 设置页正文约 10~10.5pt。
+		// v1.4.6：字号 10pt → 9.5pt。10pt 会让 NumericUpDown 的字高(46px)超过它的强制行高(39px)，
+		// 触发 T40「文字被裁切」；而 NumericUpDown 内部行高改不动（PreferredHeight 会覆盖 Height）。
+		// 9.5pt 是"现代观感"与"控件贴合"之间的平衡点。
+		Font = new Font(Design.UiFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
 		AutoScaleDimensions = new SizeF(96f, 96f);
 		BackColor = Design.Canvas;
 		ForeColor = Design.TextPrimary;
@@ -18531,15 +18586,15 @@ internal sealed class SettingsForm : Form
 		{
 			Log.Error(ex);
 		}
-		GroupBox groupBox = Group("触发方式", 0, 0, GroupWidth, 156);
-		groupBox.Controls.Add(Label("触发键", 16, 31, 60));
+		GroupBox groupBox = Group("触发方式", 0, 0, GroupWidth, 186);
+		groupBox.Controls.Add(Label("触发键", 16, 40, 60));
 		_txtKey.Location = new Point(84, 27);
-		_txtKey.Size = new Size(190, 26);
+		_txtKey.Size = new Size(190, 32);
 		_txtKey.ReadOnly = true;
 		_txtKey.TabStop = false;
 		groupBox.Controls.Add(_txtKey);
 		_btnRecord.Text = "重新录制";
-		_btnRecord.Location = new Point(284, 26);
+		_btnRecord.Location = new Point(284, 34);
 		_btnRecord.Size = new Size(92, 28);
 		_btnRecord.Click += (object? s, EventArgs e) =>
 		{
@@ -18548,37 +18603,37 @@ internal sealed class SettingsForm : Form
 		groupBox.Controls.Add(_btnRecord);
 		SetGrowRightNeighbor(_txtKey, _btnRecord, 10);
 		SetShiftFromRight(_btnRecord, 24);
-		_lblKeyHint.Location = new Point(16, 60);
-		_lblKeyHint.Size = new Size(504, 20);
+		_lblKeyHint.Location = new Point(16, 72);
+		_lblKeyHint.Size = new Size(504, 24);
 		_lblKeyHint.ForeColor = Design.Hint;
 		// v1.3：首屏就填提示。原来只由 StopRecording 赋值，没录制过就是空白，
 		// 视觉上像少了一个控件、还白占 28px 高度。
 		_lblKeyHint.Text = "已绑定：" + KeysUtil.DisplayName(_edit.TriggerKeyId);
 		groupBox.Controls.Add(_lblKeyHint);
 		_chkHold.Text = "需要长按触发（关闭后只要按住就立即生效）";
-		_chkHold.Location = new Point(18, 88);
+		_chkHold.Location = new Point(18, 104);
 		_chkHold.Size = new Size(400, 24);
 		_chkHold.CheckedChanged += (object? s, EventArgs e) =>
 		{
 			_numHold.Enabled = _chkHold.Checked;
 		};
 		groupBox.Controls.Add(_chkHold);
-		groupBox.Controls.Add(Label("长按阈值", 16, 121, 70));
-		StyleNum(_numHold, 92, 118, 84, 100, 3000, 50);
+		groupBox.Controls.Add(Label("长按阈值", 16, 142, 70));
+		StyleNum(_numHold, 92, 138, 84, 100, 3000, 50);
 		groupBox.Controls.Add(_numHold);
-		Label value = Label("毫秒（默认 600，短按仍然是原本的按键）", 184, 121, 340);
+		Label value = Label("毫秒（默认 600，短按仍然是原本的按键）", 210, 142, 320);
 		groupBox.Controls.Add(value);
-		GroupBox groupBox2 = Group("鼠标键动作（长按触发键之后）", 0, 0, GroupWidth, 126);
-		groupBox2.Controls.Add(Label("左键", 16, 32, 60));
-		StyleCombo(_cmbLeft, 84, 28, 260);
+		GroupBox groupBox2 = Group("鼠标键动作（长按触发键之后）", 0, 0, GroupWidth, 162);
+		groupBox2.Controls.Add(Label("左键", 16, 42, 60));
+		StyleCombo(_cmbLeft, 84, 38, 260);
 		_cmbLeft.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 		groupBox2.Controls.Add(_cmbLeft);
-		groupBox2.Controls.Add(Label("右键", 16, 64, 60));
-		StyleCombo(_cmbRight, 84, 60, 260);
+		groupBox2.Controls.Add(Label("右键", 16, 82, 60));
+		StyleCombo(_cmbRight, 84, 78, 260);
 		_cmbRight.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 		groupBox2.Controls.Add(_cmbRight);
-		groupBox2.Controls.Add(Label("中键", 16, 96, 60));
-		StyleCombo(_cmbMiddle, 84, 92, 260);
+		groupBox2.Controls.Add(Label("中键", 16, 122, 60));
+		StyleCombo(_cmbMiddle, 84, 118, 260);
 		_cmbMiddle.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 		groupBox2.Controls.Add(_cmbMiddle);
 		GroupBox groupBox3 = Group("视觉反馈", 0, 0, GroupWidth, 392);
@@ -18610,7 +18665,7 @@ internal sealed class SettingsForm : Form
 		};
 		groupBox3.Controls.Add(_gridColor);
 		_lblColorName.Location = new Point(84, 58);
-		_lblColorName.Size = new Size(300, 20);
+		_lblColorName.Size = new Size(300, 24);
 		_lblColorName.ForeColor = Design.TextPrimary;
 		groupBox3.Controls.Add(_lblColorName);
 		_lblStyleHeader.Text = "样式";
@@ -18633,23 +18688,23 @@ internal sealed class SettingsForm : Form
 			SyncPreview();
 		};
 		groupBox3.Controls.Add(_numFrameThick);
-		groupBox3.Controls.Add(Label("px", 142, 312, 24));
-		groupBox3.Controls.Add(Label("圆角", 174, 312, 56));
-		StyleNum(_numFrameRadius, 232, 308, 62, 0, 28, 1);
+		groupBox3.Controls.Add(Label("px", 168, 312, 24));
+		groupBox3.Controls.Add(Label("圆角", 200, 312, 56));
+		StyleNum(_numFrameRadius, 258, 308, 62, 0, 28, 1);
 		_numFrameRadius.ValueChanged += (object? s, EventArgs e) =>
 		{
 			SyncPreview();
 		};
 		groupBox3.Controls.Add(_numFrameRadius);
-		groupBox3.Controls.Add(Label("px", 298, 312, 24));
-		groupBox3.Controls.Add(Label("不透明度", 330, 312, 72));
-		StyleNum(_numFrameOpacity, 406, 308, 62, 20, 100, 5);
+		groupBox3.Controls.Add(Label("px", 324, 312, 24));
+		groupBox3.Controls.Add(Label("不透明度", 348, 312, 72));
+		StyleNum(_numFrameOpacity, 420, 308, 52, 20, 100, 5);
 		_numFrameOpacity.ValueChanged += (object? s, EventArgs e) =>
 		{
 			SyncPreview();
 		};
 		groupBox3.Controls.Add(_numFrameOpacity);
-		groupBox3.Controls.Add(Label("%", 472, 312, 24));
+		groupBox3.Controls.Add(Label("%", 476, 312, 24));
 		_lblFrameTip.Location = new Point(18, 346);
 		_lblFrameTip.Size = new Size(496, 34);
 		_lblFrameTip.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
@@ -18735,7 +18790,7 @@ internal sealed class SettingsForm : Form
 		label3.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 		label3.ForeColor = Design.Hint;
 		groupBox4.Controls.Add(label3);
-		GroupBox groupBox5 = Group("流畅度", 0, 0, GroupWidth, 148);
+		GroupBox groupBox5 = Group("流畅度", 0, 0, GroupWidth, 168);
 		groupBox5.Controls.Add(Label("刷新率", 16, 26, 70));
 		StyleCombo(_cmbRefreshMode, 90, 22, 220);
 		_cmbRefreshMode.SelectedIndexChanged += (object? s, EventArgs e) =>
@@ -18753,7 +18808,7 @@ internal sealed class SettingsForm : Form
 		_lblRefreshHint.ForeColor = Design.Hint;
 		_lblRefreshHint.Text = "跟随屏幕：按实测刷新率节流，与显示器同步。\r\n固定值：自定义节流频率，0 = 不限制。改动在下次拖动时生效。";
 		groupBox5.Controls.Add(_lblRefreshHint);
-		GroupBox groupBox6 = Group("启动与权限", 0, 0, GroupWidth, 150);
+		GroupBox groupBox6 = Group("启动与权限", 0, 0, GroupWidth, 176);
 		groupBox6.Controls.Add(Label("开机自启", 16, 32, 70));
 		StyleCombo(_cmbAutoStart, 90, 28, 430);
 		_cmbAutoStart.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
@@ -18789,7 +18844,7 @@ internal sealed class SettingsForm : Form
 		_pager.Controls.Add(_lblStatus);
 		_btnDefaultsRef = new FlatButton();
 		_btnDefaultsRef.Text = "恢复默认值";
-		_btnDefaultsRef.Size = new Size(108, 20);
+		_btnDefaultsRef.Size = new Size(108, 24);
 		_btnDefaultsRef.Click += (object? s, EventArgs e) =>
 		{
 			ResetDefaults();
@@ -18798,7 +18853,7 @@ internal sealed class SettingsForm : Form
 		_btnSaveRef = new FlatButton();
 		((FlatButton)_btnSaveRef).Primary = true;
 		_btnSaveRef.Text = "保存并生效";
-		_btnSaveRef.Size = new Size(108, 20);
+		_btnSaveRef.Size = new Size(108, 24);
 		_btnSaveRef.Click += (object? s, EventArgs e) =>
 		{
 			Save();
@@ -18806,7 +18861,7 @@ internal sealed class SettingsForm : Form
 		_pager.Controls.Add(_btnSaveRef);
 		_btnCancelRef = new FlatButton();
 		_btnCancelRef.Text = "取消";
-		_btnCancelRef.Size = new Size(108, 20);
+		_btnCancelRef.Size = new Size(108, 24);
 		_btnCancelRef.Click += (object? s, EventArgs e) =>
 		{
 			Close();
@@ -20515,7 +20570,7 @@ internal sealed class SettingsForm : Form
 		c.Location = new Point(x, y);
 		c.Size = new Size(w, 26);
 		c.FlatStyle = FlatStyle.Flat;
-		c.BackColor = Design.Surface;
+		c.BackColor = Design.FieldFill;
 		c.ForeColor = Design.TextPrimary;
 		Fields.Attach(c, 6);
 	}
@@ -20523,20 +20578,24 @@ internal sealed class SettingsForm : Form
 	private static void StyleNum(NumericUpDown n, int x, int y, int w, int min, int max, int step)
 	{
 		n.Location = new Point(x, y);
-		n.Size = new Size(w, 26);
+		// v1.4.7：宽度必须给"数字 + 自绘箭头"留够。
+		// 之前 w 只够放数字，箭头画上去就把右边数字压住/裁掉了（600 显示成 60）。
+		int num = Math.Max(32, (int)Math.Ceiling((double)n.Font.GetHeight() * 1.3) + 12);
+		int num2 = w;
+		n.Size = new Size(num2, num);
 		n.Minimum = min;
 		n.Maximum = max;
 		n.Increment = step;
 		n.TextAlign = HorizontalAlignment.Right;
-		n.BackColor = Design.Surface;
+		n.BackColor = Design.FieldFill;
 		n.ForeColor = Design.TextPrimary;
-		Fields.Attach(n, 6);
+		Fields.Attach(n, Design.FieldRadius);
 	}
 
 	private static void StyleText(TextBox t, Font font, bool readOnly)
 	{
 		Fields.MakeFlat(t, font, readOnly);
-		Fields.Attach(t, 6);
+		Fields.Attach(t, Design.FieldRadius);
 	}
 
 	private void Populate()
