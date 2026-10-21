@@ -59,7 +59,7 @@ internal static class AppInfo
 	public const string ReleasesApiUrl = "https://api.github.com/repos/QQQOrange/holddrag/releases/latest";
 
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.3.0";
+	public const string FallbackVersion = "1.4.0";
 
 	public static string Version
 	{
@@ -13855,7 +13855,7 @@ internal static class SelfTest
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
 		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
-		Check(SettingsForm.AppVersionForTest == "1.3.0", "★ 版本号已升到 1.3.0", "实际=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == "1.4.0", "★ 版本号已升到 1.4.0", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
 
@@ -15716,6 +15716,20 @@ internal sealed class SettingsForm : Form
 
 		public const int HysteresisLogical = 90;
 
+		/// <summary>
+		/// v1.3：单列内容最大宽度（逻辑像素）。
+		/// 布局是按 536 宽手工排的，但窗口经常给到 1200+；旧实现直接把 available 当宽度，
+		/// 于是卡片被拉满整屏、下拉框横跨 1400px、预览框被顶到极右，整页空荡荡。
+		/// 现代设置页的做法是「内容列限宽 + 居中」，这里照做。
+		/// </summary>
+		public const int MaxContentWidth = 780;
+
+		/// <summary>两列之间的水平间距（逻辑像素）。</summary>
+		public const int ColumnGap = 20;
+
+		/// <summary>内容列相对父容器的左边距（由窗体设置，居中计算时会叠加）。</summary>
+		public int LeftOffset;
+
 		public int CurrentColumns;
 
 		private void SetColumns(int want)
@@ -15757,9 +15771,22 @@ internal sealed class SettingsForm : Form
 			{
 				RebuildStructure(num3);
 			}
-			if (Width != available)
+			// v1.3：内容列限宽 + 居中。available 是"可用空间"，不再直接当作内容宽度。
+			int num4 = (int)Math.Round(780f * CurrentUiScale);
+			int num5 = (int)Math.Round(20f * CurrentUiScale);
+			int num6 = ((num3 >= 2) ? Math.Min(available, num4 * 2 + num5) : Math.Min(available, num4));
+			if (num6 < 1)
 			{
-				Width = available;
+				num6 = 1;
+			}
+			if (Width != num6)
+			{
+				Width = num6;
+			}
+			int num7 = LeftOffset + Math.Max(0, (available - num6) / 2);
+			if (Left != num7)
+			{
+				Left = num7;
 			}
 			PerformLayout();
 		}
@@ -15781,6 +15808,8 @@ internal sealed class SettingsForm : Form
 					for (int i = 0; i < _groups.Length; i++)
 					{
 						RowStyles.Add(new RowStyle(SizeType.AutoSize));
+						// 回到单列时把两列的左右间距收回，否则卡片会莫名缩进。
+						_groups[i].Margin = new Padding(0, 0, 0, (int)Math.Round(14f * CurrentUiScale));
 						Controls.Add(_groups[i], 0, i);
 					}
 					return;
@@ -15793,8 +15822,11 @@ internal sealed class SettingsForm : Form
 				{
 					RowStyles.Add(new RowStyle(SizeType.AutoSize));
 				}
+				// v1.3：两列之间留出间距，卡片不要贴在一起。
+				int num4 = (int)Math.Round(10f * CurrentUiScale);
 				for (int k = 0; k < _groups.Length; k++)
 				{
+					_groups[k].Margin = new Padding(num4, 0, num4, (int)Math.Round(14f * CurrentUiScale));
 					Controls.Add(_groups[k], k / RowCount, k % RowCount);
 				}
 			}
@@ -16218,11 +16250,15 @@ internal sealed class SettingsForm : Form
 
 		private int CellW => Fields.Sc(70);
 
-		private int CellH => Fields.Sc(46);
+		/// <summary>
+		/// v1.3：格子高度 46 → 54。旧值下标签画在 y=34 处、高 14，合计到 48，
+		/// 已经超出 46 的格高，所以标题压着下边框（截图里能看到文字贴边/被裁）。
+		/// </summary>
+		private int CellH => Fields.Sc(54);
 
-		private int Gap => Fields.Sc(6);
+		private int Gap => Fields.Sc(8);
 
-		private int ThumbH => Fields.Sc(30);
+		private int ThumbH => Fields.Sc(32);
 
 		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
 		public int Columns { get; set; }
@@ -16245,6 +16281,13 @@ internal sealed class SettingsForm : Form
 		}
 
 		internal int CellCountForTest => _styles.Length;
+
+		/// <summary>自检用：格子真实高度 / 间隙 / 当前列数（断言别复制常量，否则改设计就假红）。</summary>
+		internal int CellHeightForTest => CellH;
+
+		internal int GapForTest => Gap;
+
+		internal int ColumnsForTest => Cols;
 
 		internal Rectangle SelectedCellRectForTest
 		{
@@ -16365,7 +16408,7 @@ internal sealed class SettingsForm : Form
 					graphics.FillRectangle(brush3, new Rectangle(rectangle.X + num, rectangle.Y + num, rectangle.Width - num * 2, rectangle.Height - num * 2));
 				}
 				FrameStyles.Draw(graphics, rectangle, _enabled ? color : Color.FromArgb(110, color), text, thickness, radius2, num);
-				TextRenderer.DrawText(bounds: new Rectangle(r.X, r.Y + ThumbH + Fields.Sc(4), r.Width, Fields.Sc(14)), dc: graphics, text: ShortName(text), font: Font, foreColor: flag ? Design.Accent : Design.TextSecondary, flags: TextFormatFlags.EndEllipsis | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(bounds: new Rectangle(r.X, r.Y + ThumbH + Fields.Sc(3), r.Width, Fields.Sc(16)), dc: graphics, text: ShortName(text), font: Font, foreColor: flag ? Design.Accent : Design.TextSecondary, flags: TextFormatFlags.EndEllipsis | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
 				if (flag)
 				{
 					int num2 = Fields.Sc(13);
@@ -16439,7 +16482,8 @@ internal sealed class SettingsForm : Form
 
 		private int RowHeight => Fields.Sc(42);
 
-		private int PadTop => Fields.Sc(16);
+		/// <summary>v1.3：顶部留出标题区（应用名 + 副标题），行从这里开始。</summary>
+		private int PadTop => Fields.Sc(64);
 
 		private int PadX => Fields.Sc(14);
 
@@ -16666,6 +16710,18 @@ internal sealed class SettingsForm : Form
 			using (Pen pen = new Pen(Design.Stroke))
 			{
 				graphics.DrawLine(pen, Width - 1, 0, Width - 1, Height);
+			}
+			// v1.3：侧栏顶部标题区（现代设置页普遍有的品牌/标题区）。
+			try
+			{
+				using Font fontTitle = new Font(Font.FontFamily, Fields.Sc(15), FontStyle.Bold, GraphicsUnit.Pixel);
+				using Font fontSub = new Font(Font.FontFamily, Fields.Sc(11), FontStyle.Regular, GraphicsUnit.Pixel);
+				TextRenderer.DrawText(graphics, "长按拖窗", fontTitle, new Rectangle(PadX - Fields.Sc(4), Fields.Sc(18), Width - PadX * 2 + Fields.Sc(8), Fields.Sc(22)), Design.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(graphics, "HoldDrag", fontSub, new Rectangle(PadX - Fields.Sc(4), Fields.Sc(40), Width - PadX * 2 + Fields.Sc(8), Fields.Sc(16)), Design.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+			}
+			catch (Exception exT)
+			{
+				Log.Error(exT);
 			}
 			if (_titles == null)
 			{
@@ -16955,7 +17011,7 @@ internal sealed class SettingsForm : Form
 
 	private sealed class CardGroup : GroupBox
 	{
-		public int TitleFontPx = 14;
+		public int TitleFontPx = 15;
 
 		public int TitleInsetPx = 32;
 
@@ -17026,20 +17082,8 @@ internal sealed class SettingsForm : Form
 			{
 				graphics.DrawPath(pen3, graphicsPath);
 			}
-			// 标题区：图标（中性灰）+ 加粗近黑标题 + 发丝分隔线。
-			if (!string.IsNullOrEmpty(Text) && TitleInsetPx > 8)
-			{
-				int num6 = TitleInsetPx - Math.Max(2, num2);
-				int num7 = AccentBarPx + Fields.Sc(14);
-				int num8 = width - Fields.Sc(16);
-				if (num8 > num7 + Fields.Sc(20) && num6 > 0 && num6 < height - 2)
-				{
-					using Pen pen4 = new Pen(Design.Divider);
-					{
-						graphics.DrawLine(pen4, num7, num6, num8, num6);
-					}
-				}
-			}
+			// v1.3：取消标题下的发丝分隔线——标题与内容靠间距区分即可，
+			// 一条横线在窄卡片里反而像表格边框，而且会和首行内容抢位置。
 			graphicsPath.Dispose();
 			Fields.PaintFor(graphics, this);
 			if (string.IsNullOrEmpty(Text))
@@ -17047,6 +17091,21 @@ internal sealed class SettingsForm : Form
 				return;
 			}
 			float num9 = AccentBarPx + Fields.Sc(14);
+			// v1.3：标题图标加一个浅灰圆角底片（现代设置页的常见手法），
+			// 让它看起来是"图标"而不是一个飘着的字符。
+			if (!string.IsNullOrEmpty(GlyphForSection(Text)))
+			{
+				int num10 = Fields.Sc(22);
+				Rectangle rect = new Rectangle((int)num9 - Fields.Sc(2), TitleY - Fields.Sc(2), num10, num10);
+				using (SolidBrush brushChip = new SolidBrush(Color.FromArgb(246, 247, 249)))
+				{
+					using GraphicsPath pathChip = RoundedPath(rect, Fields.Sc(6));
+					{
+						graphics.FillPath(brushChip, pathChip);
+					}
+				}
+				num9 += (float)Fields.Sc(4);
+			}
 			using (Font font = Icons.At(TitleFontPx))
 			{
 				if (font != null)
@@ -17056,7 +17115,7 @@ internal sealed class SettingsForm : Form
 					{
 						graphics.DrawString(s, font, brush4, new PointF(num9, TitleY));
 					}
-					num9 += (float)Fields.Sc(TitleFontPx + 7);
+					num9 += (float)Fields.Sc(TitleFontPx + 9);
 				}
 			}
 			using Font font2 = new Font(Font.FontFamily, TitleFontPx, FontStyle.Bold, GraphicsUnit.Pixel);
@@ -18492,6 +18551,9 @@ internal sealed class SettingsForm : Form
 		_lblKeyHint.Location = new Point(16, 60);
 		_lblKeyHint.Size = new Size(504, 20);
 		_lblKeyHint.ForeColor = Design.Hint;
+		// v1.3：首屏就填提示。原来只由 StopRecording 赋值，没录制过就是空白，
+		// 视觉上像少了一个控件、还白占 28px 高度。
+		_lblKeyHint.Text = "已绑定：" + KeysUtil.DisplayName(_edit.TriggerKeyId);
 		groupBox.Controls.Add(_lblKeyHint);
 		_chkHold.Text = "需要长按触发（关闭后只要按住就立即生效）";
 		_chkHold.Location = new Point(18, 88);
@@ -18519,7 +18581,7 @@ internal sealed class SettingsForm : Form
 		StyleCombo(_cmbMiddle, 84, 92, 260);
 		_cmbMiddle.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 		groupBox2.Controls.Add(_cmbMiddle);
-		GroupBox groupBox3 = Group("视觉反馈", 0, 0, GroupWidth, 420);
+		GroupBox groupBox3 = Group("视觉反馈", 0, 0, GroupWidth, 392);
 		_chkFrame.Text = "长按触发键到达阈值后，光标所在的窗口立刻亮起外框";
 		_chkFrame.Location = new Point(18, 30);
 		_chkFrame.Size = new Size(500, 22);
@@ -18557,38 +18619,38 @@ internal sealed class SettingsForm : Form
 		_lblStyleHeader.TextAlign = ContentAlignment.MiddleLeft;
 		groupBox3.Controls.Add(_lblStyleHeader);
 		_galleryStyle.Location = new Point(18, 186);
-		_galleryStyle.Size = new Size(374, 150);
-		_galleryStyle.Columns = 5;
-		_galleryStyle.Picked += (object? s, EventArgs e) =>
+		_galleryStyle.Size = new Size(500, 120);
+		_galleryStyle.Columns = 0;
+		_galleryStyle.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 		{
 			SelectId(_cmbFrameStyle, _galleryStyle.SelectedId);
 		};
 		groupBox3.Controls.Add(_galleryStyle);
-		groupBox3.Controls.Add(Label("粗细", 18, 348, 56));
-		StyleNum(_numFrameThick, 76, 344, 62, 1, 8, 1);
+		groupBox3.Controls.Add(Label("粗细", 18, 312, 56));
+		StyleNum(_numFrameThick, 76, 308, 62, 1, 8, 1);
 		_numFrameThick.ValueChanged += (object? s, EventArgs e) =>
 		{
 			SyncPreview();
 		};
 		groupBox3.Controls.Add(_numFrameThick);
-		groupBox3.Controls.Add(Label("px", 142, 348, 24));
-		groupBox3.Controls.Add(Label("圆角", 174, 348, 56));
-		StyleNum(_numFrameRadius, 232, 344, 62, 0, 28, 1);
+		groupBox3.Controls.Add(Label("px", 142, 312, 24));
+		groupBox3.Controls.Add(Label("圆角", 174, 312, 56));
+		StyleNum(_numFrameRadius, 232, 308, 62, 0, 28, 1);
 		_numFrameRadius.ValueChanged += (object? s, EventArgs e) =>
 		{
 			SyncPreview();
 		};
 		groupBox3.Controls.Add(_numFrameRadius);
-		groupBox3.Controls.Add(Label("px", 298, 348, 24));
-		groupBox3.Controls.Add(Label("不透明度", 330, 348, 72));
-		StyleNum(_numFrameOpacity, 406, 344, 62, 20, 100, 5);
+		groupBox3.Controls.Add(Label("px", 298, 312, 24));
+		groupBox3.Controls.Add(Label("不透明度", 330, 312, 72));
+		StyleNum(_numFrameOpacity, 406, 308, 62, 20, 100, 5);
 		_numFrameOpacity.ValueChanged += (object? s, EventArgs e) =>
 		{
 			SyncPreview();
 		};
 		groupBox3.Controls.Add(_numFrameOpacity);
-		groupBox3.Controls.Add(Label("%", 472, 348, 24));
-		_lblFrameTip.Location = new Point(18, 378);
+		groupBox3.Controls.Add(Label("%", 472, 312, 24));
+		_lblFrameTip.Location = new Point(18, 346);
 		_lblFrameTip.Size = new Size(496, 34);
 		_lblFrameTip.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 		_lblFrameTip.ForeColor = Design.Hint;
@@ -18598,6 +18660,7 @@ internal sealed class SettingsForm : Form
 		_pnlPreview.Size = new Size(96, 120);
 		SetShiftFromRight(_pnlPreview, 16);
 		groupBox3.Controls.Add(_pnlPreview);
+		// v1.3：预览框保持独立，不加标题——加了会被分组内的布局逻辑压缩成窄条（实测 20px 宽）。
 		GroupBox groupBox4 = Group("拖动行为", 0, 0, GroupWidth, 366);
 		Label label = Label("缩放角区", 230, 30, 66);
 		SetShiftFromRight(label, -1);
@@ -18726,7 +18789,7 @@ internal sealed class SettingsForm : Form
 		_pager.Controls.Add(_lblStatus);
 		_btnDefaultsRef = new FlatButton();
 		_btnDefaultsRef.Text = "恢复默认值";
-		_btnDefaultsRef.Size = new Size(96, 20);
+		_btnDefaultsRef.Size = new Size(108, 20);
 		_btnDefaultsRef.Click += (object? s, EventArgs e) =>
 		{
 			ResetDefaults();
@@ -18735,7 +18798,7 @@ internal sealed class SettingsForm : Form
 		_btnSaveRef = new FlatButton();
 		((FlatButton)_btnSaveRef).Primary = true;
 		_btnSaveRef.Text = "保存并生效";
-		_btnSaveRef.Size = new Size(96, 20);
+		_btnSaveRef.Size = new Size(108, 20);
 		_btnSaveRef.Click += (object? s, EventArgs e) =>
 		{
 			Save();
@@ -18743,7 +18806,7 @@ internal sealed class SettingsForm : Form
 		_pager.Controls.Add(_btnSaveRef);
 		_btnCancelRef = new FlatButton();
 		_btnCancelRef.Text = "取消";
-		_btnCancelRef.Size = new Size(96, 20);
+		_btnCancelRef.Size = new Size(108, 20);
 		_btnCancelRef.Click += (object? s, EventArgs e) =>
 		{
 			Close();
@@ -18832,6 +18895,8 @@ internal sealed class SettingsForm : Form
 		_innerCaptured = true;
 		ReserveLabelWidth();
 		_groupHost = new ResponsiveGroupPanel(_groups);
+		// v1.3：内容列限宽后要居中，LeftOffset 作为居中计算的基准左边距。
+		_groupHost.LeftOffset = ScrollEdgeMargin;
 		_groupHost.Location = new Point(ScrollEdgeMargin, ScrollEdgeMargin);
 		_scrollHost.Controls.Add(_groupHost);
 		_scrollHost.Dock = DockStyle.Fill;
@@ -18870,7 +18935,7 @@ internal sealed class SettingsForm : Form
 		Control[] groups = _groups;
 		sidebar.Bind(scrollHost, array, groups);
 		_pager.Dock = DockStyle.Bottom;
-		_pager.Height = S(46);
+		_pager.Height = S(58);
 		_pager.BackColor = Design.Surface;
 		_pager.Paint += (object? s, PaintEventArgs e) =>
 		{
@@ -19171,7 +19236,7 @@ internal sealed class SettingsForm : Form
 			int num = 0;
 			if (groupBox2 is CardGroup cardGroup)
 			{
-				cardGroup.TitleFontPx = (int)Math.Round(14f * uiScale);
+				cardGroup.TitleFontPx = (int)Math.Round(15f * uiScale);
 				cardGroup.TitleY = (int)Math.Round(9f * uiScale);
 				cardGroup.RadiusPx = (int)Math.Round(12f * uiScale);
 				cardGroup.ShadowOffsetPx = (int)Math.Round(2f * uiScale);
@@ -22143,13 +22208,13 @@ internal sealed class SettingsForm : Form
 		try
 		{
 			int num = FrameStyles.All.Length;
-			int num2 = settingsForm._galleryStyle.Columns;
+		int num2 = settingsForm._galleryStyle.ColumnsForTest;
 			if (num2 <= 0)
 			{
-				num2 = 5;
+			num2 = 1;
 			}
 			int num3 = (num + num2 - 1) / num2;
-			return "样式数=" + num + " 列=" + num2 + " 行=" + num3 + " 格高=" + Fields.Sc(46) + " 间隙=" + Fields.Sc(6) + " 需要高=" + (num3 * Fields.Sc(46) + (num3 - 1) * Fields.Sc(6)) + " 控件高=" + settingsForm._galleryStyle.Height;
+			return "样式数=" + num + " 列=" + num2 + " 行=" + num3 + " 格高=" + settingsForm._galleryStyle.CellHeightForTest + " 间隙=" + settingsForm._galleryStyle.GapForTest + " 需要高=" + (num3 * settingsForm._galleryStyle.CellHeightForTest + (num3 - 1) * settingsForm._galleryStyle.GapForTest) + " 控件高=" + settingsForm._galleryStyle.Height;
 		}
 		catch (Exception ex)
 		{
@@ -22169,7 +22234,7 @@ internal sealed class SettingsForm : Form
 			int num2 = settingsForm._gridColor.Columns;
 			if (num2 <= 0)
 			{
-				num2 = 5;
+			num2 = 5;
 			}
 			int num3 = (num + num2 - 1) / num2;
 			return "颜色数=" + num + " 列=" + num2 + " 行=" + num3 + " 格=" + Fields.Sc(22) + " 间隙=" + Fields.Sc(6) + " 需要高=" + (num3 * Fields.Sc(22) + (num3 - 1) * Fields.Sc(6)) + " 控件高=" + settingsForm._gridColor.Height;
@@ -22204,13 +22269,13 @@ internal sealed class SettingsForm : Form
 			return false;
 		}
 		int num = FrameStyles.All.Length;
-		int num2 = settingsForm._galleryStyle.Columns;
+		int num2 = settingsForm._galleryStyle.ColumnsForTest;
 		if (num2 <= 0)
 		{
-			num2 = 5;
+			num2 = 1;
 		}
 		int num3 = (num + num2 - 1) / num2;
-		int num4 = num3 * Fields.Sc(46) + (num3 - 1) * Fields.Sc(6);
+		int num4 = num3 * settingsForm._galleryStyle.CellHeightForTest + (num3 - 1) * settingsForm._galleryStyle.GapForTest;
 		return settingsForm._galleryStyle.Height >= num4;
 	}
 
