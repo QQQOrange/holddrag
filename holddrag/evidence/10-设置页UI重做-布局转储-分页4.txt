@@ -1,0 +1,18 @@
+﻿分组[3] 「外框外观」 L=0 T=144 W=1632 H=1240 客户区=1632x1240
+   FlatCheck 「长按到达阈值后，光标所在窗口亮起…」 L=36 T=86 W=1560 H=60 vis=False
+   Label 「外框颜色」 L=36 T=166 W=168 H=52 vis=False
+   Label 「当前颜色：薄荷青」 L=220 T=152 W=1376 H=80 vis=False
+   SwatchGrid 「」 L=36 T=232 W=1560 H=136 vis=False
+   Label 「样式」 L=36 T=378 W=120 H=52 vis=False
+   Label 「样式（当前粗细 3 px・圆角 …」 L=172 T=368 W=1424 H=72 vis=False
+   StyleGallery 「」 L=36 T=440 W=1560 H=272 vis=False
+   Label 「粗细」 L=36 T=726 W=120 H=52 vis=False
+   FlatNum 「3」 L=172 T=712 W=140 H=37 vis=False
+   Label 「圆角」 L=328 T=726 W=120 H=52 vis=False
+   FlatNum 「13」 L=464 T=712 W=140 H=37 vis=False
+   Label 「不透明度」 L=620 T=726 W=168 H=52 vis=False
+   FlatNum 「100」 L=804 T=712 W=140 H=37 vis=False
+   FramePreviewBox 「」 L=36 T=792 W=480 H=344 vis=False
+   Label 「」 L=36 T=1146 W=1560 H=60 vis=False
+
+幂等性：连续重排 3 次结果一致 ✓

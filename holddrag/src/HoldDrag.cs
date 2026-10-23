@@ -42,7 +42,7 @@ internal static class AppInfo
 
 	public const string Tagline = "长按触发键，随手拖动 / 缩放任意窗口";
 
-	public const string ReleaseDate = "2026-10-19";
+	public const string ReleaseDate = "2026-10-23";
 
 	public const string Developer = "QQQOrange";
 
@@ -10066,7 +10066,7 @@ internal static class SelfTest
 		settingsForm.CreateControl();
 		settingsForm.Show();
 		Application.DoEvents();
-		Check(SettingsForm.VerifyAnchors(settingsForm), "★ 宽度够时分组从 1 列变 2 列，回窄能退回 1 列（拉宽真的多装东西）");
+		Check(SettingsForm.VerifyAnchors(settingsForm), "★ 宽度够时分组从 1 列变 2 列，回窄能退回 1 列（拉宽真的多装东西）", SettingsForm.LastStretchDetail);
 		Check(SettingsForm.VerifyInnerStretch(settingsForm), "★ 拉宽后分组内的下拉框/文本框跟着变宽（不是只把分组撑大）", SettingsForm.LastStretchDetail + " || " + SettingsForm.DumpLayoutItem(settingsForm, settingsForm.ProbeComboLeft));
 		Check(SettingsForm.VerifyStretchIdempotent(settingsForm), "★ 来回拉多次，控件位置稳定不漂移（伸缩是幂等的）");
 		bool ok = false;
@@ -10091,54 +10091,61 @@ internal static class SelfTest
 		Application.DoEvents();
 		settingsForm.Size = settingsForm.Size;
 		Application.DoEvents();
-		SettingsForm.RelayoutForTest(settingsForm);
-		Application.DoEvents();
+		int pageCount = SettingsForm.ProbePageCount(settingsForm);
+		Check(pageCount >= 6, "设置页分页数（至少包含关于 / 帮助）", "实际 " + pageCount);
 		StringBuilder hidden = new StringBuilder();
 		StringBuilder dead = new StringBuilder();
 		int interactive = 0;
 		int checkedCount = 0;
-		Walk(settingsForm, (Control c) =>
+		// 新 UI 是分页的：只有当前页的控件可见，其余页整体隐藏。
+		// 因此逐页切过去检查：当前页内不允许有看不见 / 尺寸为 0 / 掉出容器的控件。
+		for (int p = 0; p < pageCount; p++)
 		{
-			checkedCount++;
-			if (!c.Visible)
+			SettingsForm.ProbeSelectPage(settingsForm, p);
+			SettingsForm.RelayoutForTest(settingsForm);
+			Application.DoEvents();
+			Walk(settingsForm, delegate(Control c)
 			{
-				hidden.Append(Name(c)).Append(' ');
-			}
-			else if (c.Width <= 0 || c.Height <= 0)
-			{
-				dead.Append(Name(c)).Append("(尺寸0) ");
-			}
-			else if (c is CheckBox || c is TextBox || c is ComboBox || c is Button || c is NumericUpDown)
-			{
-				interactive++;
-				if (c.Enabled)
+				if (!SettingsForm.ProbeOnActivePage(settingsForm, c))
 				{
-					Control parent = c.Parent;
-					if (parent != null)
+					return;
+				}
+				checkedCount++;
+				if (!c.Visible)
+				{
+					hidden.Append(Name(c)).Append(' ');
+				}
+				else if (c.Width <= 0 || c.Height <= 0)
+				{
+					dead.Append(Name(c)).Append("(尺寸0) ");
+				}
+				else if (c is CheckBox || c is TextBox || c is ComboBox || c is Button || c is NumericUpDown)
+				{
+					interactive++;
+					if (c.Enabled)
 					{
-						Rectangle clientRectangle = parent.ClientRectangle;
-						Rectangle rect = new Rectangle(c.Left, c.Top, c.Width, c.Height);
-						if (clientRectangle.Width > 0 && !clientRectangle.IntersectsWith(rect))
+						Control parent = c.Parent;
+						if (parent != null)
 						{
-							dead.Append(Name(c)).Append("(在容器外 ").Append("L=")
-								.Append(rect.Left)
-								.Append(" T=")
-								.Append(rect.Top)
-								.Append(" W=")
-								.Append(rect.Width)
-								.Append(" H=")
-								.Append(rect.Height)
-								.Append(" 容器=")
-								.Append(clientRectangle.Width)
-								.Append("x")
-								.Append(clientRectangle.Height)
-								.Append(") ");
+							Rectangle clientRectangle = parent.ClientRectangle;
+							Rectangle rect = new Rectangle(c.Left, c.Top, c.Width, c.Height);
+							if (clientRectangle.Width > 0 && !clientRectangle.IntersectsWith(rect))
+							{
+								dead.Append(Name(c)).Append("(在容器外 ")
+									.Append("L=").Append(rect.Left)
+									.Append(" T=").Append(rect.Top)
+									.Append(" W=").Append(rect.Width)
+									.Append(" H=").Append(rect.Height)
+									.Append(" 容器=").Append(clientRectangle.Width)
+									.Append("x").Append(clientRectangle.Height)
+									.Append(") ");
+							}
 						}
 					}
 				}
-			}
-		});
-		Check(hidden.Length == 0, "设置窗口没有【看不见】的控件（分组/卡片化之后可见性回归）", (hidden.Length == 0) ? (checkedCount + " 个控件全部可见") : ("不可见: " + hidden));
+			});
+		}
+		Check(hidden.Length == 0, "设置窗口当前页没有【看不见】的控件（分组/卡片化之后可见性回归）", (hidden.Length == 0) ? (checkedCount + " 个控件全部可见") : ("不可见: " + hidden));
 		Check(dead.Length == 0, "★ 设置窗口所有可交互控件都在容器内、尺寸正常（自绘后功能失效回归）", (dead.Length == 0) ? (interactive + " 个可交互控件全部可达") : ("异常: " + dead));
 		settingsForm.Close();
 	}
@@ -14243,7 +14250,9 @@ internal static class SelfTest
 	{
 		using DragFixture dragFixture = new DragFixture(null);
 		using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
+		// 必须 Show()：Control.Visible 会沿父链一路问到窗体，窗体没显示过时整棵树都报不可见。
 		settingsForm.CreateControl();
+		settingsForm.Show();
 		Application.DoEvents();
 		int num = SettingsForm.ProbeGroupCount(settingsForm);
 		Check(num >= 8, "分组数（至少包含关于 / 帮助）", "实际 " + num);
@@ -14256,7 +14265,25 @@ internal static class SelfTest
 			}
 		}
 		Check(stringBuilder.Length == 0, "★ 每个分组都真的在窗体可视树里（不存在「建了却没加进去」的分组）", "缺失索引：" + stringBuilder);
-		Eq(SettingsForm.ProbeSidebarCount(settingsForm), num, "★ 侧栏条目数 = 分组数（新增分组必须自动出现在侧栏，用户才找得到）");
+		// 新 UI：侧栏一项对应一个分页（不是一张分组）；每一页都必须能直达，且打开时只有它可见。
+		int num2 = SettingsForm.ProbePageCount(settingsForm);
+		Eq(SettingsForm.ProbeSidebarCount(settingsForm), num2, "★ 侧栏条目数 = 分页数（每一页都能从侧栏直达，用户才找得到）");
+		StringBuilder stringBuilder2 = new StringBuilder();
+		for (int j = 0; j < num2; j++)
+		{
+			SettingsForm.ProbeSelectPage(settingsForm, j);
+			Application.DoEvents();
+			if (!SettingsForm.ProbePageVisible(settingsForm, j))
+			{
+				stringBuilder2.Append(j).Append(' ');
+			}
+			int num3 = SettingsForm.ProbeSidebarActive(settingsForm);
+			if (num3 != j)
+			{
+				stringBuilder2.Append("(页").Append(j).Append("高亮").Append(num3).Append(") ");
+			}
+		}
+		Check(stringBuilder2.Length == 0, "★ 点侧栏每一项，对应分页就打开并且高亮对得上", stringBuilder2.ToString());
 		settingsForm.Close();
 	}
 
@@ -14323,32 +14350,35 @@ internal static class SelfTest
 		settingsForm.Show();
 		Application.DoEvents();
 		Settle();
-		int num = SettingsForm.ProbeGroupCount(settingsForm);
-		Eq(SettingsForm.ProbeSidebarCount(settingsForm), num, "侧栏条目数 = 分组数");
+		// 新 UI：侧栏高亮跟着「点了哪一页」走；页面内部用滚轮滚动。两者各查各的。
+		int num = SettingsForm.ProbePageCount(settingsForm);
+		Eq(SettingsForm.ProbeSidebarCount(settingsForm), num, "侧栏条目数 = 分页数");
 		Line("    （滚动区）" + SettingsForm.ProbeScrollInfo(settingsForm));
 		StringBuilder stringBuilder = new StringBuilder();
 		for (int i = 0; i < num; i++)
 		{
-			int num2 = SettingsForm.ProbeGroupTop(settingsForm, i);
-			if (num2 >= 0)
+			SettingsForm.ProbeSelectPage(settingsForm, i);
+			Application.DoEvents();
+			int num2 = SettingsForm.ProbeSidebarActive(settingsForm);
+			if (num2 != i)
 			{
-				int value = SettingsForm.ProbeScrollTo(settingsForm, num2);
-				Application.DoEvents();
-				int num3 = SettingsForm.ProbeSidebarActive(settingsForm);
-				if (num3 != i)
-				{
-					stringBuilder.Append("分组").Append(i).Append("(top=")
-						.Append(num2)
-						.Append(",实际滚动=")
-						.Append(value)
-						.Append(") → 高亮")
-						.Append(num3)
-						.Append("  ");
-				}
+				stringBuilder.Append("页").Append(i).Append("→高亮").Append(num2).Append(' ');
+			}
+			if (!SettingsForm.ProbePageVisible(settingsForm, i))
+			{
+				stringBuilder.Append("页").Append(i).Append("(不可见) ");
 			}
 		}
-		Line("    （滚动跟随）" + ((stringBuilder.Length == 0) ? "全部一致" : stringBuilder.ToString()));
-		Check(stringBuilder.Length == 0, "★ 滚到任一分组，侧栏高亮都对得上", stringBuilder.ToString());
+		Line("    （导航跟随）" + ((stringBuilder.Length == 0) ? "全部一致" : stringBuilder.ToString()));
+		Check(stringBuilder.Length == 0, "★ 点侧栏任一分页，高亮与可见页都对得上", stringBuilder.ToString());
+		// 滚轮滚的是当前页：挑一个内容超过视口的高页（拖动行为：4 张卡），把窗口压矮后滚。
+		SettingsForm.ProbeSelectPage(settingsForm, 3);
+		settingsForm.ClientSize = new Size(settingsForm.ClientSize.Width, Math.Max(settingsForm.MinimumSize.Height, 620));
+		SettingsForm.RelayoutForTest(settingsForm);
+		Application.DoEvents();
+		int num3 = SettingsForm.ProbeWheelScroll(settingsForm, -3);
+		Application.DoEvents();
+		Check(num3 > 0, "★ 滚轮消息确实让当前页滚动了（用例前提）", "滚动偏移=" + num3);
 		settingsForm.Close();
 	}
 
@@ -14360,11 +14390,15 @@ internal static class SelfTest
 		Application.DoEvents();
 		Settle();
 		int num = SettingsForm.ProbeSidebarActive(settingsForm);
-		int num2 = SettingsForm.ProbeGroupCount(settingsForm);
-		StringBuilder stringBuilder = new StringBuilder();
-		int num3 = num;
+		int num2 = SettingsForm.ProbePageCount(settingsForm);
+		// 新 UI：高亮跟着导航点击切换，滚轮只滚当前页。先验证滚轮真能滚动，
+		// 再验证「切到最后一页 → 高亮也是最后一项」。
+		SettingsForm.ProbeSelectPage(settingsForm, 3);
+		settingsForm.ClientSize = new Size(settingsForm.ClientSize.Width, Math.Max(settingsForm.MinimumSize.Height, 620));
+		SettingsForm.RelayoutForTest(settingsForm);
+		Application.DoEvents();
+		int num3 = 0;
 		int num4 = 0;
-		bool ok = false;
 		for (int i = 0; i < 40; i++)
 		{
 			int num5 = SettingsForm.ProbeWheelScroll(settingsForm, -3);
@@ -14373,23 +14407,16 @@ internal static class SelfTest
 				break;
 			}
 			num4 = num5;
-			int num6 = SettingsForm.ProbeSidebarActive(settingsForm);
-			if (num6 != num3)
-			{
-				stringBuilder.Append(num5).Append("→").Append(num6)
-					.Append(' ');
-				num3 = num6;
-			}
-			if (num6 == num2 - 1)
-			{
-				ok = true;
-			}
+			num3 = i;
 		}
-		Line("    （真实滚轮）起始高亮=" + num + "，滚动中变化：" + stringBuilder?.ToString() + "，最终=" + num3 + "（共 " + num2 + " 组）");
+		Line("    （真实滚轮）滚动 " + num3 + " 步后偏移=" + num4 + "，共 " + num2 + " 页");
 		Line("    （同步诊断）" + SettingsForm.ProbeSyncDiag(settingsForm));
 		Check(num4 > 0, "★ 真实滚轮消息确实让页面滚动了（用例前提）", "最终滚动偏移=" + num4);
-		Check(stringBuilder.Length > 0, "★ 滚动过程中侧栏高亮【确实发生了变化】（不是一直停在第一项）", "变化序列：" + stringBuilder);
-		Check(ok, "★ 一直滚到底能高亮到最后一个分组", "最终高亮=" + num3);
+		SettingsForm.ProbeSelectPage(settingsForm, num2 - 1);
+		Application.DoEvents();
+		int num6 = SettingsForm.ProbeSidebarActive(settingsForm);
+		Check(num6 == num2 - 1, "★ 切到最后一页，侧栏高亮也是最后一项", "最终高亮=" + num6 + "（共 " + num2 + " 页）");
+		Check(num6 != num, "★ 切换分页后高亮确实发生了变化（不是一直停在第一项）", num + " → " + num6);
 		settingsForm.Close();
 	}
 
@@ -15671,1183 +15698,124 @@ internal static class SelfTest
 		Buf.Append("\r\n");
 	}
 }
+// ============================================================================
+// 设置窗体（v2 全量重做）
+//
+// 结构：左侧 SideNav（8 项导航） + 右侧 8 个分页（每页标题/副标题 + 白色圆角卡片流）
+//       + 底部操作条（状态文字 / 恢复默认值 / 保存并生效 / 取消）。
+// 控件全部自绘（FlatCombo/FlatNum/FlatCheck/FlatButton/SwatchGrid/StyleGallery/
+//       FramePreviewBox/HelpPanel/Card/SideNav/PageHost），96dpi 设计稿坐标统一
+//       乘 S() 缩放；DPI 变化整体重建（WM_DPICHANGED → RescaleForDpi）。
+//
+// 与 v1 保持不变的行为契约：
+//   · 构造即 Populate；保存走 CaptureInto + ConfigStore.Apply + AutoStart.Apply
+//   · 取消 = 直接关闭（不落盘）；恢复默认值保留"环境类"设置（自启/权限/黑名单/尺寸/自动更新）
+//   · 按键录制：ProcessCmdKey + OnMouseDown + Coordinator.SuppressTrigger
+//   · 黑名单双入口：OpenFileDialog 挑 exe + 全屏遮罩点选窗口
+//   · 检查更新/下载/替换重启（Updater），管理员重启，窗口尺寸记忆
+//   · 滚轮守卫：下拉框收起时吞掉、展开时放行；数字框未聚焦时吞掉
+//   · 外框预览与真实浮层共用 FrameStyles.Draw 同一段绘制代码
+// ============================================================================
 internal sealed class SettingsForm : Form
 {
-	private sealed class ActionItem
+	// ======================= 值对象（自测探针序列化用） =======================
+
+	internal sealed class FrameSelection
 	{
-		public string Value;
-
-		public string Text;
-
-		public override string ToString()
-		{
-			return Text;
-		}
+		public string ColorId;
+		public string StyleId;
+		public int Thickness;
+		public int Radius;
+		public bool FrameEnabled;
+		public string PreviewColorId;
+		public string PreviewStyleId;
+		public int PreviewThickness;
+		public int PreviewRadius;
+		public bool PreviewFrameEnabled;
+		public string GridColorId;
+		public string GridStyleId;
+		public string ColorNameText;
 	}
 
-	private sealed class IdItem
+	internal sealed class FramePickerProbe
 	{
-		public string Value;
-
-		public string Text;
-
-		public override string ToString()
-		{
-			return Text;
-		}
+		public int ColorCells;
+		public int StyleCells;
+		public long GridInk;
+		public long GalleryInk;
+		public long GridAccentInk;
+		public long GalleryAccentInk;
+		public Rectangle GridSelectedCell;
+		public Rectangle GallerySelectedCell;
+		public Size GridSize;
+		public Size GallerySize;
+		public bool GridInsideGroup;
+		public bool GalleryInsideGroup;
 	}
 
-	private sealed class ColorItem
+	internal sealed class GroupClipReport
 	{
-		public string Value;
-
-		public string Text;
-
-		public Color Color;
-
-		public override string ToString()
-		{
-			return Text;
-		}
+		public int Total;
+		public int Clipped;
+		public string Detail = "";
 	}
 
-	private sealed class ResponsiveGroupPanel : TableLayoutPanel
+	internal sealed class RenderStats
 	{
-		private readonly GroupBox[] _groups;
-
-		public const int TwoColumnThreshold = 1240;
-
-		public const int HysteresisLogical = 90;
-
-		/// <summary>
-		/// v1.3：单列内容最大宽度（逻辑像素）。
-		/// 布局是按 536 宽手工排的，但窗口经常给到 1200+；旧实现直接把 available 当宽度，
-		/// 于是卡片被拉满整屏、下拉框横跨 1400px、预览框被顶到极右，整页空荡荡。
-		/// 现代设置页的做法是「内容列限宽 + 居中」，这里照做。
-		/// </summary>
-		public const int MaxContentWidth = 780;
-
-		/// <summary>两列之间的水平间距（逻辑像素）。</summary>
-		public const int ColumnGap = 20;
-
-		/// <summary>内容列相对父容器的左边距（由窗体设置，居中计算时会叠加）。</summary>
-		public int LeftOffset;
-
-		public int CurrentColumns;
-
-		private void SetColumns(int want)
-		{
-			CurrentColumns = want;
-		}
-
-		public ResponsiveGroupPanel(GroupBox[] groups)
-		{
-			_groups = groups;
-			CurrentColumns = 1;
-			Anchor = AnchorStyles.Top | AnchorStyles.Left;
-			ColumnCount = 1;
-			RowCount = groups.Length;
-			Padding = new Padding(0);
-			Margin = new Padding(0);
-			ColumnStyles.Clear();
-			ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-			RowStyles.Clear();
-			for (int i = 0; i < groups.Length; i++)
-			{
-				RowStyles.Add(new RowStyle(SizeType.AutoSize));
-			}
-			for (int j = 0; j < groups.Length; j++)
-			{
-				groups[j].Dock = DockStyle.Fill;
-				groups[j].Margin = new Padding(0, 0, 0, 14);
-				groups[j].Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-				Controls.Add(groups[j], 0, j);
-			}
-		}
-
-		public void Relayout(int available)
-		{
-			int num = (int)Math.Round(1240f * CurrentUiScale);
-			int num2 = (int)Math.Round(90f * CurrentUiScale);
-			int num3 = ((CurrentColumns < 2) ? ((available < num) ? 1 : 2) : ((available < num - num2) ? 1 : 2));
-			if (Controls.Count == 0 || num3 != CurrentColumns)
-			{
-				RebuildStructure(num3);
-			}
-			// v1.3：内容列限宽 + 居中。available 是"可用空间"，不再直接当作内容宽度。
-			int num4 = (int)Math.Round(780f * CurrentUiScale);
-			int num5 = (int)Math.Round(20f * CurrentUiScale);
-			int num6 = ((num3 >= 2) ? Math.Min(available, num4 * 2 + num5) : Math.Min(available, num4));
-			if (num6 < 1)
-			{
-				num6 = 1;
-			}
-			if (Width != num6)
-			{
-				Width = num6;
-			}
-			int num7 = LeftOffset + Math.Max(0, (available - num6) / 2);
-			if (Left != num7)
-			{
-				Left = num7;
-			}
-			PerformLayout();
-		}
-
-		private void RebuildStructure(int want)
-		{
-			SuspendLayout();
-			try
-			{
-				CurrentColumns = want;
-				ColumnStyles.Clear();
-				RowStyles.Clear();
-				Controls.Clear();
-				if (want == 1)
-				{
-					ColumnCount = 1;
-					RowCount = _groups.Length;
-					ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-					for (int i = 0; i < _groups.Length; i++)
-					{
-						RowStyles.Add(new RowStyle(SizeType.AutoSize));
-						// 回到单列时把两列的左右间距收回，否则卡片会莫名缩进。
-						_groups[i].Margin = new Padding(0, 0, 0, (int)Math.Round(14f * CurrentUiScale));
-						Controls.Add(_groups[i], 0, i);
-					}
-					return;
-				}
-				ColumnCount = 2;
-				RowCount = (_groups.Length + 1) / 2;
-				ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
-				ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
-				for (int j = 0; j < RowCount; j++)
-				{
-					RowStyles.Add(new RowStyle(SizeType.AutoSize));
-				}
-				// v1.3：两列之间留出间距，卡片不要贴在一起。
-				int num4 = (int)Math.Round(10f * CurrentUiScale);
-				for (int k = 0; k < _groups.Length; k++)
-				{
-					_groups[k].Margin = new Padding(num4, 0, num4, (int)Math.Round(14f * CurrentUiScale));
-					Controls.Add(_groups[k], k / RowCount, k % RowCount);
-				}
-			}
-			finally
-			{
-				ResumeLayout(performLayout: true);
-			}
-		}
+		public int Width;
+		public int Height;
+		public int DistinctColors;
+		public int BlackPixels;
+		public int AccentPixels;
+		public int FrameColorPixels;
+		public double MeanBrightness;
 	}
 
-	private sealed class FramePreviewBox : Control
+	// ======================= 设计令牌 =======================
+
+	private static class Tokens
 	{
-		private int _thickness = 3;
-
-		private int _radius = 13;
-
-		private int _opacity = 100;
-
-		public bool FrameEnabled = true;
-
-		public string ColorId = FrameColors.DefaultId;
-
-		public string StyleId = FrameStyles.DefaultId;
-
-		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		[Browsable(false)]
-		public int Thickness
-		{
-			get
-			{
-				return _thickness;
-			}
-			set
-			{
-				if (_thickness != value)
-				{
-					_thickness = value;
-					Invalidate();
-				}
-			}
-		}
-
-		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		[Browsable(false)]
-		public int Radius
-		{
-			get
-			{
-				return _radius;
-			}
-			set
-			{
-				if (_radius != value)
-				{
-					_radius = value;
-					Invalidate();
-				}
-			}
-		}
-
-		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		[Browsable(false)]
-		public int OpacityPercent
-		{
-			get
-			{
-				return _opacity;
-			}
-			set
-			{
-				if (_opacity != value)
-				{
-					_opacity = value;
-					Invalidate();
-				}
-			}
-		}
-
-		public FramePreviewBox()
-		{
-			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
-		}
-
-		public void Refresh_()
-		{
-			Invalidate();
-			Update();
-		}
-
-		protected override void OnPaint(PaintEventArgs e)
-		{
-			try
-			{
-				Graphics graphics = e.Graphics;
-				HighQuality.Apply(graphics);
-				graphics.Clear(Color.FromArgb(244, 244, 245));
-				int num = FrameStyles.MarginFor(StyleId, _thickness);
-				RectangleF area = new RectangleF(0f, 0f, Width, Height);
-				RectangleF rect = new RectangleF(area.X + (float)num, area.Y + (float)num, area.Width - (float)num * 2f, area.Height - (float)num * 2f);
-				if (rect.Width <= 2f || rect.Height <= 2f)
-				{
-					base.OnPaint(e);
-					return;
-				}
-				using (SolidBrush brush = new SolidBrush(Color.White))
-				{
-					graphics.FillRectangle(brush, rect);
-				}
-				if (FrameEnabled)
-				{
-					float num2 = Math.Max(0.05f, Math.Min(1f, (float)_opacity / 100f));
-					if (num2 >= 0.999f)
-					{
-						FrameStyles.Draw(graphics, area, FrameColors.Resolve(ColorId), StyleId, _thickness, Radius);
-					}
-					else
-					{
-						int num3 = Math.Max(1, (int)Math.Ceiling(area.Width));
-						int num4 = Math.Max(1, (int)Math.Ceiling(area.Height));
-						using Bitmap image = new Bitmap(num3, num4, PixelFormat.Format32bppArgb);
-						using (Graphics graphics2 = Graphics.FromImage(image))
-						{
-							graphics2.Clear(Color.Transparent);
-							HighQuality.Apply(graphics2);
-							FrameStyles.Draw(graphics2, new RectangleF(0f, 0f, num3, num4), FrameColors.Resolve(ColorId), StyleId, _thickness, Radius);
-						}
-						ColorMatrix colorMatrix = new ColorMatrix(new float[5][]
-						{
-							new float[5] { 1f, 0f, 0f, 0f, 0f },
-							new float[5] { 0f, 1f, 0f, 0f, 0f },
-							new float[5] { 0f, 0f, 1f, 0f, 0f },
-							new float[5] { 0f, 0f, 0f, num2, 0f },
-							new float[5] { 0f, 0f, 0f, 0f, 1f }
-						});
-						using ImageAttributes imageAttributes = new ImageAttributes();
-						imageAttributes.SetColorMatrix(colorMatrix);
-						graphics.DrawImage(image, new Rectangle(0, 0, num3, num4), 0, 0, num3, num4, GraphicsUnit.Pixel, imageAttributes);
-					}
-				}
-				else
-				{
-					Color baseColor = FrameColors.Resolve(ColorId);
-					using (SolidBrush brush2 = new SolidBrush(Color.FromArgb(40, 80, 80, 90)))
-					{
-						graphics.FillRectangle(brush2, rect);
-					}
-					FrameStyles.Draw(graphics, area, Color.FromArgb(120, baseColor), StyleId, _thickness, Radius);
-					using Pen pen = new Pen(Color.FromArgb(170, 120, 120, 130), 1f);
-					pen.DashStyle = DashStyle.Dash;
-					graphics.DrawRectangle(pen, rect.X + 0.5f, rect.Y + 0.5f, rect.Width - 1f, rect.Height - 1f);
-				}
-			}
-			catch (Exception ex)
-			{
-				Log.Error(ex);
-			}
-			base.OnPaint(e);
-		}
+		public static readonly Color Canvas = Color.FromArgb(243, 244, 246);
+		public static readonly Color Sidebar = Color.FromArgb(249, 250, 252);
+		public static readonly Color Surface = Color.White;
+		public static readonly Color Stroke = Color.FromArgb(228, 231, 236);
+		public static readonly Color Divider = Color.FromArgb(236, 238, 241);
+		public const int Radius = 12;
+		public static readonly Color TextPrimary = Color.FromArgb(25, 27, 31);
+		public static readonly Color TextSecondary = Color.FromArgb(96, 101, 110);
+		public static readonly Color TextTertiary = Color.FromArgb(141, 146, 155);
+		public static readonly Color Accent = Color.FromArgb(15, 107, 189);
+		public static readonly Color AccentPressed = Color.FromArgb(11, 90, 158);
+		public static readonly Color AccentSoft = Color.FromArgb(233, 243, 251);
+		public static readonly Color AccentSoftStroke = Color.FromArgb(187, 217, 238);
+		public static readonly Color InputStroke = Color.FromArgb(214, 218, 225);
+		public static readonly Color InputStrokeHover = Color.FromArgb(197, 202, 211);
+		public static readonly Color FieldFill = Color.FromArgb(247, 248, 250);
+		public static readonly Color FieldStroke = Color.FromArgb(223, 226, 231);
+		public static readonly Color Hint = Color.FromArgb(140, 145, 153);
+		public static readonly Color WarnText = Color.FromArgb(146, 88, 10);
+		public static readonly Color Success = Color.FromArgb(16, 124, 72);
+		public static readonly Color Danger = Color.FromArgb(187, 37, 37);
+		public static readonly Color TrackOff = Color.FromArgb(214, 217, 223);
+		public static readonly Color TrackOffHover = Color.FromArgb(202, 206, 213);
+		public static readonly Color ButtonHover = Color.FromArgb(246, 248, 251);
 	}
 
-	private sealed class ColorSwatchGrid : Control
+	private static class HQ
 	{
-		internal sealed class Entry
+		public static void Apply(Graphics g)
 		{
-			public string Id;
-
-			public string Name;
-
-			public Color Color;
+			g.SmoothingMode = SmoothingMode.HighQuality;
+			g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+			g.CompositingQuality = CompositingQuality.HighQuality;
+			g.PixelOffsetMode = PixelOffsetMode.Half;
+			g.InterpolationMode = InterpolationMode.HighQualityBicubic;
 		}
-
-		private readonly List<Entry> _items = new List<Entry>();
-
-		private string _selected = "";
-
-		private int _hot = -1;
-
-		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		public string SelectedId
-		{
-			get
-			{
-				return _selected;
-			}
-			set
-			{
-				if (_selected != value)
-				{
-					_selected = value;
-					Invalidate();
-				}
-			}
-		}
-
-		private int Cell => Fields.Sc(22);
-
-		private int Gap => Fields.Sc(6);
-
-		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		public int Columns { get; set; }
-
-		private int Cols
-		{
-			get
-			{
-				if (Columns > 0)
-				{
-					return Columns;
-				}
-				int num = (Math.Max(1, Width) + Gap) / (Cell + Gap);
-				if (num >= 1)
-				{
-					return num;
-				}
-				return 1;
-			}
-		}
-
-		internal int CellCountForTest => _items.Count;
-
-		internal Rectangle SelectedCellRectForTest
-		{
-			get
-			{
-				for (int i = 0; i < _items.Count; i++)
-				{
-					if (_items[i].Id == _selected)
-					{
-						return CellRect(i);
-					}
-				}
-				return Rectangle.Empty;
-			}
-		}
-
-		public event EventHandler Picked;
-
-		public ColorSwatchGrid()
-		{
-			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
-			BackColor = Design.Surface;
-			Cursor = Cursors.Hand;
-		}
-
-		public void SetItems(IEnumerable<Entry> items)
-		{
-			_items.Clear();
-			_items.AddRange(items);
-			Invalidate();
-		}
-
-		private Rectangle CellRect(int i)
-		{
-			int cols = Cols;
-			return new Rectangle(i % cols * (Cell + Gap), i / cols * (Cell + Gap), Cell, Cell);
-		}
-
-		private int IndexAt(Point p)
-		{
-			for (int i = 0; i < _items.Count; i++)
-			{
-				if (CellRect(i).Contains(p))
-				{
-					return i;
-				}
-			}
-			return -1;
-		}
-
-		protected override void OnMouseMove(MouseEventArgs e)
-		{
-			int num = IndexAt(e.Location);
-			if (num != _hot)
-			{
-				_hot = num;
-				Invalidate();
-			}
-			base.OnMouseMove(e);
-		}
-
-		protected override void OnMouseLeave(EventArgs e)
-		{
-			if (_hot != -1)
-			{
-				_hot = -1;
-				Invalidate();
-			}
-			base.OnMouseLeave(e);
-		}
-
-		protected override void OnMouseDown(MouseEventArgs e)
-		{
-			int num = IndexAt(e.Location);
-			if (num >= 0)
-			{
-				_selected = _items[num].Id;
-				Invalidate();
-				Picked?.Invoke(this, EventArgs.Empty);
-			}
-			base.OnMouseDown(e);
-		}
-
-		protected override void OnPaint(PaintEventArgs e)
-		{
-			Graphics graphics = e.Graphics;
-			HighQuality.Apply(graphics);
-			using (SolidBrush brush = new SolidBrush(Design.Surface))
-			{
-				graphics.FillRectangle(brush, ClientRectangle);
-			}
-			int num = Math.Max(1, Fields.Sc(2));
-			int num2 = Fields.Sc(6);
-			for (int i = 0; i < _items.Count; i++)
-			{
-				Rectangle r = CellRect(i);
-				bool flag = _items[i].Id == _selected;
-				bool flag2 = i == _hot;
-				if (flag | flag2)
-				{
-					Rectangle r2 = new Rectangle(r.X - num, r.Y - num, r.Width + num * 2, r.Height + num * 2);
-					using SolidBrush brush2 = new SolidBrush(flag ? Design.Accent : Color.FromArgb(140, Design.Accent));
-					using GraphicsPath path = RoundedPath(r2, num2 + num);
-					graphics.FillPath(brush2, path);
-				}
-				using (SolidBrush brush3 = new SolidBrush(Enabled ? _items[i].Color : Color.FromArgb(70, _items[i].Color)))
-				{
-					using GraphicsPath path2 = RoundedPath(r, num2);
-					graphics.FillPath(brush3, path2);
-				}
-				using Pen pen = new Pen(Color.FromArgb(46, 24, 26, 33));
-				using GraphicsPath path3 = RoundedPath(r, num2);
-				graphics.DrawPath(pen, path3);
-			}
-		}
-	}
-
-	private sealed class StyleGallery : Control
-	{
-		private readonly string[] _styles = FrameStyles.All;
-
-		private string _selected = FrameStyles.DefaultId;
-
-		private string _colorId = FrameColors.DefaultId;
-
-		private int _thickness = 3;
-
-		private int _radius = 13;
-
-		private bool _enabled = true;
-
-		private int _hot = -1;
-
-		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		public string SelectedId
-		{
-			get
-			{
-				return _selected;
-			}
-			set
-			{
-				if (_selected != value)
-				{
-					_selected = value;
-					Invalidate();
-				}
-			}
-		}
-
-		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		public string ColorId
-		{
-			set
-			{
-				if (_colorId != value)
-				{
-					_colorId = value;
-					Invalidate();
-				}
-			}
-		}
-
-		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		public int Thickness
-		{
-			set
-			{
-				if (_thickness != value)
-				{
-					_thickness = value;
-					Invalidate();
-				}
-			}
-		}
-
-		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		public int Radius
-		{
-			set
-			{
-				if (_radius != value)
-				{
-					_radius = value;
-					Invalidate();
-				}
-			}
-		}
-
-		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		public bool FrameEnabled
-		{
-			set
-			{
-				if (_enabled != value)
-				{
-					_enabled = value;
-					Invalidate();
-				}
-			}
-		}
-
-		private int CellW => Fields.Sc(70);
-
-		/// <summary>
-		/// v1.3：格子高度 46 → 54。旧值下标签画在 y=34 处、高 14，合计到 48，
-		/// 已经超出 46 的格高，所以标题压着下边框（截图里能看到文字贴边/被裁）。
-		/// </summary>
-		private int CellH => Fields.Sc(54);
-
-		private int Gap => Fields.Sc(8);
-
-		private int ThumbH => Fields.Sc(32);
-
-		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		public int Columns { get; set; }
-
-		private int Cols
-		{
-			get
-			{
-				if (Columns > 0)
-				{
-					return Columns;
-				}
-				int num = (Math.Max(1, Width) + Gap) / (CellW + Gap);
-				if (num >= 1)
-				{
-					return num;
-				}
-				return 1;
-			}
-		}
-
-		internal int CellCountForTest => _styles.Length;
-
-		/// <summary>自检用：格子真实高度 / 间隙 / 当前列数（断言别复制常量，否则改设计就假红）。</summary>
-		internal int CellHeightForTest => CellH;
-
-		internal int GapForTest => Gap;
-
-		internal int ColumnsForTest => Cols;
-
-		internal Rectangle SelectedCellRectForTest
-		{
-			get
-			{
-				for (int i = 0; i < _styles.Length; i++)
-				{
-					if (_styles[i] == _selected)
-					{
-						return CellRect(i);
-					}
-				}
-				return Rectangle.Empty;
-			}
-		}
-
-		public event EventHandler Picked;
-
-		public StyleGallery()
-		{
-			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
-			BackColor = Design.Surface;
-			Cursor = Cursors.Hand;
-		}
-
-		private Rectangle CellRect(int i)
-		{
-			int cols = Cols;
-			return new Rectangle(i % cols * (CellW + Gap), i / cols * (CellH + Gap), CellW, CellH);
-		}
-
-		private int IndexAt(Point p)
-		{
-			for (int i = 0; i < _styles.Length; i++)
-			{
-				if (CellRect(i).Contains(p))
-				{
-					return i;
-				}
-			}
-			return -1;
-		}
-
-		protected override void OnMouseMove(MouseEventArgs e)
-		{
-			int num = IndexAt(e.Location);
-			if (num != _hot)
-			{
-				_hot = num;
-				Invalidate();
-			}
-			base.OnMouseMove(e);
-		}
-
-		protected override void OnMouseLeave(EventArgs e)
-		{
-			if (_hot != -1)
-			{
-				_hot = -1;
-				Invalidate();
-			}
-			base.OnMouseLeave(e);
-		}
-
-		protected override void OnMouseDown(MouseEventArgs e)
-		{
-			int num = IndexAt(e.Location);
-			if (num >= 0)
-			{
-				_selected = _styles[num];
-				Invalidate();
-				Picked?.Invoke(this, EventArgs.Empty);
-			}
-			base.OnMouseDown(e);
-		}
-
-		protected override void OnPaint(PaintEventArgs e)
-		{
-			Graphics graphics = e.Graphics;
-			HighQuality.Apply(graphics);
-			using (SolidBrush brush = new SolidBrush(Design.Surface))
-			{
-				graphics.FillRectangle(brush, ClientRectangle);
-			}
-			Color color = FrameColors.Resolve(_colorId);
-			int radius = Fields.Sc(8);
-			int num = Fields.Sc(7);
-			int thickness = _thickness;
-			int radius2 = _radius;
-			for (int i = 0; i < _styles.Length; i++)
-			{
-				string text = _styles[i];
-				Rectangle r = CellRect(i);
-				bool flag = text == _selected;
-				bool flag2 = i == _hot;
-				Color color2;
-				if (flag)
-				{
-					color2 = Design.AccentSoft;
-				}
-				else
-				{
-					color2 = (flag2 ? Color.FromArgb(246, 247, 250) : Design.Surface);
-				}
-				using (SolidBrush brush2 = new SolidBrush(color2))
-				{
-					using GraphicsPath path = RoundedPath(r, radius);
-					graphics.FillPath(brush2, path);
-				}
-				using (Pen pen = new Pen(flag ? Design.Accent : Design.Stroke, flag ? ((float)Math.Max(1, Fields.Sc(2))) : 1f))
-				{
-					using GraphicsPath path2 = RoundedPath(new Rectangle(r.X, r.Y, r.Width - 1, r.Height - 1), radius);
-					graphics.DrawPath(pen, path2);
-				}
-				Rectangle rectangle = new Rectangle(r.X + Fields.Sc(5), r.Y + Fields.Sc(4), r.Width - Fields.Sc(10), ThumbH);
-				using (SolidBrush brush3 = new SolidBrush(Color.White))
-				{
-					graphics.FillRectangle(brush3, new Rectangle(rectangle.X + num, rectangle.Y + num, rectangle.Width - num * 2, rectangle.Height - num * 2));
-				}
-				FrameStyles.Draw(graphics, rectangle, _enabled ? color : Color.FromArgb(110, color), text, thickness, radius2, num);
-				TextRenderer.DrawText(bounds: new Rectangle(r.X, r.Y + ThumbH + Fields.Sc(3), r.Width, Fields.Sc(16)), dc: graphics, text: ShortName(text), font: Font, foreColor: flag ? Design.Accent : Design.TextSecondary, flags: TextFormatFlags.EndEllipsis | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
-				if (flag)
-				{
-					int num2 = Fields.Sc(13);
-					Rectangle rect = new Rectangle(r.Right - num2 - Fields.Sc(3), r.Y + Fields.Sc(3), num2, num2);
-					using (SolidBrush brush4 = new SolidBrush(Design.Accent))
-					{
-						graphics.FillEllipse(brush4, rect);
-					}
-					using Pen pen2 = new Pen(Color.White, Math.Max(1f, (float)Fields.Sc(2) * 0.8f));
-					pen2.StartCap = LineCap.Round;
-					pen2.EndCap = LineCap.Round;
-					int num3 = rect.X + num2 / 2;
-					int num4 = rect.Y + num2 / 2;
-					float num5 = Fields.Sc(3);
-					graphics.DrawLines(pen2, new PointF[3]
-					{
-						new PointF((float)num3 - num5, num4),
-						new PointF((float)num3 - num5 * 0.35f, (float)num4 + num5 * 0.8f),
-						new PointF((float)num3 + num5 * 1.05f, (float)num4 - num5 * 0.85f)
-					});
-				}
-			}
-		}
-
-		private static string ShortName(string id)
-		{
-			return id switch
-			{
-				"Glow" => "柔光", 
-				"Flat" => "纯净", 
-				"Solid" => "实心", 
-				"Double" => "双线", 
-				"Dashed" => "虚线", 
-				"Aurora" => "极光", 
-				"Neon" => "霓虹", 
-				"Halo" => "光晕", 
-				"Corners" => "四角", 
-				// 下面三种原先落到 _ => id，画廊里会显示英文 id（Shadow/Underline/Brackets），
-				// 与同页 FrameStyles.DisplayName 的中文名不一致；这里补齐中文短名。
-				"Shadow" => "投影", 
-				"Underline" => "下缘", 
-				"Brackets" => "中点", 
-				_ => id, 
-			};
-		}
-	}
-
-	private sealed class NavSidebar : Control
-	{
-		private ScrollableControl _host;
-
-		private string[] _titles;
-
-		private string[] _glyphs;
-
-		private Control[] _targets;
-
-		private int _hot = -1;
-
-		private int _active;
-
-		private float[] _rowGlow;
-
-		private readonly System.Windows.Forms.Timer _glowTimer = new System.Windows.Forms.Timer();
-
-		internal int SyncCountForTest;
-
-		internal int LastTopForTest;
-
-		internal int LastBestForTest = -1;
-
-		private int RowHeight => Fields.Sc(42);
-
-		/// <summary>v1.3：顶部留出标题区（应用名 + 副标题），行从这里开始。</summary>
-		private int PadTop => Fields.Sc(64);
-
-		private int PadX => Fields.Sc(14);
-
-		internal int ActiveForTest => _active;
-
-		internal int CountForTest
-		{
-			get
-			{
-				if (_titles != null)
-				{
-					return _titles.Length;
-				}
-				return 0;
-			}
-		}
-
-		public NavSidebar()
-		{
-			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
-			BackColor = Design.SidebarSurface;
-			Cursor = Cursors.Hand;
-			_glowTimer.Interval = 16;
-			_glowTimer.Tick += (object? s, EventArgs e) =>
-			{
-				StepGlow();
-			};
-		}
-
-		private void StepGlow()
-		{
-			if (_rowGlow == null)
-			{
-				_glowTimer.Stop();
-				return;
-			}
-			bool flag = false;
-			for (int i = 0; i < _rowGlow.Length; i++)
-			{
-				float num;
-				if (i == _active)
-				{
-					num = 1f;
-				}
-				else
-				{
-					num = ((i == _hot) ? 0.55f : 0f);
-				}
-				float num2 = num - _rowGlow[i];
-				if (Math.Abs(num2) < 0.03f)
-				{
-					_rowGlow[i] = num;
-					continue;
-				}
-				_rowGlow[i] += num2 * 0.32f;
-				flag = true;
-			}
-			if (!flag)
-			{
-				_glowTimer.Stop();
-			}
-			if (!IsDisposed)
-			{
-				Invalidate();
-			}
-		}
-
-		private void KickGlow()
-		{
-			if (_rowGlow == null || _rowGlow.Length != ((_titles != null) ? _titles.Length : 0))
-			{
-				_rowGlow = new float[(_titles != null) ? _titles.Length : 0];
-				if (_active >= 0 && _active < _rowGlow.Length)
-				{
-					_rowGlow[_active] = 1f;
-				}
-			}
-			if (!_glowTimer.Enabled)
-			{
-				_glowTimer.Start();
-			}
-		}
-
-		public void Bind(ScrollableControl host, string[] titles, Control[] targets)
-		{
-			_host = host;
-			_titles = titles;
-			_targets = targets;
-			_glyphs = new string[titles?.Length ?? 0];
-			for (int i = 0; i < _glyphs.Length; i++)
-			{
-				_glyphs[i] = GlyphForSection(titles[i]);
-			}
-			_rowGlow = null;
-			KickGlow();
-			Invalidate();
-		}
-
-		private int IndexAt(int y)
-		{
-			if (_titles == null || _titles.Length == 0)
-			{
-				return -1;
-			}
-			int num = (y - PadTop) / RowHeight;
-			if (num < 0 || num >= _titles.Length)
-			{
-				return -1;
-			}
-			return num;
-		}
-
-		protected override void OnMouseMove(MouseEventArgs e)
-		{
-			int num = IndexAt(e.Y);
-			if (num != _hot)
-			{
-				_hot = num;
-				KickGlow();
-			}
-			base.OnMouseMove(e);
-		}
-
-		protected override void OnMouseLeave(EventArgs e)
-		{
-			if (_hot != -1)
-			{
-				_hot = -1;
-				KickGlow();
-			}
-			base.OnMouseLeave(e);
-		}
-
-		protected override void OnMouseDown(MouseEventArgs e)
-		{
-			int num = IndexAt(e.Y);
-			if (num >= 0)
-			{
-				_active = num;
-				ScrollTo(num);
-				KickGlow();
-			}
-			base.OnMouseDown(e);
-		}
-
-		private void ScrollTo(int i)
-		{
-			if (_host == null || _targets == null || i < 0 || i >= _targets.Length)
-			{
-				return;
-			}
-			Control control = _targets[i];
-			if (control == null)
-			{
-				return;
-			}
-			try
-			{
-				int num = control.Top - Fields.Sc(6);
-				if (num < 0)
-				{
-					num = 0;
-				}
-				_host.AutoScrollPosition = new Point(0, num);
-			}
-			catch (Exception ex)
-			{
-				Log.Error(ex);
-			}
-		}
-
-		public void SyncActive()
-		{
-			SyncCountForTest++;
-			if (_host == null || _targets == null)
-			{
-				return;
-			}
-			int num;
-			try
-			{
-				num = -_host.AutoScrollPosition.Y;
-			}
-			catch
-			{
-				return;
-			}
-			LastTopForTest = num;
-			int num2 = 0;
-			for (int i = 0; i < _targets.Length; i++)
-			{
-				if (_targets[i] != null && _targets[i].Top <= num + Fields.Sc(40))
-				{
-					num2 = i;
-				}
-			}
-			try
-			{
-				int num3 = _host.DisplayRectangle.Height - _host.ClientSize.Height;
-				if (num3 > 0 && num >= num3 - 2 && _targets.Length != 0)
-				{
-					num2 = _targets.Length - 1;
-				}
-			}
-			catch
-			{
-			}
-			LastBestForTest = num2;
-			if (num2 != _active)
-			{
-				_active = num2;
-				KickGlow();
-			}
-		}
-
-		protected override void OnPaint(PaintEventArgs e)
-		{
-			Graphics graphics = e.Graphics;
-			HighQuality.Apply(graphics);
-			using (SolidBrush brush = new SolidBrush(Design.SidebarSurface))
-			{
-				graphics.FillRectangle(brush, ClientRectangle);
-			}
-			using (Pen pen = new Pen(Design.Stroke))
-			{
-				graphics.DrawLine(pen, Width - 1, 0, Width - 1, Height);
-			}
-			// v1.3：侧栏顶部标题区（现代设置页普遍有的品牌/标题区）。
-			try
-			{
-				using Font fontTitle = new Font(Font.FontFamily, Fields.Sc(15), FontStyle.Bold, GraphicsUnit.Pixel);
-				using Font fontSub = new Font(Font.FontFamily, Fields.Sc(11), FontStyle.Regular, GraphicsUnit.Pixel);
-				TextRenderer.DrawText(graphics, "长按拖窗", fontTitle, new Rectangle(PadX - Fields.Sc(4), Fields.Sc(18), Width - PadX * 2 + Fields.Sc(8), Fields.Sc(22)), Design.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-				TextRenderer.DrawText(graphics, "HoldDrag", fontSub, new Rectangle(PadX - Fields.Sc(4), Fields.Sc(40), Width - PadX * 2 + Fields.Sc(8), Fields.Sc(16)), Design.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-			}
-			catch (Exception exT)
-			{
-				Log.Error(exT);
-			}
-			if (_titles == null)
-			{
-				return;
-			}
-			int rowHeight = RowHeight;
-			int padTop = PadTop;
-			int padX = PadX;
-			using Font font = new Font(Font.FontFamily, Fields.Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
-			using Font font2 = Icons.At(Fields.Sc(16));
-			for (int i = 0; i < _titles.Length; i++)
-			{
-				int num = padTop + i * rowHeight;
-				Rectangle r = new Rectangle(padX - Fields.Sc(6), num + Fields.Sc(3), Width - (padX - Fields.Sc(6)) - Fields.Sc(10), rowHeight - Fields.Sc(6));
-				bool flag = i == _active;
-				bool flag2 = i == _hot;
-				float num2;
-				if (_rowGlow != null && i < _rowGlow.Length)
-				{
-					num2 = _rowGlow[i];
-				}
-				else
-				{
-					num2 = (flag ? 1f : 0f);
-				}
-				if (num2 > 0.01f)
-				{
-					// v1.3：选中 = 浅靛蓝胶囊 + 细描边；悬停 = 极浅灰。去掉了左侧彩色指示条
-					// （胶囊本身已足够指示选中，双重强调只显噪）。
-					Color color = (flag ? Design.AccentSoft : Color.FromArgb(243, 244, 246));
-					using SolidBrush brush2 = new SolidBrush(MixColor(Color.FromArgb(0, color), color, Math.Min(1f, num2 * 1.35f)));
-					using GraphicsPath path = RoundedPath(r, Fields.Sc(10));
-					{
-						graphics.FillPath(brush2, path);
-					}
-					if (flag)
-					{
-						using Pen pen4 = new Pen(MixColor(Color.FromArgb(0, Design.AccentSoftStroke), Design.AccentSoftStroke, Math.Min(1f, num2)));
-						{
-							graphics.DrawPath(pen4, path);
-						}
-					}
-				}
-				Rectangle rectangle = new Rectangle(r.Left + Fields.Sc(13), r.Top, r.Width - Fields.Sc(18), r.Height);
-				Color b;
-				if (flag)
-				{
-					b = Design.AccentPressed;
-				}
-				else
-				{
-					b = (flag2 ? Design.TextPrimary : Design.TextSecondary);
-				}
-				b = MixColor(Design.TextSecondary, b, Math.Min(1f, num2));
-				int num3 = rectangle.Left;
-				if (font2 != null && _glyphs != null && i < _glyphs.Length)
-				{
-					int num4 = Fields.Sc(16);
-					TextRenderer.DrawText(bounds: new Rectangle(r.Left + Fields.Sc(13), r.Top + (r.Height - num4) / 2, num4, num4), dc: graphics, text: _glyphs[i], font: font2, foreColor: b, flags: TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-					num3 = r.Left + Fields.Sc(13) + num4 + Fields.Sc(8);
-				}
-				TextRenderer.DrawText(bounds: new Rectangle(num3, r.Top, r.Right - Fields.Sc(6) - num3, r.Height), dc: graphics, text: _titles[i], font: font, foreColor: b, flags: TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
-			}
-		}
-	}
-
-	private sealed class InnerLayout
-	{
-		public enum Mode
-		{
-			Fixed,
-			Grow,
-			Shift
-		}
-
-		public Control Control;
-
-		public int BaseLeft;
-
-		public int BaseWidth;
-
-		public int RightGap;
-
-		public Mode How;
-
-		public int BaseInner;
-
-		public Control GrowRightNeighbor;
-
-		public int GrowNeighborGap;
-
-		public int ShiftRightGap = -1;
-
-		public bool WasTextWidened;
-
-		public int OriginalWidth;
-
-		public int ShiftByOffset;
-
-		public InnerLayout RightPartner;
-
-		public bool WrapsToNextRow;
-
-		public int WrapOffsetY;
-
-		public int BaseTop;
-
-		public int BaseHeight;
-	}
-
-	private sealed class DesignSnapshot
-	{
-		public Control Control;
-
-		public Point Location;
-
-		public Size Size;
 	}
 
 	private static class Icons
 	{
 		private static FontFamily _family;
-
 		private static bool _probed;
 
 		public static FontFamily Family
@@ -16905,541 +15873,691 @@ internal sealed class SettingsForm : Form
 	internal static class Glyph
 	{
 		public const string Keyboard = "\ue765";
-
 		public const string Move = "\ue7c2";
-
 		public const string Color = "\ue790";
-
 		public const string Speed = "\ue9d9";
-
 		public const string Shield = "\ue72e";
-
 		public const string Chevron = "\ue76c";
-
 		public const string Help = "\ue897";
-
 		public const string Info = "\ue946";
 	}
 
-	private static class Design
-	{
-		/// <summary>
-		/// v1.4.2：优先用现代字形。微软雅黑是 Windows 7 时代的默认中文 UI 字体，
-		/// 细笔画在 4K 屏上显得单薄、老气；Win10 1709+ 自带的「微软雅黑 UI」更紧凑，
-		/// 有 Segoe UI Variable 时优先用它（Win11 的原生 UI 字体）。
-		/// </summary>
-		internal static readonly string UiFontFamily = PickFont("Segoe UI Variable Text", "Segoe UI Variable Display", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI");
+	// ======================= 补间动画 =======================
 
-		private static string PickFont(params string[] candidates)
+	private sealed class Tween
+	{
+		private static readonly List<Tween> Active = new List<Tween>();
+		private static readonly System.Windows.Forms.Timer Timer = new System.Windows.Forms.Timer
 		{
+			Interval = 16
+		};
+
+		private readonly Control _owner;
+		private float _from;
+		private float _to;
+		private float _value;
+		private int _elapsed;
+		private const int Duration = 170;
+
+		static Tween()
+		{
+			Timer.Tick += delegate
+			{
+				for (int i = Active.Count - 1; i >= 0; i--)
+				{
+					Tween tween = Active[i];
+					if (tween._owner == null || tween._owner.IsDisposed)
+					{
+						Active.RemoveAt(i);
+						continue;
+					}
+					tween._elapsed += Timer.Interval;
+					float num = Math.Min(1f, (float)tween._elapsed / (float)Duration);
+					float num2 = 1f - (float)Math.Pow(1f - num, 3.0);
+					tween._value = tween._from + (tween._to - tween._from) * num2;
+					if (num >= 1f)
+					{
+						tween._value = tween._to;
+						Active.RemoveAt(i);
+					}
+					try
+					{
+						tween._owner.Invalidate();
+					}
+					catch
+					{
+					}
+				}
+				if (Active.Count == 0)
+				{
+					Timer.Stop();
+				}
+			};
+		}
+
+		public Tween(Control owner)
+		{
+			_owner = owner;
+		}
+
+		public float Value => _value;
+
+		public void Snap(float v)
+		{
+			_value = v;
+			_to = v;
+			_from = v;
+			_elapsed = Duration;
+			for (int i = 0; i < Active.Count; i++)
+			{
+				if (Active[i] == this)
+				{
+					Active.RemoveAt(i);
+					break;
+				}
+			}
+		}
+
+		public void To(float target)
+		{
+			if (Math.Abs(_value - target) < 0.0001f && Math.Abs(_to - target) < 0.0001f)
+			{
+				return;
+			}
+			_from = _value;
+			_to = target;
+			_elapsed = 0;
+			if (!Active.Contains(this))
+			{
+				Active.Add(this);
+			}
+			if (!Timer.Enabled)
+			{
+				Timer.Start();
+			}
+		}
+	}
+
+	// ======================= 布局单元 =======================
+
+	private interface INeedHeight
+	{
+		int HeightFor(int width);
+	}
+
+	private sealed class Cell
+	{
+		public Control Ctl;
+		public Control LabelCtl;
+		public string Label;
+		public int LabelW;
+		public int FixedW;
+		public bool Wrap;
+		public bool Auto;
+	}
+
+	private sealed class Row
+	{
+		public List<Cell> Cells = new List<Cell>();
+		public int Height = 40;
+		public int Gap = 8;
+	}
+
+	private sealed class LinePlan
+	{
+		public Row Row;
+		public List<Cell> Cells = new List<Cell>();
+		public List<Control> Labels = new List<Control>();
+		public int Y;
+		public int H;
+	}
+
+	// ======================= 卡片 =======================
+
+	private sealed class Card : GroupBox
+	{
+		public readonly List<Row> Rows = new List<Row>();
+		public bool Wide;
+		public int PadX = 18;
+		public int TitleH = 40;
+		public int BottomPad = 12;
+		private readonly List<Control> _fields = new List<Control>();
+
+		public Card(string title)
+		{
+			Text = title;
+			BackColor = Tokens.Canvas;
+			ForeColor = Tokens.TextPrimary;
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
+		}
+
+		public Row Add(int height, params Cell[] cells)
+		{
+			Row row = new Row();
+			row.Height = height;
+			row.Cells.AddRange(cells);
+			Rows.Add(row);
+			foreach (Cell cell in cells)
+			{
+				if (cell.Ctl != null && !Controls.Contains(cell.Ctl))
+				{
+					Controls.Add(cell.Ctl);
+				}
+				if (cell.LabelCtl != null && !Controls.Contains(cell.LabelCtl))
+				{
+					Controls.Add(cell.LabelCtl);
+				}
+			}
+			return row;
+		}
+
+		public void RegisterField(Control c)
+		{
+			if (c == null)
+			{
+				return;
+			}
+			_fields.Add(c);
 			try
 			{
-				HashSet<string> installed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-				using (System.Drawing.Text.InstalledFontCollection collection = new System.Drawing.Text.InstalledFontCollection())
-				{
-					for (int i = 0; i < collection.Families.Length; i++)
-					{
-						installed.Add(collection.Families[i].Name);
-					}
-				}
-				for (int j = 0; j < candidates.Length; j++)
-				{
-					if (installed.Contains(candidates[j]))
-					{
-						return candidates[j];
-					}
-				}
+				c.BackColor = Tokens.FieldFill;
 			}
 			catch
 			{
 			}
-			return "Microsoft YaHei UI";
+			ApplyFieldRegion(c);
 		}
-		// ==================================================================
-		// v1.3 视觉语言：精致中性灰 + 单一靛蓝强调。
-		//   · 画布用暖灰（不带蓝调），卡片纯白，靠柔和两级投影建立层次；
-		//   · 全部圆角统一节奏：卡片 12 / 输入 8 / 按钮 8 / 侧栏选中 10；
-		//   · 强调色只用靛蓝一处（选中/主按钮/焦点），其余一律灰阶，
-		//     避免"处处有色 = 处处噪音"。
-		// ==================================================================
 
-		/// <summary>窗口画布：暖中性灰（旧值 240,242,245 偏蓝，显得廉价）。</summary>
-		public static readonly Color Canvas = Color.FromArgb(243, 244, 246);
+		private void ApplyFieldRegion(Control c)
+		{
+			try
+			{
+				int num = Math.Max(1, Sc(1));
+				c.Region = new Region(RoundedPath(new Rectangle(num, num, Math.Max(4, c.Width - num * 2 - 1), Math.Max(4, c.Height - num * 2 - 1)), Sc(6)));
+			}
+			catch
+			{
+			}
+		}
 
-		public static readonly Color Surface = Color.White;
+		public void SyncFieldRegions()
+		{
+			foreach (Control field in _fields)
+			{
+				ApplyFieldRegion(field);
+			}
+		}
 
-		public static readonly Color SurfaceTop = Color.White;
+		public int Measure(int width)
+		{
+			int num = Sc(TitleH);
+			foreach (LinePlan item in Plan(width))
+			{
+				num += item.H;
+			}
+			return num + Sc(BottomPad);
+		}
 
-		public static readonly Color SurfaceBottom = Color.FromArgb(252, 253, 254);
+		public void Layout(int width)
+		{
+			SuspendLayout();
+			List<LinePlan> list = Plan(width);
+			int inner = width - Sc(PadX) * 2;
+			foreach (LinePlan item in list)
+			{
+				int num = Sc(PadX);
+				int num2 = item.Cells.Count;
+				int num3 = 0;
+				int num4 = 0;
+				foreach (Cell cell in item.Cells)
+				{
+					if (cell.Wrap || cell.Auto)
+					{
+						continue;
+					}
+					if (!string.IsNullOrEmpty(cell.Label))
+					{
+						num3 += Sc(cell.LabelW);
+					}
+					if (cell.Ctl != null && cell.FixedW > 0)
+					{
+						num3 += Sc(cell.FixedW);
+					}
+					if (cell.Ctl != null && cell.FixedW <= 0)
+					{
+						num4++;
+					}
+					num3 += Sc(item.Row.Gap);
+				}
+				num3 = Math.Max(0, num3 - Sc(item.Row.Gap));
+				int num5 = inner - num3;
+				int num6 = ((num4 > 0) ? Math.Max(Sc(90), num5 / num4) : 0);
+				for (int i = 0; i < num2; i++)
+				{
+					Cell cell2 = item.Cells[i];
+					if (!string.IsNullOrEmpty(cell2.Label))
+					{
+						Control control = item.Labels[i];
+						if (control != null)
+						{
+							int num7 = Math.Min(Sc(cell2.LabelW), Math.Max(20, inner - (num - Sc(PadX)) - Sc(2)));
+							int num11 = Math.Min(item.H, Math.Max(control.Height, TextHeightFor(control) + Sc(4)));
+							control.SetBounds(num, item.Y + Math.Max(0, (item.H - num11) / 2), num7, num11);
+						}
+						num += Sc(cell2.LabelW) + Sc(item.Row.Gap);
+					}
+					if (cell2.Ctl == null)
+					{
+						continue;
+					}
+					int num8 = num6;
+					if (cell2.FixedW > 0)
+					{
+						num8 = Sc(cell2.FixedW);
+					}
+					else if (cell2.Wrap || cell2.Auto)
+					{
+						num8 = inner - (num - Sc(PadX));
+					}
+					int num9 = inner - (num - Sc(PadX));
+					if (num8 > num9)
+					{
+						num8 = num9;
+					}
+					if (num8 < 8)
+					{
+						num8 = 8;
+					}
+				int num10;
+				if (cell2.Wrap || cell2.Auto)
+				{
+					// 整行单元格的高度已由 RowHeight 按文字行数 / INeedHeight 算好
+					num10 = Math.Max(Sc(20), cell2.Ctl.Height);
+				}
+				else if (cell2.Ctl is FlatCombo || cell2.Ctl is TextBox || cell2.Ctl is FlatButton)
+				{
+					// 输入框 / 按钮统一设计高度，不沿用系统默认行高（否则和底栏按钮高度对不上）
+					num10 = Math.Min(item.H, Sc(32));
+				}
+				else
+				{
+					num10 = item.H;
+				}
+				cell2.Ctl.SetBounds(num, item.Y + Math.Max(0, (item.H - num10) / 2), num8, num10);
+				num += num8 + Sc(item.Row.Gap);
+				}
+			}
+			SyncFieldRegions();
+			ResumeLayout(performLayout: false);
+		}
 
-		public static readonly Color SidebarSurface = Color.FromArgb(248, 249, 250);
+		private List<LinePlan> Plan(int width)
+		{
+			List<LinePlan> list = new List<LinePlan>();
+			int inner = width - Sc(PadX) * 2;
+			int num = Sc(TitleH);
+			foreach (Row row in Rows)
+			{
+				foreach (List<Cell> line in PackLines(row, inner))
+				{
+					LinePlan linePlan = new LinePlan();
+					linePlan.Row = row;
+					linePlan.Cells = line;
+					linePlan.Y = num;
+					linePlan.H = RowHeight(row, line, inner);
+					foreach (Cell item in line)
+					{
+						linePlan.Labels.Add(GetLabel(item));
+					}
+					list.Add(linePlan);
+					num += linePlan.H;
+				}
+			}
+			return list;
+		}
 
-		/// <summary>卡片描边：足够浅，只在与画布交界处起"裁切"作用。</summary>
-		public static readonly Color Stroke = Color.FromArgb(226, 229, 234);
+		private static List<List<Cell>> PackLines(Row row, int inner)
+		{
+			List<List<Cell>> list = new List<List<Cell>>();
+			List<Cell> list2 = new List<Cell>();
+			int num = 0;
+			foreach (Cell cell in row.Cells)
+			{
+				if (cell.Wrap || cell.Auto)
+				{
+					if (list2.Count > 0)
+					{
+						list.Add(list2);
+						list2 = new List<Cell>();
+						num = 0;
+					}
+					list.Add(new List<Cell> { cell });
+					continue;
+				}
+				int num2 = Natural(cell);
+				if (list2.Count > 0 && num + num2 > inner)
+				{
+					list.Add(list2);
+					list2 = new List<Cell>();
+					num = 0;
+				}
+				list2.Add(cell);
+				num += num2 + Sc(row.Gap);
+			}
+			if (list2.Count > 0)
+			{
+				list.Add(list2);
+			}
+			if (list.Count == 0)
+			{
+				list.Add(new List<Cell>());
+			}
+			return list;
+		}
 
-		/// <summary>标题下的发丝分隔线。</summary>
-		public static readonly Color Divider = Color.FromArgb(236, 238, 241);
+		private static int Natural(Cell c)
+		{
+			int num = 0;
+			if (!string.IsNullOrEmpty(c.Label))
+			{
+				num += Sc(c.LabelW);
+			}
+			if (c.Ctl != null)
+			{
+				num += ((c.FixedW > 0) ? Sc(c.FixedW) : Sc(90));
+			}
+			return num;
+		}
 
-		public const int Radius = 12;
-
-		/// <summary>投影基色：深蓝黑，配低透明度出"环境光"感。</summary>
-		public static readonly Color Shadow = Color.FromArgb(15, 23, 42);
-
-		public const int ShadowOffset = 2;
-
-		public const int ShadowSpread = 4;
-
-		/// <summary>v1.3 起卡片不再画左侧强调条：彩色竖条 + 彩色图标双重噪音是旧版显丑的主因之一。</summary>
-		public const int AccentBarWidth = 0;
-
-		public static readonly Color TextPrimary = Color.FromArgb(17, 20, 24);
-
-		public static readonly Color TextSecondary = Color.FromArgb(106, 112, 122);
-
-		public static readonly Color TextTertiary = Color.FromArgb(148, 153, 161);
-
-		/// <summary>唯一强调色：靛蓝（比旧的 94,84,222 更沉稳）。</summary>
-		public static readonly Color Accent = Color.FromArgb(79, 70, 229);
-
-		public static readonly Color AccentPressed = Color.FromArgb(63, 56, 205);
-
-		public static readonly Color AccentSoft = Color.FromArgb(238, 240, 252);
-
-		/// <summary>浅靛蓝底的描边（选中态胶囊用）。</summary>
-		public static readonly Color AccentSoftStroke = Color.FromArgb(206, 210, 245);
-
-		/// <summary>焦点环外圈：靛蓝 18% 透明。</summary>
-		public static readonly Color FocusRing = Color.FromArgb(46, 79, 70, 229);
-
-		public static readonly Color InputStroke = Color.FromArgb(216, 219, 224);
-
-		public static readonly Color InputStrokeHover = Color.FromArgb(202, 206, 213);
-
-		public static readonly Color InputStrokeFocus = Color.FromArgb(79, 70, 229);
-
-		/// <summary>输入框底：比白更浅的灰，让"可输入"区域和卡片白底区分开（现代表单通行做法）。</summary>
-		public static readonly Color FieldFill = Color.FromArgb(247, 248, 250);
-
-		public static readonly Color FieldFillDisabled = Color.FromArgb(243, 244, 246);
-
-		public static readonly Color FieldStroke = Color.FromArgb(223, 226, 231);
-
-		public static readonly Color StrokeDisabled = Color.FromArgb(232, 234, 238);
-
-		public const int FieldRadius = 8;
-
-		public static readonly Color Hint = Color.FromArgb(140, 145, 153);
-
-		public static readonly Color WarnText = Color.FromArgb(161, 98, 7);
-
-		public static readonly Color ReadOnlyFill = Color.FromArgb(247, 248, 251);
-
-		public static readonly Color Warning = Color.FromArgb(190, 106, 12);
-
-		public static readonly Color Success = Color.FromArgb(24, 128, 78);
-
-		public static readonly Color Danger = Color.FromArgb(196, 40, 40);
+	private int RowHeight(Row row, List<Cell> line, int inner)
+	{
+		foreach (Cell item in line)
+		{
+			if (item.Ctl == null || (!item.Wrap && !item.Auto))
+			{
+				continue;
+			}
+			if (item.Ctl is INeedHeight needHeight)
+			{
+				int num = needHeight.HeightFor(inner);
+				if (num > 0)
+				{
+					item.Ctl.Height = num;
+					return Math.Max(Sc(row.Height), num);
+				}
+			}
+			int num2 = TextLines(item.Ctl.Text, item.Ctl, inner - ((item.Ctl is FlatCheck) ? Sc(48) : Sc(2)));
+			int num3 = Math.Max(Sc(30), num2 * Sc(17) + Sc(12));
+			item.Ctl.Height = num3;
+			return Math.Max(Sc(row.Height), num3);
+		}
+		return Sc(row.Height);
 	}
 
-	private static class HighQuality
-	{
-		public static void Apply(Graphics g)
+		private Control GetLabel(Cell c)
 		{
-			g.SmoothingMode = SmoothingMode.HighQuality;
-			g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-			g.CompositingQuality = CompositingQuality.HighQuality;
-			g.PixelOffsetMode = PixelOffsetMode.Half;
-			g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-		}
-	}
-
-	private sealed class CardGroup : GroupBox
-	{
-		public int TitleFontPx = 15;
-
-		public int TitleInsetPx = 32;
-
-		public int TitleY = 9;
-
-		public int RadiusPx = Design.Radius;
-
-		public int ShadowOffsetPx = 2;
-
-		public int ShadowSpreadPx = 4;
-
-		/// <summary>v1.3 起恒为 0：卡片不再画左侧彩色竖条（旧版"处处强调 = 处处噪音"）。</summary>
-		public int AccentBarPx = 0;
-
-		public CardGroup()
-		{
-			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
-			BackColor = Design.Surface;
-			ForeColor = Design.TextPrimary;
+			if (string.IsNullOrEmpty(c.Label))
+			{
+				return null;
+			}
+			if (c.LabelCtl != null && !Controls.Contains(c.LabelCtl))
+			{
+				Controls.Add(c.LabelCtl);
+			}
+			return c.LabelCtl;
 		}
 
 		protected override void OnPaint(PaintEventArgs e)
 		{
 			Graphics graphics = e.Graphics;
-			HighQuality.Apply(graphics);
-			int width = Width;
-			int height = Height;
-			if (width <= 0 || height <= 0)
+			HQ.Apply(graphics);
+			Rectangle clientRectangle = ClientRectangle;
+			using (SolidBrush solidBrush = new SolidBrush(Tokens.Canvas))
+			{
+				graphics.FillRectangle(solidBrush, clientRectangle);
+			}
+			int num = Sc(10);
+			Rectangle rectangle = new Rectangle(0, num, clientRectangle.Width, clientRectangle.Height - num * 2);
+			if (rectangle.Width <= 0 || rectangle.Height <= 0)
 			{
 				return;
 			}
-			using (SolidBrush brush = new SolidBrush((Parent != null) ? Parent.BackColor : Design.Canvas))
+			using (GraphicsPath path = RoundedPath(rectangle, Sc(12)))
 			{
-				graphics.FillRectangle(brush, 0, 0, width, height);
-			}
-			int num = Math.Max(2, RadiusPx);
-			// ------------------------------------------------------------------
-			// v1.3 投影：两级（环境光 + 主投影），共 4 笔。
-			// 旧实现是 ~15 笔粗描边（num2=10 到 1 的两个循环），既慢又生硬有色带。
-			// 新实现模拟 CSS 的 box-shadow 双层结构：
-			//   环境光：无偏移、很宽、极低透明度 ×3（宽度递增制造高斯式衰减）；
-			//   主投影：向下偏 2px、较窄、稍高透明度 ×1。
-			// 笔数 15 → 4，视觉上反而更柔。
-			// ------------------------------------------------------------------
-			int num2 = Math.Max(1, Fields.Sc(1));
-			int num3 = Math.Max(2, ShadowSpreadPx);
-			for (int i = 0; i < 3; i++)
-			{
-				int num4 = (i + 1) * num3;
-				using GraphicsPath path = RoundedPath(new Rectangle(-num4 / 2 + num2, -num4 / 3 + num2, width - num2 * 2 + num4, height - num2 * 2 + num4), num + num4 / 2);
-				using Pen pen = new Pen(Color.FromArgb(7 - i * 2, Design.Shadow), (float)(num4 + num3));
-				pen.LineJoin = LineJoin.Round;
-				graphics.DrawPath(pen, path);
-			}
-			{
-				int num5 = Math.Max(1, ShadowOffsetPx);
-				using GraphicsPath path2 = RoundedPath(new Rectangle(num2, num5 + num2, width - num2 * 2 - 2, height - num2 * 2 - 2), num);
-				using Pen pen2 = new Pen(Color.FromArgb(16, Design.Shadow), (float)Math.Max(2, num3 * 2));
-				pen2.LineJoin = LineJoin.Round;
-				graphics.DrawPath(pen2, path2);
-			}
-			GraphicsPath graphicsPath = RoundedPath(new Rectangle(0, 0, width - 1, height - 1), num);
-			using (LinearGradientBrush brush2 = new LinearGradientBrush(new Rectangle(0, 0, width, height), Design.SurfaceTop, Design.SurfaceBottom, LinearGradientMode.Vertical))
-			{
-				graphics.FillPath(brush2, graphicsPath);
-			}
-			using Pen pen3 = new Pen(Design.Stroke);
-			{
-				graphics.DrawPath(pen3, graphicsPath);
-			}
-			// v1.3：取消标题下的发丝分隔线——标题与内容靠间距区分即可，
-			// 一条横线在窄卡片里反而像表格边框，而且会和首行内容抢位置。
-			graphicsPath.Dispose();
-			Fields.PaintFor(graphics, this);
-			if (string.IsNullOrEmpty(Text))
-			{
-				return;
-			}
-			float num9 = AccentBarPx + Fields.Sc(14);
-			// v1.3：标题图标加一个浅灰圆角底片（现代设置页的常见手法），
-			// 让它看起来是"图标"而不是一个飘着的字符。
-			if (!string.IsNullOrEmpty(GlyphForSection(Text)))
-			{
-				int num10 = Fields.Sc(22);
-				Rectangle rect = new Rectangle((int)num9 - Fields.Sc(2), TitleY - Fields.Sc(2), num10, num10);
-				using (SolidBrush brushChip = new SolidBrush(Color.FromArgb(246, 247, 249)))
+				using (SolidBrush solidBrush2 = new SolidBrush(Tokens.Surface))
 				{
-					using GraphicsPath pathChip = RoundedPath(rect, Fields.Sc(6));
-					{
-						graphics.FillPath(brushChip, pathChip);
-					}
+					graphics.FillPath(solidBrush2, path);
 				}
-				num9 += (float)Fields.Sc(4);
-			}
-			using (Font font = Icons.At(TitleFontPx))
-			{
-				if (font != null)
+				using (Pen pen = new Pen(Tokens.Stroke))
 				{
-					string s = GlyphForSection(Text);
-					using (SolidBrush brush4 = new SolidBrush(Design.TextSecondary))
-					{
-						graphics.DrawString(s, font, brush4, new PointF(num9, TitleY));
-					}
-					num9 += (float)Fields.Sc(TitleFontPx + 9);
+					graphics.DrawPath(pen, path);
 				}
-			}
-			using Font font2 = new Font(Font.FontFamily, TitleFontPx, FontStyle.Bold, GraphicsUnit.Pixel);
-			using SolidBrush brush5 = new SolidBrush(Design.TextPrimary);
-			graphics.DrawString(Text, font2, brush5, new PointF(num9, TitleY - 1));
-		}
-	}
-
-	private sealed class Tween
-	{
-		private readonly Control _owner;
-
-		private readonly System.Windows.Forms.Timer _timer;
-
-		private float _value;
-
-		private float _target;
-
-		public float Value => _value;
-
-		public Tween(Control owner)
-		{
-			_owner = owner;
-			_timer = new System.Windows.Forms.Timer();
-			_timer.Interval = 16;
-			_timer.Tick += (object? s, EventArgs e) =>
-			{
-				Step();
-			};
-		}
-
-		public void To(float target)
-		{
-			if (!(Math.Abs(target - _target) < 0.001f))
-			{
-				_target = target;
-				if (!_timer.Enabled)
-				{
-					_timer.Start();
-				}
-			}
-		}
-
-		public void Snap(float v)
-		{
-			_timer.Stop();
-			_value = v;
-			_target = v;
-		}
-
-		private void Step()
-		{
-			float num = _target - _value;
-			if (Math.Abs(num) < 0.02f)
-			{
-				_value = _target;
-				_timer.Stop();
-			}
-			else
-			{
-				_value += num * 0.35f;
 			}
 			try
 			{
-				if (!_owner.IsDisposed)
-				{
-					_owner.Invalidate();
-				}
-			}
-			catch
-			{
-			}
-		}
-	}
-
-	private static class Fields
-	{
-		private static readonly Dictionary<Control, int> _radius = new Dictionary<Control, int>();
-
-		private static readonly Dictionary<Control, Region> _live = new Dictionary<Control, Region>();
-
-		private static int _textBoxHeight = -1;
-
-		private static Font _textBoxHeightFont;
-
-		public static int Sc(int design)
-		{
-			float num = CurrentUiScale;
-			if (num <= 0f)
-			{
-				num = 1f;
-			}
-			int num2 = (int)Math.Round((float)design * num);
-			if (num2 >= 1)
-			{
-				return num2;
-			}
-			return 1;
-		}
-
-		public static void ResetCaches()
-		{
-			_textBoxHeight = -1;
-			_textBoxHeightFont = null;
-		}
-
-		public static void MakeFlat(TextBox t, Font font, bool readOnly)
-		{
-			try
-			{
-				Font font2 = ((font != null) ? font : t.Font);
-				if (_textBoxHeight < 0 || _textBoxHeightFont != font2)
-				{
-					using (TextBox textBox = new TextBox())
-					{
-						textBox.Font = font2;
-						textBox.BorderStyle = BorderStyle.FixedSingle;
-						_textBoxHeight = textBox.Height;
-					}
-					_textBoxHeightFont = font2;
-				}
-				t.BorderStyle = BorderStyle.None;
-				t.AutoSize = false;
-				t.Height = _textBoxHeight;
-				t.BackColor = (readOnly ? Design.ReadOnlyFill : Design.FieldFill);
+				using Font font = new Font(Font.FontFamily, Sc(14), FontStyle.Bold, GraphicsUnit.Pixel);
+				TextRenderer.DrawText(graphics, Text, font, new Rectangle(Sc(PadX), Sc(10), Math.Max(20, clientRectangle.Width - Sc(PadX) * 2), Sc(26)), Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 			}
 			catch (Exception ex)
 			{
 				Log.Error(ex);
 			}
-		}
-
-		public static void Attach(Control c, int designRadius)
-		{
-			_radius[c] = designRadius;
-			c.SizeChanged += OnSizeChanged;
-			c.HandleCreated += OnSizeChanged;
-			// 控件销毁时必须把字典项摘掉：_radius 的键是强引用，
-			// 不摘掉的话设置窗口每开关一次就永久累积一批 Control 对象（连带其窗体无法回收）。
-			c.Disposed += OnControlDisposed;
-			Sync(c);
-		}
-
-		private static void OnControlDisposed(object sender, EventArgs e)
-		{
-			Control control = sender as Control;
-			if (control == null)
+			foreach (Control field in _fields)
 			{
-				return;
-			}
-			_radius.Remove(control);
-			if (_live.TryGetValue(control, out var value))
-			{
-				value?.Dispose();
-				_live.Remove(control);
-			}
-		}
-
-		private static void OnSizeChanged(object sender, EventArgs e)
-		{
-			Sync(sender as Control);
-		}
-
-		public static void Sync(Control c)
-		{
-			if (c == null || !_radius.TryGetValue(c, out var value) || c.Width <= 0 || c.Height <= 0)
-			{
-				return;
-			}
-			if (_live.TryGetValue(c, out var value2))
-			{
-				try
-				{
-					c.Region = null;
-				}
-				catch
-				{
-				}
-				value2.Dispose();
-				_live.Remove(c);
-			}
-			int num = Sc(value);
-			if (num > c.Height / 2)
-			{
-				num = c.Height / 2;
-			}
-			if (num > c.Width / 2)
-			{
-				num = c.Width / 2;
-			}
-			if (num < 1)
-			{
-				return;
-			}
-			// v1.4.4：裁剪区比控件矩形【内缩 1px】。
-			// 父级 PaintFor 在控件矩形上画圆角描边，这 1px 内缩正好让它露出来 ——
-			// 既看得见框，又不需要把背景画大一圈（画大一圈正是四角黑角的来源）。
-			GraphicsPath graphicsPath = RoundedPath(new Rectangle(1, 1, Math.Max(1, c.Width - 2), Math.Max(1, c.Height - 2)), Math.Max(1, num - 1));
-			try
-			{
-				Region value3 = (c.Region = new Region(graphicsPath));
-				_live[c] = value3;
-			}
-			catch (Exception ex)
-			{
-				Log.Error(ex);
-			}
-			finally
-			{
-				graphicsPath.Dispose();
-			}
-		}
-
-		public static void PaintFor(Graphics g, Control parent)
-		{
-			int num = Sc(1);
-			foreach (KeyValuePair<Control, int> item in _radius)
-			{
-				Control key = item.Key;
-				// v1.3：先做最廉价的淘汰（Parent 引用比较），再谈绘制。
-				if (key == null || key.Parent != parent || !key.Visible || key.Width <= 0 || key.Height <= 0)
+				if (!field.Visible || field.Width <= 0 || field.Height <= 0)
 				{
 					continue;
 				}
-				// v1.4.1（关键修复）：自绘控件（FlatNum）不再由父级代画。
-				// v1.4.3：FlatNum 走系统绘制（内部有 TextBox 和上下箭头），
-				// 它自己不会画圆角底/描边，仍需父级在它背后画一层。
-				// 关键：绘制矩形必须与 Region 裁剪矩形完全一致 —— 旧代码用
-				// key.Left-num / Width+num*2 的"外扩矩形"来画，比 Region 大一圈，
-				// 多出来的那圈在 200% 缩放下从四角露出父容器底色 = 用户说的"黑角"。
-				Rectangle r = new Rectangle(key.Left, key.Top, key.Width, key.Height);
-				int radius = Sc(item.Value);
-				GraphicsPath graphicsPath = RoundedPath(r, radius);
-				try
+				Rectangle rect = new Rectangle(field.Left, field.Top, field.Width, field.Height);
+				bool enabled = field.Enabled;
+				using (GraphicsPath path2 = RoundedPath(rect, Sc(6)))
 				{
-					bool flag = key.Focused;
-					using (SolidBrush brush = new SolidBrush(key.Enabled ? key.BackColor : Design.Canvas))
+					using (SolidBrush solidBrush3 = new SolidBrush(enabled ? Tokens.FieldFill : Tokens.Canvas))
 					{
-						g.FillPath(brush, graphicsPath);
+						graphics.FillPath(solidBrush3, path2);
 					}
-					// 焦点态：输入框外圈淡靛蓝光环（与按钮焦点环同一套视觉语言）。
-					if (flag && key.Enabled)
+					using (Pen pen2 = new Pen(enabled ? Tokens.FieldStroke : Tokens.Divider))
 					{
-						using Pen penF = new Pen(Design.FocusRing, 2f);
-						{
-							g.DrawPath(penF, graphicsPath);
-						}
+						graphics.DrawPath(pen2, path2);
 					}
-					Color strokeColor = flag ? Design.InputStrokeFocus : Design.InputStroke;
-					using Pen pen = new Pen(key.Enabled ? strokeColor : Color.FromArgb(230, 232, 236));
-					{
-						g.DrawPath(pen, graphicsPath);
-					}
-				}
-				catch (Exception ex)
-				{
-					Log.Error(ex);
-				}
-				finally
-				{
-					graphicsPath.Dispose();
 				}
 			}
 		}
 	}
+
+	// ======================= 侧栏导航 =======================
+
+	private sealed class SideNav : Control
+	{
+		private readonly Tween[] _glow;
+		private int _active;
+		private int _hot = -1;
+		private string[] _titles = Array.Empty<string>();
+		private string[] _glyphs = Array.Empty<string>();
+		public event Action<int> Select;
+
+		public SideNav()
+		{
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
+			BackColor = Tokens.Sidebar;
+			_glow = new Tween[16];
+		}
+
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public int ActiveIndex
+		{
+			get
+			{
+				return _active;
+			}
+			set
+			{
+				if (value != _active && value >= 0 && value < _titles.Length)
+				{
+					_active = value;
+					Invalidate();
+				}
+			}
+		}
+
+		public int ItemCount => _titles.Length;
+
+		public void Bind(string[] titles, string[] glyphs, Action<int> onSelect)
+		{
+			_titles = titles;
+			_glyphs = glyphs;
+			Select = onSelect;
+		}
+
+		private int RowH => Sc(42);
+
+		private int RowTop => Sc(66);
+
+		protected override void OnMouseMove(MouseEventArgs e)
+		{
+			int num = HitRow(e.Y);
+			if (num != _hot)
+			{
+				_hot = num;
+				Invalidate();
+			}
+			base.OnMouseMove(e);
+		}
+
+		protected override void OnMouseLeave(EventArgs e)
+		{
+			_hot = -1;
+			Invalidate();
+			base.OnMouseLeave(e);
+		}
+
+		protected override void OnMouseUp(MouseEventArgs e)
+		{
+			if (e.Button == MouseButtons.Left)
+			{
+				int num = HitRow(e.Y);
+				if (num >= 0 && num < _titles.Length && Select != null)
+				{
+					Select(num);
+					Invalidate();
+				}
+			}
+			base.OnMouseUp(e);
+		}
+
+		private int HitRow(int y)
+		{
+			for (int i = 0; i < _titles.Length; i++)
+			{
+				int num = RowTop + i * RowH;
+				if (y >= num && y < num + RowH)
+				{
+					return i;
+				}
+			}
+			return -1;
+		}
+
+		protected override void OnPaint(PaintEventArgs e)
+		{
+			Graphics graphics = e.Graphics;
+			HQ.Apply(graphics);
+			Rectangle clientRectangle = ClientRectangle;
+			using (SolidBrush solidBrush = new SolidBrush(BackColor))
+			{
+				graphics.FillRectangle(solidBrush, clientRectangle);
+			}
+			using (Pen pen = new Pen(Tokens.Stroke))
+			{
+				graphics.DrawLine(pen, clientRectangle.Width - 1, 0, clientRectangle.Width - 1, clientRectangle.Height);
+			}
+			try
+			{
+				using Font font = new Font(DesignFontFamily, Sc(15), FontStyle.Bold, GraphicsUnit.Pixel);
+				using Font font2 = new Font(DesignFontFamily, Sc(11), FontStyle.Regular, GraphicsUnit.Pixel);
+				TextRenderer.DrawText(graphics, "长按拖窗", font, new Rectangle(Sc(20), Sc(18), Math.Max(20, clientRectangle.Width - Sc(28)), Sc(24)), Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(graphics, "HoldDrag", font2, new Rectangle(Sc(20), Sc(40), Math.Max(20, clientRectangle.Width - Sc(28)), Sc(18)), Tokens.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+			if (_titles.Length == 0)
+			{
+				return;
+			}
+			using Font font3 = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
+			using Font font4 = Icons.At(Sc(16));
+			for (int i = 0; i < _titles.Length; i++)
+			{
+				int num = RowTop + i * RowH;
+				Rectangle r = new Rectangle(Sc(10), num + Sc(3), Math.Max(20, clientRectangle.Width - Sc(20)), RowH - Sc(6));
+				bool flag = i == _active;
+				bool flag2 = i == _hot;
+				float num2 = 0f;
+				if (i < _glow.Length && _glow[i] != null)
+				{
+					num2 = _glow[i].Value;
+				}
+				else if (flag)
+				{
+					num2 = 1f;
+				}
+				if (num2 > 0.01f)
+				{
+					Color color = (flag ? Tokens.AccentSoft : Tokens.ButtonHover);
+					using GraphicsPath path = RoundedPath(r, Sc(10));
+					using (SolidBrush brush = new SolidBrush(Mix(Color.FromArgb(0, color), color, Math.Min(1f, num2 * 1.35f))))
+					{
+						graphics.FillPath(brush, path);
+					}
+					if (flag)
+					{
+						using (Pen pen4 = new Pen(Mix(Color.FromArgb(0, Tokens.AccentSoftStroke), Tokens.AccentSoftStroke, Math.Min(1f, num2))))
+						{
+							graphics.DrawPath(pen4, path);
+						}
+					}
+				}
+				Color color2 = ((flag || flag2) ? Tokens.TextPrimary : Tokens.TextSecondary);
+				if (num2 > 0.01f)
+				{
+					color2 = Mix(Tokens.TextSecondary, color2, Math.Min(1f, num2 * 1.6f));
+				}
+				int num3 = r.Left + Sc(14);
+				if (font4 != null && i < _glyphs.Length)
+				{
+					TextRenderer.DrawText(graphics, _glyphs[i], font4, new Rectangle(num3, r.Top + (r.Height - Sc(16)) / 2, Sc(16), Sc(16)), color2, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+					num3 += Sc(16) + Sc(10);
+				}
+				TextRenderer.DrawText(graphics, _titles[i], font3, new Rectangle(num3, r.Top, Math.Max(10, r.Right - Sc(8) - num3), r.Height), color2, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
+			}
+		}
+
+		internal void KickGlow(int index)
+		{
+			if (index >= 0 && index < _glow.Length)
+			{
+				if (_glow[index] == null)
+				{
+					_glow[index] = new Tween(this);
+				}
+				_glow[index].To(1f);
+			}
+		}
+	}
+
+	// ======================= 自绘下拉框 =======================
 
 	private sealed class FlatCombo : ComboBox
 	{
 		public Action<Graphics, Rectangle, object> ClosedPainter;
-
 		private bool _hover;
-
 		private bool _open;
-
 		private const int WM_PAINT_MSG = 15;
-
 		private const int WM_MOUSEWHEEL_MSG = 522;
-
 		internal int WheelSwallowedForTest;
-
 		internal int WheelForwardedForTest;
 
 		public FlatCombo()
@@ -17447,8 +16565,9 @@ internal sealed class SettingsForm : Form
 			DropDownStyle = ComboBoxStyle.DropDownList;
 			DrawMode = DrawMode.OwnerDrawFixed;
 			FlatStyle = FlatStyle.Flat;
-			BackColor = Design.Surface;
-			ForeColor = Design.TextPrimary;
+			BackColor = Tokens.Surface;
+			ForeColor = Tokens.TextPrimary;
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
 			SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 		}
 
@@ -17488,28 +16607,26 @@ internal sealed class SettingsForm : Form
 				return;
 			}
 			Graphics graphics = e.Graphics;
-			HighQuality.Apply(graphics);
+			HQ.Apply(graphics);
 			bool flag = (e.State & DrawItemState.Selected) != 0;
 			Rectangle bounds = e.Bounds;
-			using (SolidBrush brush = new SolidBrush(flag ? Design.AccentSoft : Design.Surface))
+			using (SolidBrush brush = new SolidBrush(flag ? Tokens.AccentSoft : Tokens.Surface))
 			{
 				graphics.FillRectangle(brush, bounds);
 			}
 			if (flag)
 			{
-				using SolidBrush brush2 = new SolidBrush(Design.Accent);
-				graphics.FillRectangle(brush2, new Rectangle(bounds.Left, bounds.Top, Fields.Sc(3), bounds.Height));
+				using SolidBrush brush2 = new SolidBrush(Tokens.Accent);
+				graphics.FillRectangle(brush2, new Rectangle(bounds.Left, bounds.Top, Sc(3), bounds.Height));
 			}
 			object obj = ((e.Index < Items.Count) ? Items[e.Index] : null);
-			Rectangle rectangle = new Rectangle(bounds.Left + Fields.Sc(8), bounds.Top, bounds.Width - Fields.Sc(14), bounds.Height);
+			Rectangle rectangle = new Rectangle(bounds.Left + Sc(10), bounds.Top, Math.Max(10, bounds.Width - Sc(16)), bounds.Height);
 			if (ClosedPainter != null)
 			{
 				ClosedPainter(graphics, rectangle, obj);
+				return;
 			}
-			else
-			{
-				TextRenderer.DrawText(graphics, (obj != null) ? obj.ToString() : "", Font, rectangle, Design.TextPrimary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
-			}
+			TextRenderer.DrawText(graphics, (obj != null) ? obj.ToString() : "", Font, rectangle, Tokens.TextPrimary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
 		}
 
 		protected override void WndProc(ref Message m)
@@ -17539,19 +16656,19 @@ internal sealed class SettingsForm : Form
 					return;
 				}
 				using Graphics graphics = Graphics.FromHwnd(Handle);
-				HighQuality.Apply(graphics);
-				int num = Fields.Sc(1);
-				GraphicsPath graphicsPath = RoundedPath(new Rectangle(num, num, Width - num * 2 - 1, Height - num * 2 - 1), Fields.Sc(6));
+				HQ.Apply(graphics);
+				int num = Sc(1);
+				GraphicsPath graphicsPath = RoundedPath(new Rectangle(num, num, Width - num * 2 - 1, Height - num * 2 - 1), Sc(6));
 				try
 				{
-					using (SolidBrush brush = new SolidBrush(Enabled ? BackColor : Design.Canvas))
+					using (SolidBrush brush = new SolidBrush(Enabled ? BackColor : Tokens.Canvas))
 					{
 						graphics.FillPath(brush, graphicsPath);
 					}
 					Color color;
 					if (Enabled)
 					{
-						color = ((_hover || _open) ? Design.InputStrokeFocus : Design.InputStroke);
+						color = ((_hover || _open) ? Tokens.Accent : Tokens.InputStroke);
 					}
 					else
 					{
@@ -17564,21 +16681,21 @@ internal sealed class SettingsForm : Form
 				{
 					graphicsPath.Dispose();
 				}
-				int num2 = Fields.Sc(26);
+				int num2 = Sc(26);
 				object obj = ((SelectedIndex >= 0 && SelectedIndex < Items.Count) ? Items[SelectedIndex] : null);
-				Rectangle rectangle = new Rectangle(Fields.Sc(10), 0, Width - num2 - Fields.Sc(14), Height);
+				Rectangle rectangle = new Rectangle(Sc(10), 0, Math.Max(10, Width - num2 - Sc(16)), Height);
 				if (ClosedPainter != null)
 				{
 					ClosedPainter(graphics, rectangle, obj);
 				}
 				else
 				{
-					TextRenderer.DrawText(graphics, (obj != null) ? obj.ToString() : "", Font, rectangle, Enabled ? Design.TextPrimary : Color.FromArgb(160, 165, 176), TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
+					TextRenderer.DrawText(graphics, (obj != null) ? obj.ToString() : "", Font, rectangle, Enabled ? Tokens.TextPrimary : Color.FromArgb(160, 165, 176), TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
 				}
 				float num3 = (float)Width - (float)num2 / 2f;
 				float num4 = (float)Height / 2f;
-				float num5 = (float)Fields.Sc(2) * 1.15f;
-				using Pen pen2 = new Pen(Enabled ? Design.TextSecondary : Color.FromArgb(180, 185, 195), Math.Max(1.2f, (float)Fields.Sc(1) * 1.4f));
+				float num5 = (float)Sc(2) * 1.15f;
+				using Pen pen2 = new Pen(Enabled ? Tokens.TextSecondary : Color.FromArgb(180, 185, 195), Math.Max(1.2f, (float)Sc(1) * 1.4f));
 				pen2.StartCap = LineCap.Round;
 				pen2.EndCap = LineCap.Round;
 				pen2.LineJoin = LineJoin.Round;
@@ -17596,16 +16713,16 @@ internal sealed class SettingsForm : Form
 		}
 	}
 
+	// ======================= 自绘数字框 =======================
+
 	private sealed class FlatNum : NumericUpDown
 	{
 		public FlatNum()
 		{
-			// v1.4.7：只去掉系统方角边框（它被 Region 裁掉后残留在四角，就是用户说的"黑角"）。
-			// 上下箭头保留系统绘制 —— 自绘箭头会占用输入区宽度，把数字挤掉（实测 600 被裁成 60）。
-			// 圆角外观由父级 PaintFor 画，配合 Region 内缩 1px 让描边透出（见 Fields.Sync）。
 			BorderStyle = BorderStyle.None;
-			BackColor = Design.FieldFill;
-			ForeColor = Design.TextPrimary;
+			BackColor = Tokens.FieldFill;
+			ForeColor = Tokens.TextPrimary;
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
 		}
 
 		protected override void OnHandleCreated(EventArgs e)
@@ -17615,8 +16732,8 @@ internal sealed class SettingsForm : Form
 			{
 				try
 				{
-					Controls[i].BackColor = Design.FieldFill;
-					Controls[i].ForeColor = Design.TextPrimary;
+					Controls[i].BackColor = Tokens.FieldFill;
+					Controls[i].ForeColor = Tokens.TextPrimary;
 					if (Controls[i] is TextBox textBox)
 					{
 						textBox.BorderStyle = BorderStyle.None;
@@ -17637,22 +16754,48 @@ internal sealed class SettingsForm : Form
 		}
 	}
 
+	// ======================= 自绘开关 =======================
+
 	private sealed class FlatCheck : CheckBox
 	{
 		private readonly Tween _hoverT;
-
 		private readonly Tween _checkT;
+
+		public int TrackW => Sc(38);
+		public int TrackH => Sc(20);
+		public int KnobInset => Sc(2);
+		public int KnobSize => TrackH - KnobInset * 2;
 
 		public FlatCheck()
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 			FlatStyle = FlatStyle.Flat;
-			BackColor = Design.Surface;
-			ForeColor = Design.TextPrimary;
+			BackColor = Tokens.Surface;
+			ForeColor = Tokens.TextPrimary;
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
 			Cursor = Cursors.Hand;
 			_hoverT = new Tween(this);
 			_checkT = new Tween(this);
 			_checkT.Snap(Checked ? 1f : 0f);
+		}
+
+		public Rectangle TrackRect => new Rectangle(0, Math.Max(0, (Height - TrackH) / 2), TrackW, TrackH);
+
+		public Point KnobCenter
+		{
+			get
+			{
+				Rectangle trackRect = TrackRect;
+				float num = (Checked ? Math.Min(1f, _checkT.Value) : 0f);
+				if (Checked && num <= 0.001f)
+				{
+					num = 1f;
+				}
+				int num2 = KnobInset;
+				int num3 = TrackW - num2 * 2 - KnobSize;
+				int num4 = trackRect.Left + num2 + (int)Math.Round((float)num3 * num);
+				return new Point(num4 + KnobSize / 2, trackRect.Top + KnobInset + KnobSize / 2);
+			}
 		}
 
 		protected override void OnMouseEnter(EventArgs e)
@@ -17689,33 +16832,19 @@ internal sealed class SettingsForm : Form
 		protected override void OnPaint(PaintEventArgs e)
 		{
 			Graphics graphics = e.Graphics;
-			HighQuality.Apply(graphics);
-			graphics.Clear(BackColor);
-			float num = ((CurrentUiScale > 0f) ? CurrentUiScale : 1f);
-			int num2 = CheckTextChrome - Fields.Sc(10);
-			int num3 = (int)Math.Round((double)num2 * 0.56);
-			if (num2 < 20)
+			HQ.Apply(graphics);
+			using (SolidBrush brush = new SolidBrush(BackColor))
 			{
-				num2 = 20;
+				graphics.FillRectangle(brush, ClientRectangle);
 			}
-			if (num3 < 12)
-			{
-				num3 = 12;
-			}
-			int num4 = Math.Max(2, CheckTextChrome - num2);
-			int num5 = (Height - num3) / 2;
-			if (num5 < 0)
-			{
-				num5 = 0;
-			}
-			Rectangle r = new Rectangle(0, num5, num2, num3);
-			int radius = num3 / 2;
+			Rectangle trackRect = TrackRect;
+			int radius = TrackH / 2;
 			bool flag = Checked;
 			float value = _hoverT.Value;
-			float num6 = (flag ? Math.Min(1f, _checkT.Value) : 0f);
-			if (flag && num6 <= 0.001f)
+			float num = (flag ? Math.Min(1f, _checkT.Value) : 0f);
+			if (flag && num <= 0.001f)
 			{
-				num6 = 1f;
+				num = 1f;
 			}
 			Color color;
 			if (!Enabled)
@@ -17724,280 +16853,80 @@ internal sealed class SettingsForm : Form
 			}
 			else
 			{
-				// v1.3：未选中轨道是中性灰（旧的带蓝调 206,210,219 偏脏）；
-				// 悬停只提亮一点点，选中才上靛蓝——开关的"开=彩色"语义更清晰。
-				Color a = MixColor(Color.FromArgb(224, 227, 232), Color.FromArgb(214, 217, 223), value);
-				Color b = MixColor(Design.Accent, ControlPaint.Light(Design.Accent, 0.08f), value);
-				color = MixColor(a, b, num6);
+				Color a = Mix(Tokens.TrackOff, Tokens.TrackOffHover, value);
+				Color b = Mix(Tokens.Accent, ControlPaint.Light(Tokens.Accent, 0.08f), value);
+				color = Mix(a, b, num);
 			}
-			using (GraphicsPath path = RoundedPath(r, radius))
+			using (GraphicsPath path = RoundedPath(trackRect, radius))
 			{
-				using SolidBrush brush = new SolidBrush(color);
-				graphics.FillPath(brush, path);
+				using (SolidBrush brush2 = new SolidBrush(color))
+				{
+					graphics.FillPath(brush2, path);
+				}
 			}
-			int num7 = (int)Math.Round(2.5 * (double)num);
-			if (num7 < 1)
+			Point knobCenter = KnobCenter;
+			Rectangle rect = new Rectangle(knobCenter.X - KnobSize / 2, knobCenter.Y - KnobSize / 2, KnobSize, KnobSize);
+			using (SolidBrush brush3 = new SolidBrush(Color.FromArgb(28, Tokens.TextPrimary)))
 			{
-				num7 = 1;
+				graphics.FillEllipse(brush3, new Rectangle(rect.X, rect.Y + Math.Max(1, Sc(1)), rect.Width, rect.Height));
 			}
-			int num8 = num3 - num7 * 2;
-			if (num8 < 4)
+			using (SolidBrush brush4 = new SolidBrush(Enabled ? Color.White : Color.FromArgb(246, 247, 250)))
 			{
-				num8 = 4;
+				graphics.FillEllipse(brush4, rect);
 			}
-			int num9 = num2 - num7 * 2 - num8;
-			if (num9 < 0)
-			{
-				num9 = 0;
-			}
-			int x = r.Left + num7 + (int)Math.Round((float)num9 * num6);
-			Rectangle rect = new Rectangle(x, r.Top + num7, num8, num8);
-			using (SolidBrush brush2 = new SolidBrush(Color.FromArgb(28, Design.Shadow)))
-			{
-				graphics.FillEllipse(brush2, new Rectangle(rect.X, rect.Y + Math.Max(1, Fields.Sc(1)), rect.Width, rect.Height));
-			}
-			using (SolidBrush brush3 = new SolidBrush(Enabled ? Color.White : Color.FromArgb(246, 247, 250)))
-			{
-				graphics.FillEllipse(brush3, rect);
-			}
-			Rectangle bounds = new Rectangle(r.Right + num4, 0, Width - r.Right - num4, Height);
+			Rectangle bounds = new Rectangle(trackRect.Right + Sc(8), 0, Math.Max(10, Width - trackRect.Right - Sc(10)), Height);
 			if (bounds.Width > 0)
 			{
 				Color foreColor = (Enabled ? ForeColor : Color.FromArgb(160, 165, 176));
-				TextRenderer.DrawText(graphics, Text, Font, bounds, foreColor, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(graphics, Text, Font, bounds, foreColor, TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
 			}
+		}
+
+		internal void KickHoverForTest()
+		{
+			_hoverT.To(1f);
+		}
+
+		internal float HoverValueForTest => _hoverT.Value;
+
+		internal void SnapCheckForTest(bool on)
+		{
+			_checkT.Snap(on ? 1f : 0f);
+			Checked = on;
+			Invalidate();
 		}
 	}
 
-	internal sealed class HelpPanel : Control
-	{
-		internal sealed class Entry
-		{
-			public string Icon;
-
-			public string Title;
-
-			public string Body;
-		}
-
-		private readonly List<Entry> _entries = new List<Entry>();
-
-		private int _open;
-
-		private int _hover = -1;
-
-		private int _headerH = 38;
-
-		private int _bodyH = 88;
-
-		internal int EntryCountForTest => _entries.Count;
-
-		internal int OpenIndexForTest => _open;
-
-		public HelpPanel()
-		{
-			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
-			Cursor = Cursors.Hand;
-		}
-
-		public void SetEntries(List<Entry> list)
-		{
-			_entries.Clear();
-			if (list != null)
-			{
-				_entries.AddRange(list);
-			}
-			Invalidate();
-		}
-
-		public void SetMetrics(int headerH, int bodyH)
-		{
-			_headerH = Math.Max(1, headerH);
-			_bodyH = Math.Max(1, bodyH);
-			Invalidate();
-		}
-
-		internal void ClickAtForTest(int y)
-		{
-			int num = HitHeader(y);
-			if (num >= 0 && num != _open)
-			{
-				_open = num;
-			}
-			Invalidate();
-		}
-
-		internal void OpenRangeForTest(out int top, out int bottom)
-		{
-			top = RowTop(_open);
-			bottom = top + _headerH + _bodyH;
-		}
-
-		private int RowTop(int index)
-		{
-			int num = 0;
-			for (int i = 0; i < index && i < _entries.Count; i++)
-			{
-				num += _headerH;
-				if (i == _open)
-				{
-					num += _bodyH;
-				}
-			}
-			return num;
-		}
-
-		private int HitHeader(int y)
-		{
-			for (int i = 0; i < _entries.Count; i++)
-			{
-				int num = RowTop(i);
-				if (y >= num && y < num + _headerH)
-				{
-					return i;
-				}
-			}
-			return -1;
-		}
-
-		protected override void OnMouseMove(MouseEventArgs e)
-		{
-			int num = HitHeader(e.Y);
-			if (num != _hover)
-			{
-				_hover = num;
-				Invalidate();
-			}
-			base.OnMouseMove(e);
-		}
-
-		protected override void OnMouseLeave(EventArgs e)
-		{
-			if (_hover != -1)
-			{
-				_hover = -1;
-				Invalidate();
-			}
-			base.OnMouseLeave(e);
-		}
-
-		protected override void OnMouseDown(MouseEventArgs e)
-		{
-			int num = HitHeader(e.Y);
-			if (num >= 0 && num != _open)
-			{
-				_open = num;
-				Invalidate();
-			}
-			base.OnMouseDown(e);
-		}
-
-		protected override void OnPaint(PaintEventArgs e)
-		{
-			try
-			{
-				Graphics graphics = e.Graphics;
-				HighQuality.Apply(graphics);
-				graphics.Clear(BackColor);
-				int num = Fields.Sc(4);
-				using Font font = Icons.At(Fields.Sc(15));
-				using Font font2 = new Font(Font.FontFamily, Fields.Sc(13), FontStyle.Bold, GraphicsUnit.Pixel);
-				using Font font3 = new Font(Font.FontFamily, Fields.Sc(12), FontStyle.Regular, GraphicsUnit.Pixel);
-				for (int i = 0; i < _entries.Count; i++)
-				{
-					int num2 = RowTop(i);
-					bool flag = i == _open;
-					Rectangle r = new Rectangle(num, num2 + num / 2, Width - num * 2, _headerH - num);
-					if (r.Width <= 0 || r.Height <= 0)
-					{
-						continue;
-					}
-					if (flag || i == _hover)
-					{
-						using SolidBrush brush = new SolidBrush(flag ? Design.AccentSoft : Color.FromArgb(244, 245, 248));
-						using GraphicsPath path = RoundedPath(r, Fields.Sc(8));
-						graphics.FillPath(brush, path);
-					}
-					int num3 = r.Left + Fields.Sc(12);
-					if (font != null)
-					{
-						Rectangle bounds = new Rectangle(num3, r.Top, Fields.Sc(16), r.Height);
-						TextRenderer.DrawText(graphics, _entries[i].Icon, font, bounds, flag ? Design.Accent : Design.TextSecondary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-						num3 = bounds.Right + Fields.Sc(8);
-					}
-					int num4 = Fields.Sc(26);
-					Rectangle bounds2 = new Rectangle(num3, r.Top, r.Right - num4 - num3, r.Height);
-					if (bounds2.Width > 0)
-					{
-						TextRenderer.DrawText(graphics, _entries[i].Title, font2, bounds2, flag ? Design.Accent : Design.TextPrimary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
-					}
-					DrawChevron(graphics, r.Right - Fields.Sc(18), r.Top + r.Height / 2, Fields.Sc(5), flag, flag ? Design.Accent : Design.TextSecondary);
-					if (flag)
-					{
-						Rectangle bounds3 = new Rectangle(r.Left + Fields.Sc(12), num2 + _headerH, Width - num * 2 - Fields.Sc(24), _bodyH);
-						if (bounds3.Width > 0 && bounds3.Height > 0)
-						{
-							TextRenderer.DrawText(graphics, _entries[i].Body, font3, bounds3, Design.TextSecondary, TextFormatFlags.NoPrefix | TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
-						}
-					}
-				}
-			}
-			catch (Exception ex)
-			{
-				Log.Error(ex);
-			}
-		}
-
-		private static void DrawChevron(Graphics g, int cx, int cy, int u, bool open, Color color)
-		{
-			using Pen pen = new Pen(color, Math.Max(1.4f, (float)u * 0.34f));
-			pen.StartCap = LineCap.Round;
-			pen.EndCap = LineCap.Round;
-			pen.LineJoin = LineJoin.Round;
-			if (!open)
-			{
-				g.DrawLines(pen, new PointF[3]
-				{
-					new PointF((float)cx - (float)u * 0.4f, cy - u),
-					new PointF((float)cx + (float)u * 0.5f, cy),
-					new PointF((float)cx - (float)u * 0.4f, cy + u)
-				});
-			}
-			else
-			{
-				g.DrawLines(pen, new PointF[3]
-				{
-					new PointF(cx - u, (float)cy - (float)u * 0.4f),
-					new PointF(cx, (float)cy + (float)u * 0.5f),
-					new PointF(cx + u, (float)cy - (float)u * 0.4f)
-				});
-			}
-		}
-	}
+	// ======================= 自绘按钮 =======================
 
 	private sealed class FlatButton : Button
 	{
-		public bool Primary;
-
 		private readonly Tween _hoverT;
+		private bool _primary;
 
-		private readonly Tween _downT;
-
-		internal float ProbeHoverValue => _hoverT.Value;
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public bool Primary
+		{
+			get
+			{
+				return _primary;
+			}
+			set
+			{
+				_primary = value;
+				Invalidate();
+			}
+		}
 
 		public FlatButton()
 		{
-			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 			FlatStyle = FlatStyle.Flat;
-			FlatAppearance.BorderSize = 0;
-			FlatAppearance.MouseOverBackColor = Color.Transparent;
-			FlatAppearance.MouseDownBackColor = Color.Transparent;
-			BackColor = Design.Surface;
-			ForeColor = Design.TextPrimary;
+			BackColor = Tokens.Surface;
+			ForeColor = Tokens.TextPrimary;
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
 			Cursor = Cursors.Hand;
-			UseVisualStyleBackColor = false;
 			_hoverT = new Tween(this);
-			_downT = new Tween(this);
 		}
 
 		protected override void OnMouseEnter(EventArgs e)
@@ -18009,564 +16938,1175 @@ internal sealed class SettingsForm : Form
 		protected override void OnMouseLeave(EventArgs e)
 		{
 			_hoverT.To(0f);
-			_downT.To(0f);
 			base.OnMouseLeave(e);
-		}
-
-		protected override void OnMouseDown(MouseEventArgs e)
-		{
-			_downT.To(1f);
-			base.OnMouseDown(e);
-		}
-
-		protected override void OnMouseUp(MouseEventArgs e)
-		{
-			_downT.To(0f);
-			base.OnMouseUp(e);
-		}
-
-		protected override void OnEnabledChanged(EventArgs e)
-		{
-			Invalidate();
-			base.OnEnabledChanged(e);
-		}
-
-		internal void ProbeSetHover(bool on)
-		{
-			_hoverT.To(on ? 1f : 0f);
 		}
 
 		protected override void OnPaint(PaintEventArgs e)
 		{
 			Graphics graphics = e.Graphics;
-			HighQuality.Apply(graphics);
-			Rectangle r = new Rectangle(0, 0, Width - 1, Height - 1);
-			if (r.Width <= 0 || r.Height <= 0)
-			{
-				return;
-			}
-			int num = ((CurrentUiScale > 0f) ? ((int)Math.Round(8f * CurrentUiScale)) : 8);
-			if (num > r.Height / 2)
-			{
-				num = r.Height / 2;
-			}
-			if (num < 1)
-			{
-				num = 1;
-			}
+			HQ.Apply(graphics);
+			Rectangle clientRectangle = ClientRectangle;
+			graphics.Clear(BackColor);
 			float value = _hoverT.Value;
-			float value2 = _downT.Value;
-			Color foreColor;
-			Color color2;
-			Color color;
+			Color color = (_primary ? Tokens.Accent : Tokens.ButtonHover);
+			Color back = Mix(_primary ? Tokens.Accent : Tokens.Surface, color, value);
 			if (!Enabled)
 			{
-				color = Color.FromArgb(243, 244, 246);
-				foreColor = Color.FromArgb(168, 173, 182);
-				color2 = Color.FromArgb(235, 237, 240);
+				back = Tokens.Canvas;
 			}
-			else if (Primary)
+			using (GraphicsPath path = RoundedPath(new Rectangle(0, 0, clientRectangle.Width, clientRectangle.Height), Sc(6)))
 			{
-				Color accent = Design.Accent;
-				Color b = ControlPaint.Light(Design.Accent, 0.08f);
-				Color accentPressed = Design.AccentPressed;
-				color = MixColor(accent, b, value);
-				color = MixColor(color, accentPressed, value2);
-				foreColor = Color.White;
-				color2 = Color.Transparent;
-			}
-			else
-			{
-				// 次级按钮：白底 + 灰描边，悬停加深一档（旧版悬停几乎无感）。
-				color = MixColor(Color.White, Color.FromArgb(249, 250, 251), value);
-				color = MixColor(color, Color.FromArgb(238, 240, 243), value2);
-				foreColor = Design.TextPrimary;
-				color2 = MixColor(Design.InputStroke, Design.InputStrokeHover, value);
-			}
-			// GraphicsPath 是 IDisposable：这里必须 using，否则每次重绘都漏一个 GDI 对象。
-			// Tween 每 16ms 触发一次 Invalidate，悬停/聚焦的按钮会持续泄漏。
-			using (GraphicsPath path = RoundedPath(r, num))
-			{
-				using SolidBrush brush = new SolidBrush(color);
+				using (SolidBrush brush = new SolidBrush(back))
 				{
 					graphics.FillPath(brush, path);
 				}
-				if (color2.A > 0)
+				if (!_primary)
 				{
-					using Pen pen = new Pen(color2);
+					using (Pen pen = new Pen(Enabled ? Tokens.InputStroke : Tokens.Divider))
 					{
 						graphics.DrawPath(pen, path);
 					}
 				}
 			}
-			if (Primary && Enabled && r.Height > num * 2 + 4)
+			Color foreColor = (_primary ? Color.White : Tokens.TextPrimary);
+			if (!Enabled)
 			{
-				using Pen pen2 = new Pen(Color.FromArgb(52, Color.White), Math.Max(1f, Fields.Sc(1)));
+				foreColor = Color.FromArgb(160, 165, 176);
+			}
+			TextRenderer.DrawText(graphics, Text, Font, new Rectangle(Sc(8), 0, Math.Max(10, clientRectangle.Width - Sc(16)), clientRectangle.Height), foreColor, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
+		}
+
+		internal void KickHoverForTest()
+		{
+			_hoverT.To(1f);
+		}
+
+		internal float HoverValueForTest => _hoverT.Value;
+	}
+
+	// ======================= 色板 =======================
+
+	private sealed class SwatchGrid : Control, INeedHeight
+	{
+		public sealed class Entry
+		{
+			public string Id;
+			public string Name;
+			public Color Color;
+		}
+
+		private readonly List<Entry> _items = new List<Entry>();
+		private int _sel;
+		private int _hot = -1;
+		public event EventHandler Picked;
+
+		public int Cell => Sc(30);
+		public int Gap => Sc(8);
+
+		public void SetItems(List<Entry> items)
+		{
+			_items.Clear();
+			_items.AddRange(items);
+			if (_sel >= _items.Count)
+			{
+				_sel = 0;
+			}
+			Invalidate();
+		}
+
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public string SelectedId
+		{
+			get
+			{
+				if (_sel >= 0 && _sel < _items.Count)
 				{
-					graphics.DrawLine(pen2, r.X + num, r.Y + 1, r.Right - num, r.Y + 1);
+					return _items[_sel].Id;
+				}
+				return null;
+			}
+			set
+			{
+				for (int i = 0; i < _items.Count; i++)
+				{
+					if (_items[i].Id == value)
+					{
+						_sel = i;
+						Invalidate();
+						break;
+					}
 				}
 			}
-			TextRenderer.DrawText(graphics, Text, Font, new Rectangle(0, 0, Width, Height), foreColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-			if (!Focused || !Enabled)
+		}
+
+		public int CellCount => _items.Count;
+
+		public Rectangle SelectedCellRect
+		{
+			get
 			{
-				return;
-			}
-			// 焦点环：外圈淡靛蓝 + 内圈描边，Windows 11 Fluent 焦点样式。
-			using (Pen pen3 = new Pen(Design.FocusRing, 2f))
-			{
-				using GraphicsPath graphicsPath = RoundedPath(new Rectangle(1, 1, Width - 3, Height - 3), Math.Max(1, num - 1));
+				if (_sel < 0 || _sel >= _items.Count)
 				{
-					graphics.DrawPath(pen3, graphicsPath);
+					return Rectangle.Empty;
+				}
+				int columns = ColumnsFor(Width);
+				int num = _sel % columns;
+				int num2 = _sel / columns;
+				return new Rectangle(num * (Cell + Gap), num2 * (Cell + Gap), Cell, Cell);
+			}
+		}
+
+		public int ColumnsFor(int width)
+		{
+			int num = Cell + Gap;
+			int num2 = (width + Gap) / num;
+			if (num2 < 4)
+			{
+				num2 = 4;
+			}
+			if (num2 > 12)
+			{
+				num2 = 12;
+			}
+			return num2;
+		}
+
+		public int HeightFor(int width)
+		{
+			int columns = ColumnsFor(width);
+			int num = (_items.Count + columns - 1) / columns;
+			return Math.Max(Cell, num * (Cell + Gap) - Gap);
+		}
+
+		protected override void OnMouseMove(MouseEventArgs e)
+		{
+			int num = Hit(e.X, e.Y);
+			if (num != _hot)
+			{
+				_hot = num;
+				Invalidate();
+			}
+			base.OnMouseMove(e);
+		}
+
+		protected override void OnMouseLeave(EventArgs e)
+		{
+			_hot = -1;
+			Invalidate();
+			base.OnMouseLeave(e);
+		}
+
+		protected override void OnMouseUp(MouseEventArgs e)
+		{
+			if (e.Button == MouseButtons.Left)
+			{
+				int num = Hit(e.X, e.Y);
+				if (num >= 0)
+				{
+					_sel = num;
+					Invalidate();
+					Picked?.Invoke(this, EventArgs.Empty);
+				}
+			}
+			base.OnMouseUp(e);
+		}
+
+		private int Hit(int x, int y)
+		{
+			int columns = ColumnsFor(Width);
+			int num = x / (Cell + Gap);
+			int num2 = y / (Cell + Gap);
+			if (num < 0 || num2 < 0 || num >= columns)
+			{
+				return -1;
+			}
+			int num3 = num2 * columns + num;
+			if (num3 >= _items.Count)
+			{
+				return -1;
+			}
+			return num3;
+		}
+
+		protected override void OnPaint(PaintEventArgs e)
+		{
+			Graphics graphics = e.Graphics;
+			HQ.Apply(graphics);
+			graphics.Clear(Tokens.Surface);
+			int columns = ColumnsFor(Width);
+			for (int i = 0; i < _items.Count; i++)
+			{
+				int num = i % columns;
+				int num2 = i / columns;
+				Rectangle rect = new Rectangle(num * (Cell + Gap), num2 * (Cell + Gap), Cell, Cell);
+				bool flag = i == _sel;
+				bool flag2 = i == _hot;
+				using (GraphicsPath path = RoundedPath(new Rectangle(rect.X + Sc(2), rect.Y + Sc(2), Cell - Sc(4), Cell - Sc(4)), Sc(6)))
+				{
+					using (SolidBrush brush = new SolidBrush(_items[i].Color))
+					{
+						graphics.FillPath(brush, path);
+					}
+					Color color = (flag ? Tokens.Accent : (flag2 ? Tokens.InputStrokeHover : Tokens.Stroke));
+					using (Pen pen = new Pen(color, flag ? Sc(2) : 1f))
+					{
+						graphics.DrawPath(pen, path);
+					}
+				}
+				if (flag)
+				{
+					using (GraphicsPath path2 = RoundedPath(new Rectangle(rect.X + Sc(7), rect.Y + Sc(7), Cell - Sc(14), Cell - Sc(14)), Sc(4)))
+					{
+						using (Pen pen2 = new Pen(Color.White, Math.Max(1.5f, Sc(2))))
+						{
+							graphics.DrawPath(pen2, path2);
+						}
+					}
 				}
 			}
 		}
 	}
 
-	internal sealed class FrameSelection
+	// ======================= 样式画廊 =======================
+
+	private sealed class StyleGallery : Control, INeedHeight
 	{
-		public string ColorId;
+		private List<string> _items = new List<string>();
+		private int _sel;
+		private int _hot = -1;
+		private string _colorId;
+		private int _thickness = 3;
+		private int _radius = 12;
+		private bool _frameEnabled = true;
+		public event EventHandler Picked;
 
-		public string StyleId;
+		public List<string> ItemsForTest => _items;
 
-		public int Thickness;
+		public int Gap => Sc(8);
 
-		public int Radius;
+		public void SetItems(List<string> items)
+		{
+			_items = items;
+			if (_sel >= _items.Count)
+			{
+				_sel = 0;
+			}
+			Invalidate();
+		}
 
-		public bool FrameEnabled;
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public string SelectedId
+		{
+			get
+			{
+				if (_sel >= 0 && _sel < _items.Count)
+				{
+					return _items[_sel];
+				}
+				return null;
+			}
+			set
+			{
+				for (int i = 0; i < _items.Count; i++)
+				{
+					if (_items[i] == value)
+					{
+						_sel = i;
+						Invalidate();
+						break;
+					}
+				}
+			}
+		}
 
-		public string PreviewColorId;
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public string ColorId
+		{
+			get
+			{
+				return _colorId;
+			}
+			set
+			{
+				_colorId = value;
+				Invalidate();
+			}
+		}
 
-		public string PreviewStyleId;
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public int Thickness
+		{
+			get
+			{
+				return _thickness;
+			}
+			set
+			{
+				_thickness = value;
+				Invalidate();
+			}
+		}
 
-		public int PreviewThickness;
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public int Radius
+		{
+			get
+			{
+				return _radius;
+			}
+			set
+			{
+				_radius = value;
+				Invalidate();
+			}
+		}
 
-		public int PreviewRadius;
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public bool FrameEnabled
+		{
+			get
+			{
+				return _frameEnabled;
+			}
+			set
+			{
+				_frameEnabled = value;
+				Invalidate();
+			}
+		}
 
-		public bool PreviewFrameEnabled;
+		public int ColumnsFor(int width)
+		{
+			int num = Sc(88) + Gap;
+			int num2 = (width + Gap) / num;
+			if (num2 < 2)
+			{
+				num2 = 2;
+			}
+			return num2;
+		}
 
-		public string GridColorId;
+		public int CellH => Sc(64);
 
-		public string GridStyleId;
+		public int HeightFor(int width)
+		{
+			int columns = ColumnsFor(width);
+			int num = (_items.Count + columns - 1) / columns;
+			return Math.Max(CellH, num * (CellH + Gap) - Gap);
+		}
 
-		public string ColorNameText;
+		public Rectangle SelectedCellRect
+		{
+			get
+			{
+				if (_sel < 0 || _sel >= _items.Count)
+				{
+					return Rectangle.Empty;
+				}
+				int columns = ColumnsFor(Width);
+				int num = _sel % columns;
+				int num2 = _sel / columns;
+				int num3 = (Width + Gap) / columns - Gap;
+				return new Rectangle(num * (num3 + Gap), num2 * (CellH + Gap), num3, CellH);
+			}
+		}
+
+		protected override void OnMouseMove(MouseEventArgs e)
+		{
+			int num = Hit(e.X, e.Y);
+			if (num != _hot)
+			{
+				_hot = num;
+				Invalidate();
+			}
+			base.OnMouseMove(e);
+		}
+
+		protected override void OnMouseLeave(EventArgs e)
+		{
+			_hot = -1;
+			Invalidate();
+			base.OnMouseLeave(e);
+		}
+
+		protected override void OnMouseUp(MouseEventArgs e)
+		{
+			if (e.Button == MouseButtons.Left)
+			{
+				int num = Hit(e.X, e.Y);
+				if (num >= 0)
+				{
+					_sel = num;
+					Invalidate();
+					Picked?.Invoke(this, EventArgs.Empty);
+				}
+			}
+			base.OnMouseUp(e);
+		}
+
+		private int Hit(int x, int y)
+		{
+			int columns = ColumnsFor(Width);
+			int num = (Width + Gap) / columns - Gap;
+			int num2 = x / (num + Gap);
+			int num3 = y / (CellH + Gap);
+			if (num2 < 0 || num3 < 0 || num2 >= columns)
+			{
+				return -1;
+			}
+			int num4 = num3 * columns + num2;
+			if (num4 >= _items.Count)
+			{
+				return -1;
+			}
+			return num4;
+		}
+
+		protected override void OnPaint(PaintEventArgs e)
+		{
+			Graphics graphics = e.Graphics;
+			HQ.Apply(graphics);
+			graphics.Clear(Tokens.Surface);
+			int columns = ColumnsFor(Width);
+			int num = (Width + Gap) / columns - Gap;
+			Color color = Color.Gray;
+			try
+			{
+				color = FrameColors.Resolve(_colorId ?? FrameColors.DefaultId);
+			}
+			catch
+			{
+			}
+			using Font font = new Font(DesignFontFamily, Sc(11), FontStyle.Regular, GraphicsUnit.Pixel);
+			for (int i = 0; i < _items.Count; i++)
+			{
+				int num2 = i % columns;
+				int num3 = i / columns;
+				int num4 = num2 * (num + Gap);
+				int num5 = num3 * (CellH + Gap);
+				bool flag = i == _sel;
+				bool flag2 = i == _hot;
+				Rectangle rect = new Rectangle(num4, num5, num, CellH);
+				using (GraphicsPath path = RoundedPath(new Rectangle(rect.X, rect.Y, rect.Width, CellH - Sc(18)), Sc(6)))
+				{
+					using (SolidBrush brush = new SolidBrush(Color.White))
+					{
+						graphics.FillPath(brush, path);
+					}
+					Color color2 = (flag ? Tokens.Accent : (flag2 ? Tokens.InputStrokeHover : Tokens.Stroke));
+					using (Pen pen = new Pen(color2, flag ? Sc(2) : 1f))
+					{
+						graphics.DrawPath(pen, path);
+					}
+				}
+				RectangleF r = new RectangleF((float)rect.X + Sc(6), (float)rect.Y + Sc(5), (float)rect.Width - Sc(12), (float)CellH - Sc(38));
+				if (_frameEnabled && r.Width > 4 && r.Height > 4)
+				{
+					try
+					{
+						FrameStyles.Draw(graphics, r, color, _items[i], Math.Max(1, _thickness), _radius);
+					}
+					catch (Exception ex)
+					{
+						Log.Error(ex);
+					}
+				}
+				else if (!_frameEnabled && r.Width > 4 && r.Height > 4)
+				{
+					using Pen pen2 = new Pen(Tokens.Divider);
+					pen2.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
+					graphics.DrawRectangle(pen2, r.X, r.Y, r.Width, r.Height);
+				}
+				TextRenderer.DrawText(graphics, FrameStyles.DisplayName(_items[i]), font, new Rectangle(rect.X, rect.Bottom - Sc(17), rect.Width, Sc(16)), flag ? Tokens.AccentPressed : Tokens.TextSecondary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+			}
+		}
 	}
 
-	internal sealed class GroupClipReport
+	// ======================= 实时预览 =======================
+
+	private sealed class FramePreviewBox : Control
 	{
-		public int Total;
+		private string _colorId;
+		private string _styleId;
+		private int _thickness = 3;
+		private int _radius = 12;
+		private bool _frameEnabled = true;
+		private int _opacity = 100;
 
-		public int Clipped;
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public string ColorId
+		{
+			get
+			{
+				return _colorId;
+			}
+			set
+			{
+				_colorId = value;
+			}
+		}
 
-		public string Detail = "";
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public string StyleId
+		{
+			get
+			{
+				return _styleId;
+			}
+			set
+			{
+				_styleId = value;
+			}
+		}
+
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public int Thickness
+		{
+			get
+			{
+				return _thickness;
+			}
+			set
+			{
+				_thickness = value;
+			}
+		}
+
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public int Radius
+		{
+			get
+			{
+				return _radius;
+			}
+			set
+			{
+				_radius = value;
+			}
+		}
+
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public bool FrameEnabled
+		{
+			get
+			{
+				return _frameEnabled;
+			}
+			set
+			{
+				_frameEnabled = value;
+			}
+		}
+
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public int OpacityPercent
+		{
+			get
+			{
+				return _opacity;
+			}
+			set
+			{
+				_opacity = value;
+			}
+		}
+
+		public FramePreviewBox()
+		{
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
+			BackColor = Tokens.Surface;
+		}
+
+		public void Refresh_()
+		{
+			Invalidate();
+		}
+
+		protected override void OnPaint(PaintEventArgs e)
+		{
+			Graphics graphics = e.Graphics;
+			HQ.Apply(graphics);
+			graphics.Clear(Tokens.Surface);
+			Rectangle clientRectangle = ClientRectangle;
+			int num = Math.Max(2, Sc(6));
+			RectangleF rectangleF = new RectangleF((float)num + 1f, (float)num + 1f, (float)clientRectangle.Width - (float)num * 2f - 2f, (float)clientRectangle.Height - (float)num * 2f - 2f);
+			if (rectangleF.Width <= 4 || rectangleF.Height <= 4)
+			{
+				return;
+			}
+			using (GraphicsPath path = RoundedPath(Rectangle.Ceiling(rectangleF), Sc(8)))
+			{
+				using (SolidBrush brush = new SolidBrush(Color.FromArgb(252, 253, 254)))
+				{
+					graphics.FillPath(brush, path);
+				}
+				using (Pen pen = new Pen(Tokens.Divider))
+				{
+					graphics.DrawPath(pen, path);
+				}
+			}
+			if (!_frameEnabled)
+			{
+				using Font font = new Font(DesignFontFamily, Sc(11), FontStyle.Regular, GraphicsUnit.Pixel);
+				TextRenderer.DrawText(graphics, "外框已关闭", font, clientRectangle, Tokens.TextTertiary, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+				return;
+			}
+			Color color = Color.Gray;
+			try
+			{
+				color = FrameColors.Resolve(_colorId ?? FrameColors.DefaultId);
+			}
+			catch
+			{
+			}
+			int alpha = _opacity * 255 / 100;
+			if (alpha < 20)
+			{
+				alpha = 20;
+			}
+			if (alpha > 255)
+			{
+				alpha = 255;
+			}
+			try
+			{
+				FrameStyles.Draw(graphics, rectangleF, Color.FromArgb(alpha, color), _styleId ?? FrameStyles.DefaultId, Math.Max(1, _thickness), _radius);
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+		}
 	}
 
-	internal sealed class FramePickerProbe
+	// ======================= 帮助面板 =======================
+
+	internal sealed class HelpPanel : Control, INeedHeight
 	{
-		public int ColorCells;
+		internal sealed class Entry
+		{
+			public string Icon;
+			public string Title;
+			public string Body;
+		}
 
-		public int StyleCells;
+		private List<Entry> _entries = new List<Entry>();
+		private int _open;
+		private int _hot = -1;
 
-		public Size GridSize;
+		public int HeaderH => Sc(36);
 
-		public Size GallerySize;
+		public int HeightFor(int width)
+		{
+			return Sc(360);
+		}
 
-		public bool GridInsideGroup;
+		public void SetEntries(List<Entry> entries)
+		{
+			_entries = entries;
+			Invalidate();
+		}
 
-		public bool GalleryInsideGroup;
+		public int EntryCountForTest => _entries.Count;
 
-		public int GridInk;
+		public int OpenIndexForTest => _open;
 
-		public int GalleryInk;
+		public int BodyH => Math.Max(0, Height - _entries.Count * HeaderH);
 
-		public int GridAccentInk;
+		public int HeaderTopForTest(int index)
+		{
+			return index * HeaderH + ((index > _open) ? BodyH : 0);
+		}
 
-		public int GalleryAccentInk;
+		public Rectangle HeaderRect(int index)
+		{
+			return new Rectangle(0, HeaderTopForTest(index), Width, HeaderH);
+		}
 
-		public Rectangle GridSelectedCell;
+		public Rectangle BodyRect()
+		{
+			return new Rectangle(0, (_open + 1) * HeaderH, Width, BodyH);
+		}
 
-		public Rectangle GallerySelectedCell;
+		public void OpenRangeForTest(out int top, out int bottom)
+		{
+			top = _open * HeaderH;
+			bottom = top + HeaderH + BodyH;
+		}
+
+		private int HitHeader(int y)
+		{
+			for (int i = 0; i < _entries.Count; i++)
+			{
+				int num = HeaderTopForTest(i);
+				if (y >= num && y < num + HeaderH)
+				{
+					return i;
+				}
+			}
+			return -1;
+		}
+
+		public void ClickAtForTest(int y)
+		{
+			int num = HitHeader(y);
+			if (num >= 0 && num != _open)
+			{
+				_open = num;
+			}
+			Invalidate();
+		}
+
+		protected override void OnMouseMove(MouseEventArgs e)
+		{
+			int num = HitHeader(e.Y);
+			if (num != _hot)
+			{
+				_hot = num;
+				Invalidate();
+			}
+			base.OnMouseMove(e);
+		}
+
+		protected override void OnMouseLeave(EventArgs e)
+		{
+			_hot = -1;
+			Invalidate();
+			base.OnMouseLeave(e);
+		}
+
+		protected override void OnMouseUp(MouseEventArgs e)
+		{
+			if (e.Button == MouseButtons.Left)
+			{
+				int num = HitHeader(e.Y);
+				if (num >= 0 && num != _open)
+				{
+					_open = num;
+					Invalidate();
+				}
+			}
+			base.OnMouseUp(e);
+		}
+
+		protected override void OnPaint(PaintEventArgs e)
+		{
+			Graphics graphics = e.Graphics;
+			HQ.Apply(graphics);
+			graphics.Clear(Tokens.Surface);
+			if (_entries.Count == 0)
+			{
+				return;
+			}
+			using Font font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel);
+			using Font font2 = new Font(DesignFontFamily, Sc(11), FontStyle.Regular, GraphicsUnit.Pixel);
+			using Font font3 = Icons.At(Sc(14));
+			using Font font4 = Icons.At(Sc(12));
+			for (int i = 0; i < _entries.Count; i++)
+			{
+				int num = HeaderTopForTest(i);
+				bool flag = i == _open;
+				bool flag2 = i == _hot;
+				Rectangle rectangle = new Rectangle(0, num, Width, HeaderH);
+				if (flag)
+				{
+					using (SolidBrush brush = new SolidBrush(Tokens.AccentSoft))
+					{
+						graphics.FillRectangle(brush, rectangle);
+					}
+				}
+				else if (flag2)
+				{
+					using (SolidBrush brush2 = new SolidBrush(Tokens.ButtonHover))
+					{
+						graphics.FillRectangle(brush2, rectangle);
+					}
+				}
+				int num2 = Sc(14);
+				if (font3 != null)
+				{
+					TextRenderer.DrawText(graphics, _entries[i].Icon, font3, new Rectangle(num2, rectangle.Top + (HeaderH - Sc(16)) / 2, Sc(16), Sc(16)), flag ? Tokens.Accent : Tokens.TextSecondary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+					num2 += Sc(22);
+				}
+				TextRenderer.DrawText(graphics, _entries[i].Title, font, new Rectangle(num2, rectangle.Top, Math.Max(10, Width - num2 - Sc(30)), HeaderH), flag ? Tokens.AccentPressed : Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+				if (font4 != null)
+				{
+					TextRenderer.DrawText(graphics, Glyph.Chevron, font4, new Rectangle(Width - Sc(26), rectangle.Top + (HeaderH - Sc(14)) / 2, Sc(14), Sc(14)), flag ? Tokens.Accent : Tokens.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+				}
+				using (Pen pen = new Pen(Tokens.Divider))
+				{
+					graphics.DrawLine(pen, 0, rectangle.Bottom - 1, Width, rectangle.Bottom - 1);
+				}
+			}
+			Rectangle bodyRect = BodyRect();
+			if (bodyRect.Height > 4)
+			{
+				using (SolidBrush brush3 = new SolidBrush(Tokens.Surface))
+				{
+					graphics.FillRectangle(brush3, bodyRect);
+				}
+				TextRenderer.DrawText(graphics, _entries[_open].Body, font2, new Rectangle(bodyRect.Left + Sc(16), bodyRect.Top + Sc(4), Math.Max(10, bodyRect.Width - Sc(28)), Math.Max(10, bodyRect.Height - Sc(8))), Tokens.TextSecondary, TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.Top);
+			}
+		}
 	}
 
-	internal sealed class RenderStats
+	// ======================= 分页滚动容器 =======================
+
+	private sealed class PageHost : Panel
 	{
-		public int Width;
+		private int _offset;
+		public Panel Canvas;
 
-		public int Height;
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public int Offset
+		{
+			get
+			{
+				return _offset;
+			}
+			set
+			{
+				int num = Math.Max(0, Math.Min(MaxScroll, value));
+				if (num != _offset)
+				{
+					_offset = num;
+					if (Canvas != null)
+					{
+						Canvas.Top = -_offset;
+					}
+					Invalidate();
+				}
+			}
+		}
 
-		public int DistinctColors;
+		public int MaxScroll
+		{
+			get
+			{
+				if (Canvas == null)
+				{
+					return 0;
+				}
+				return Math.Max(0, Canvas.Height - ClientSize.Height);
+			}
+		}
 
-		public int BlackPixels;
+		public int StepPx => Sc(96);
 
-		public int AccentPixels;
+		public PageHost()
+		{
+			SetStyle(ControlStyles.OptimizedDoubleBuffer, value: true);
+			BackColor = Tokens.Canvas;
+			AutoScroll = false;
+			Canvas = new Panel
+			{
+				BackColor = Tokens.Canvas,
+				Location = new Point(0, 0)
+			};
+			Canvas.Paint += delegate(object s, PaintEventArgs e)
+			{
+				e.Graphics.Clear(Tokens.Canvas);
+			};
+			Controls.Add(Canvas);
+		}
 
-		public int FrameColorPixels;
+		public void UpdateScroll()
+		{
+			int num = MaxScroll;
+			if (_offset > num)
+			{
+				_offset = num;
+			}
+			if (Canvas != null)
+			{
+				Canvas.Top = -_offset;
+			}
+		}
 
-		public double MeanBrightness;
+		protected override void OnMouseWheel(MouseEventArgs e)
+		{
+			if (MaxScroll > 0)
+			{
+				Offset -= e.Delta / 120 * StepPx;
+			}
+			base.OnMouseWheel(e);
+		}
+
+		protected override void WndProc(ref Message m)
+		{
+			if (m.Msg == 522)
+			{
+				int delta = (short)unchecked((int)(m.WParam.ToInt64() >> 16));
+				if (MaxScroll > 0)
+				{
+					Offset -= delta / 120 * StepPx;
+					return;
+				}
+			}
+			base.WndProc(ref m);
+		}
 	}
+
+	private sealed class Page
+	{
+		public string Title;
+		public string Subtitle;
+		public PageHost Host;
+		public List<Card> Cards = new List<Card>();
+		public Label LblTitle;
+		public Label LblSub;
+	}
+
+	// ======================= 窗体字段 =======================
 
 	private readonly ConfigStore _store;
-
 	private readonly Coordinator _coord;
-
 	private AppConfig _edit;
-
 	private bool _recording;
-
-	private readonly Button _btnGitHub = new FlatButton();
-
-	private readonly Button _btnCheckUpdate = new FlatButton();
-
-	private readonly CheckBox _chkAutoUpdate = new FlatCheck();
-
-	private readonly Label _lblUpdateStatus = new Label();
-
-	/// <summary>防重入：同一时刻只允许一次"检查更新"。</summary>
 	private bool _updateBusy;
-
-	private readonly TextBox _txtKey = new TextBox();
-
-	private readonly Button _btnRecord = new FlatButton();
-
-	private readonly Label _lblKeyHint = new Label();
-
-	private readonly CheckBox _chkHold = new FlatCheck();
-
-	private readonly NumericUpDown _numHold = new FlatNum();
-
-	private readonly ComboBox _cmbLeft = new FlatCombo();
-
-	private readonly ComboBox _cmbRight = new FlatCombo();
-
-	private readonly ComboBox _cmbMiddle = new FlatCombo();
-
-	private readonly CheckBox _chkFrame = new FlatCheck();
-
-	private readonly ComboBox _cmbFrameColor = new FlatCombo();
-
-	private readonly ComboBox _cmbFrameStyle = new FlatCombo();
-
-	private readonly ColorSwatchGrid _gridColor = new ColorSwatchGrid();
-
-	private readonly StyleGallery _galleryStyle = new StyleGallery();
-
-	private readonly Label _lblColorName = new Label();
-
-	private readonly Label _lblStyleHeader = new Label();
-
-	private readonly NumericUpDown _numFrameThick = new FlatNum();
-
-	private readonly NumericUpDown _numFrameRadius = new FlatNum();
-
-	private readonly NumericUpDown _numFrameOpacity = new FlatNum();
-
-	private readonly HelpPanel _helpPanel = new HelpPanel();
-
-	private readonly FramePreviewBox _pnlPreview = new FramePreviewBox();
-
-	private readonly Label _lblFrameTip = new Label();
-
-	private readonly NumericUpDown _numCorner = new FlatNum();
-
-	private readonly CheckBox _chkShake = new FlatCheck();
-
-	private readonly CheckBox _chkDblLeft = new FlatCheck();
-
-	private readonly CheckBox _chkDblRight = new FlatCheck();
-
-	private readonly CheckBox _chkRestoreMax = new FlatCheck();
-
-	private readonly CheckBox _chkFront = new FlatCheck();
-
-	private readonly CheckBox _chkFullscreen = new FlatCheck();
-
-	private readonly CheckBox _chkExitFullscreen = new FlatCheck();
-
-	private readonly TextBox _txtBlacklist = new TextBox();
-
-	private readonly ComboBox _cmbRefreshMode = new FlatCombo();
-
-	private readonly NumericUpDown _numRefreshHz = new FlatNum();
-
-	private readonly Label _lblRefreshHint = new Label();
-
-	private readonly ComboBox _cmbAutoStart = new FlatCombo();
-
-	private readonly CheckBox _chkRunAsAdmin = new FlatCheck();
-
-	private readonly CheckBox _chkWarnNonAdmin = new FlatCheck();
-
-	private readonly Label _lblAdmin = new Label();
-
-	private readonly Button _btnRestartAdmin = new FlatButton();
-
-	private readonly Label _lblStatus = new Label();
-
-	private NavSidebar _sidebar;
-
 	private bool _populating;
 
-	private ResponsiveGroupPanel _groupHost;
+	private SideNav _nav;
+	private Panel _content;
+	private Panel _pager;
+	private readonly List<Page> _pages = new List<Page>();
+	private int _activePage;
+	private int _cols = 1;
 
-	private readonly Panel _scrollHost = new Panel();
+	private Label _lblStatus;
+	private FlatButton _btnDefaultsRef;
+	private FlatButton _btnSaveRef;
+	private FlatButton _btnCancelRef;
 
-	private readonly Panel _pager = new Panel();
+	private TextBox _txtKey;
+	private FlatButton _btnRecord;
+	private Label _lblKeyHint;
+	private FlatCheck _chkHold;
+	private FlatNum _numHold;
 
-	private Button _btnDefaultsRef;
+	private FlatCombo _cmbLeft;
+	private FlatCombo _cmbRight;
+	private FlatCombo _cmbMiddle;
 
-	private Button _btnPickExe;
+	private FlatCheck _chkFrame;
+	private FlatCombo _cmbFrameColor;
+	private FlatCombo _cmbFrameStyle;
+	private SwatchGrid _gridColor;
+	private Label _lblColorName;
+	private Label _lblStyleHeader;
+	private StyleGallery _galleryStyle;
+	private FlatNum _numFrameThick;
+	private FlatNum _numFrameRadius;
+	private FlatNum _numFrameOpacity;
+	private Label _lblFrameTip;
+	private FramePreviewBox _pnlPreview;
 
-	private Button _btnPickWindow;
+	private FlatNum _numCorner;
+	private FlatCheck _chkDblLeft;
+	private FlatCheck _chkDblRight;
+	private FlatCheck _chkRestoreMax;
+	private FlatCheck _chkFront;
+	private FlatCheck _chkFullscreen;
+	private FlatCheck _chkExitFullscreen;
+	private FlatCheck _chkShake;
+	private TextBox _txtBlacklist;
+	private FlatButton _btnPickExe;
+	private FlatButton _btnPickWindow;
 
-	private Button _btnSaveRef;
+	private FlatCombo _cmbRefreshMode;
+	private FlatNum _numRefreshHz;
+	private Label _lblRefreshHint;
 
-	private Button _btnCancelRef;
+	private FlatCombo _cmbAutoStart;
+	private FlatCheck _chkRunAsAdmin;
+	private FlatCheck _chkWarnNonAdmin;
+	private Label _lblAdmin;
+	private FlatButton _btnRestartAdmin;
 
-	private readonly Dictionary<Control, InnerLayout> _innerIndex = new Dictionary<Control, InnerLayout>();
+	private HelpPanel _helpPanel;
 
-	private readonly Dictionary<Control, KeyValuePair<Control, int>> _pendingGrowNeighbor = new Dictionary<Control, KeyValuePair<Control, int>>();
+	private FlatButton _btnGitHub;
+	private FlatCheck _chkAutoUpdate;
+	private FlatButton _btnCheckUpdate;
+	private Label _lblUpdateStatus;
 
-	private readonly Dictionary<Control, int> _pendingShiftGap = new Dictionary<Control, int>();
+	private int _defaultClientH = 680;
 
-	private readonly List<InnerLayout> _innerLayouts = new List<InnerLayout>();
+	// ======================= 缩放与度量 =======================
 
-	private const int BaseInnerWidth = 528;
+	internal static float CurrentUiScale = 1f;
 
-	private bool _innerCaptured;
+	internal static float UiScaleForTest => (CurrentUiScale > 0f) ? CurrentUiScale : 1f;
 
-	private float _uiScale;
+	internal static string AppVersionForTest => AppInfo.Version;
 
-	private static float _sharedUiScale;
-
-	private readonly List<DesignSnapshot> _designSnapshot = new List<DesignSnapshot>();
-
-	private GroupBox[] _groups = new GroupBox[0];
-
-	private bool _rebaseDone;
-
-	internal static string LastRebaseInfo = "(未运行)";
-
-	private int _groupChromeFallback = 8;
-
-	private int[] _baseGroupHeights = new int[0];
-
-	private bool _pendingRelayout;
-
-	private readonly System.Windows.Forms.Timer _relayoutTimer = new System.Windows.Forms.Timer();
-
-	private bool _inSizeMove;
-
-	private const int DefaultClientHeightDesign = 640;
-
-	internal const int TwoColumnProbeWidth = 1300;
-
-	internal const int SidebarDesignWidth = 176;
-
-	internal static string LastStretchDetail = string.Empty;
-
-	private int SingleColumnClientWidth => S(560);
-
-	private int GroupWidth => S(536);
-
-	private int GroupInnerPadLeft => S(18);
-
-	private int ScrollEdgeMargin => S(12);
+	private float _uiScale = 1f;
 
 	private float UiScale
 	{
 		get
 		{
-			if (_uiScale > 0f)
-			{
-				return _uiScale;
-			}
-			return CurrentUiScale = (_uiScale = ResolveScaleNow());
-		}
-	}
-
-	internal static float CurrentUiScale
-	{
-		get
-		{
-			float sharedUiScale = _sharedUiScale;
-			if (!(sharedUiScale > 0f))
-			{
-				return 1f;
-			}
-			return sharedUiScale;
+			return _uiScale;
 		}
 		set
 		{
-			_sharedUiScale = value;
+			_uiScale = value;
+			CurrentUiScale = value;
 		}
 	}
 
-	private static int CheckTextChrome => Fields.Sc(44);
+	internal static string DesignFontFamily = "Microsoft YaHei UI";
 
-	private int GroupChrome
+	private int S(int design)
 	{
-		get
-		{
-			if (_groupHost != null && _groupHost.Controls.Count > 0 && _groupHost.Controls[0] is GroupBox { Width: >0, Width: var width, ClientSize: var clientSize })
-			{
-				int num = width - clientSize.Width;
-				if (num > 0 && num <= 20)
-				{
-					return num;
-				}
-			}
-			return _groupChromeFallback;
-		}
+		return (int)Math.Round((float)design * ((UiScale > 0f) ? UiScale : 1f));
 	}
 
-	internal string ProbeBlacklistText
+	private static int Sc(int design)
 	{
-		get
-		{
-			if (_txtBlacklist == null)
-			{
-				return string.Empty;
-			}
-			return _txtBlacklist.Text;
-		}
+		return (int)Math.Round((float)design * ((CurrentUiScale > 0f) ? CurrentUiScale : 1f));
 	}
 
-	internal Control ProbeComboLeft => _cmbLeft;
-
-	internal static FontFamily IconFamilyForTest => Icons.Family;
-
-	internal static string[] IconGlyphsForTest => new string[8] { "\ue765", "\ue7c2", "\ue790", "\ue9d9", "\ue72e", "\ue76c", "\ue897", "\ue946" };
-
-	internal static float UiScaleForTest => CurrentUiScale;
-
-	internal static string AppVersionForTest => AppInfo.Version;
-
-	internal HelpPanel ProbeHelpPanel => _helpPanel;
-
-	internal string ProbeAboutText
+	// 与自测 T40 同一把尺子：GDI+ 排版高度 ×1.28，用来给标签留够高度（高 DPI 不裁字）。
+	private static int TextHeightFor(Control c)
 	{
-		get
+		try
 		{
-			if (_groups == null)
+			if (string.IsNullOrEmpty(c.Text))
 			{
-				return "";
+				return 0;
 			}
-			GroupBox groupBox = null;
-			for (int i = 0; i < _groups.Length; i++)
-			{
-				if (_groups[i] != null && _groups[i].Text != null && _groups[i].Text.Contains("关于"))
-				{
-					groupBox = _groups[i];
-					break;
-				}
-			}
-			if (groupBox == null)
-			{
-				return "";
-			}
-			StringBuilder stringBuilder = new StringBuilder();
-			for (int j = 0; j < groupBox.Controls.Count; j++)
-			{
-				Control control = groupBox.Controls[j];
-				if (control != null && !string.IsNullOrEmpty(control.Text))
-				{
-					stringBuilder.Append(control.Text).Append(' ');
-				}
-			}
-			return stringBuilder.ToString();
+			using Graphics graphics = c.CreateGraphics();
+			return (int)Math.Ceiling(graphics.MeasureString(c.Text, c.Font, int.MaxValue, StringFormat.GenericTypographic).Height * 1.28f);
+		}
+		catch
+		{
+			return 0;
 		}
 	}
 
-	internal Control ProbeComboRight => _cmbRight;
-
-	internal Control ProbeNumHold => _numHold;
-
-	/// <summary>托盘「检查更新…」用：让已打开的设置窗口立刻执行一次检查。</summary>
-	internal void BeginCheckUpdate()
+	private static int TextLines(string text, Control c, int avail)
 	{
-		CheckForUpdates(userInitiated: true);
-	}
-
-	internal Button ProbeGitHubButton => _btnGitHub;
-
-	internal Button ProbeCheckUpdateButton => _btnCheckUpdate;
-
-	internal CheckBox ProbeAutoUpdateCheck => _chkAutoUpdate;
-
-	internal Label ProbeUpdateStatusLabel => _lblUpdateStatus;
-
-	/// <summary>透传测试钩子，供自检模拟离线。</summary>
-	internal static bool ProbeForceOfflineForTest
-	{
-		get
+		if (string.IsNullOrEmpty(text) || avail <= 10)
 		{
-			return Updater.ForceOfflineForTest;
+			return 1;
 		}
-		set
+		try
 		{
-			Updater.ForceOfflineForTest = value;
-		}
-	}
-
-	internal Control ProbeGroup1
-	{
-		get
-		{
-			if (_groupHost == null || _groupHost.Controls.Count == 0)
+			float num = c.Font.SizeInPoints * 96f / 72f * ((CurrentUiScale > 0f) ? CurrentUiScale : 1f);
+			if (num < 6f)
 			{
-				return null;
+				num = 6f;
 			}
-			return _groupHost.Controls[0];
+			using Font font = new Font(c.Font.FontFamily, num, c.Font.Style, GraphicsUnit.Pixel);
+			Size size = TextRenderer.MeasureText(text, font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding);
+			Size size2 = TextRenderer.MeasureText(text, font, new Size(avail, 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
+			if (size.Height <= 0)
+			{
+				return 1;
+			}
+			int num2 = (int)Math.Ceiling((double)size2.Height / (double)size.Height);
+			if (num2 < 1)
+			{
+				num2 = 1;
+			}
+			return num2;
+		}
+		catch
+		{
+			return 1;
 		}
 	}
 
-	internal static int ClientWidthForTwoColumns
+	private static Color Mix(Color a, Color b, float t)
 	{
-		get
+		if (t < 0f)
 		{
-			int num = (int)Math.Round(CurrentUiScale);
-			if (num < 1)
-			{
-				num = 1;
-			}
-			return 1516 * num;
+			t = 0f;
 		}
+		if (t > 1f)
+		{
+			t = 1f;
+		}
+		return Color.FromArgb((int)Math.Round((float)a.A + (float)(b.A - a.A) * t), (int)Math.Round((float)a.R + (float)(b.R - a.R) * t), (int)Math.Round((float)a.G + (float)(b.G - a.G) * t), (int)Math.Round((float)a.B + (float)(b.B - a.B) * t));
 	}
+
+	private static GraphicsPath RoundedPath(Rectangle r, int radius)
+	{
+		GraphicsPath graphicsPath = new GraphicsPath();
+		if (radius <= 0)
+		{
+			graphicsPath.AddRectangle(r);
+			return graphicsPath;
+		}
+		int num = Math.Min(radius, Math.Min(r.Width, r.Height) / 2);
+		if (num < 1)
+		{
+			num = 1;
+		}
+		graphicsPath.AddArc(r.X, r.Y, num * 2, num * 2, 180f, 90f);
+		graphicsPath.AddArc(r.Right - num * 2, r.Y, num * 2, num * 2, 270f, 90f);
+		graphicsPath.AddArc(r.Right - num * 2, r.Bottom - num * 2, num * 2, num * 2, 0f, 90f);
+		graphicsPath.AddArc(r.X, r.Bottom - num * 2, num * 2, num * 2, 90f, 90f);
+		graphicsPath.CloseFigure();
+		return graphicsPath;
+	}
+
+	// ======================= 构造 =======================
 
 	public SettingsForm(ConfigStore store, Coordinator coord)
 	{
 		_store = store;
 		_coord = coord;
 		_edit = store.Current.Clone();
-		_relayoutTimer.Interval = 32;
-		_relayoutTimer.Tick += (object? s, EventArgs e) =>
+		try
 		{
-			if (!_pendingRelayout)
-			{
-				_relayoutTimer.Stop();
-			}
-			else
-			{
-				_pendingRelayout = false;
-				RelayoutFlickerFree();
-			}
-		};
+			DesignFontFamily = PickDesignFont();
+		}
+		catch
+		{
+		}
 		BuildUi();
 		Populate();
 	}
+
+	private static string PickDesignFont()
+	{
+		string[] array = new string[5] { "Segoe UI Variable Text", "Segoe UI Variable Display", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI" };
+		try
+		{
+			HashSet<string> hashSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			using (System.Drawing.Text.InstalledFontCollection installedFontCollection = new System.Drawing.Text.InstalledFontCollection())
+			{
+				for (int i = 0; i < installedFontCollection.Families.Length; i++)
+				{
+					hashSet.Add(installedFontCollection.Families[i].Name);
+				}
+			}
+			for (int j = 0; j < array.Length; j++)
+			{
+				if (hashSet.Contains(array[j]))
+				{
+					return array[j];
+				}
+			}
+		}
+		catch
+		{
+		}
+		return "Microsoft YaHei UI";
+	}
+
+	// ======================= 建界面 =======================
 
 	private void BuildUi()
 	{
 		SuspendLayout();
 		Text = "长按拖窗 · 设置";
-		// v1.4.2：基字号 9pt → 10pt。9pt 是 Windows XP/7 时代的设置面板字号，
-		// 在 4K/200% 屏上看着又小又"上个世纪"。现代 Windows 设置页正文约 10~10.5pt。
-		// v1.4.6：字号 10pt → 9.5pt。10pt 会让 NumericUpDown 的字高(46px)超过它的强制行高(39px)，
-		// 触发 T40「文字被裁切」；而 NumericUpDown 内部行高改不动（PreferredHeight 会覆盖 Height）。
-		// 9.5pt 是"现代观感"与"控件贴合"之间的平衡点。
-		Font = new Font(Design.UiFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
-		AutoScaleDimensions = new SizeF(96f, 96f);
-		BackColor = Design.Canvas;
-		ForeColor = Design.TextPrimary;
+		Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+		AutoScaleMode = AutoScaleMode.None;
+		BackColor = Tokens.Canvas;
+		ForeColor = Tokens.TextPrimary;
 		FormBorderStyle = FormBorderStyle.Sizable;
 		MaximizeBox = true;
 		MinimizeBox = true;
@@ -18576,7 +18116,7 @@ internal sealed class SettingsForm : Form
 		DoubleBuffered = true;
 		try
 		{
-			Icon icon = System.Drawing.Icon.ExtractAssociatedIcon(AppPaths.ExePath);
+			Icon icon = Icon.ExtractAssociatedIcon(AppPaths.ExePath);
 			if (icon != null)
 			{
 				Icon = icon;
@@ -18586,2017 +18126,759 @@ internal sealed class SettingsForm : Form
 		{
 			Log.Error(ex);
 		}
-		GroupBox groupBox = Group("触发方式", 0, 0, GroupWidth, 186);
-		groupBox.Controls.Add(Label("触发键", 16, 40, 60));
-		_txtKey.Location = new Point(84, 27);
-		_txtKey.Size = new Size(190, 32);
-		_txtKey.ReadOnly = true;
-		_txtKey.TabStop = false;
-		groupBox.Controls.Add(_txtKey);
-		_btnRecord.Text = "重新录制";
-		_btnRecord.Location = new Point(284, 34);
-		_btnRecord.Size = new Size(92, 28);
-		_btnRecord.Click += (object? s, EventArgs e) =>
+		_content = new Panel
 		{
-			StartRecording();
+			Dock = DockStyle.Fill,
+			BackColor = Tokens.Canvas
 		};
-		groupBox.Controls.Add(_btnRecord);
-		SetGrowRightNeighbor(_txtKey, _btnRecord, 10);
-		SetShiftFromRight(_btnRecord, 24);
-		_lblKeyHint.Location = new Point(16, 72);
-		_lblKeyHint.Size = new Size(504, 24);
-		_lblKeyHint.ForeColor = Design.Hint;
-		// v1.3：首屏就填提示。原来只由 StopRecording 赋值，没录制过就是空白，
-		// 视觉上像少了一个控件、还白占 28px 高度。
-		_lblKeyHint.Text = "已绑定：" + KeysUtil.DisplayName(_edit.TriggerKeyId);
-		groupBox.Controls.Add(_lblKeyHint);
-		_chkHold.Text = "需要长按触发（关闭后只要按住就立即生效）";
-		_chkHold.Location = new Point(18, 104);
-		_chkHold.Size = new Size(400, 24);
-		_chkHold.CheckedChanged += (object? s, EventArgs e) =>
+		_content.Resize += delegate
 		{
-			_numHold.Enabled = _chkHold.Checked;
+			LayoutWithContent(ContentWidth());
 		};
-		groupBox.Controls.Add(_chkHold);
-		groupBox.Controls.Add(Label("长按阈值", 16, 142, 70));
-		StyleNum(_numHold, 92, 138, 84, 100, 3000, 50);
-		groupBox.Controls.Add(_numHold);
-		Label value = Label("毫秒（默认 600，短按仍然是原本的按键）", 210, 142, 320);
-		groupBox.Controls.Add(value);
-		GroupBox groupBox2 = Group("鼠标键动作（长按触发键之后）", 0, 0, GroupWidth, 162);
-		groupBox2.Controls.Add(Label("左键", 16, 42, 60));
-		StyleCombo(_cmbLeft, 84, 38, 260);
-		_cmbLeft.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		groupBox2.Controls.Add(_cmbLeft);
-		groupBox2.Controls.Add(Label("右键", 16, 82, 60));
-		StyleCombo(_cmbRight, 84, 78, 260);
-		_cmbRight.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		groupBox2.Controls.Add(_cmbRight);
-		groupBox2.Controls.Add(Label("中键", 16, 122, 60));
-		StyleCombo(_cmbMiddle, 84, 118, 260);
-		_cmbMiddle.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		groupBox2.Controls.Add(_cmbMiddle);
-		GroupBox groupBox3 = Group("视觉反馈", 0, 0, GroupWidth, 392);
-		_chkFrame.Text = "长按触发键到达阈值后，光标所在的窗口立刻亮起外框";
-		_chkFrame.Location = new Point(18, 30);
-		_chkFrame.Size = new Size(500, 22);
-		_chkFrame.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		_chkFrame.CheckedChanged += (object? s, EventArgs e) =>
+		BuildControls();
+		BuildPages();
+		_nav = new SideNav();
+		_nav.Dock = DockStyle.Left;
+		_nav.Width = S(208);
+		_nav.Bind(NavTitles(), NavGlyphs(), delegate(int i)
 		{
-			SyncFrameEnabled();
-		};
-		groupBox3.Controls.Add(_chkFrame);
-		_cmbFrameColor.SelectedIndexChanged += (object? s, EventArgs e) =>
+			SelectPage(i);
+		});
+		// 停靠顺序有讲究：WinForms 按「后加的先行占位」处理停靠，
+		// Fill 必须比 Left/Bottom 更早 Add，否则内容区会吃掉整扇客户区、把侧栏压在底下。
+		Controls.Add(_content);
+		Controls.Add(_nav);
+		_pager = new Panel
 		{
-			SyncPreview();
+			Dock = DockStyle.Bottom,
+			Height = S(60),
+			BackColor = Tokens.Surface
 		};
-		_cmbFrameStyle.SelectedIndexChanged += (object? s, EventArgs e) =>
+		_pager.Paint += delegate(object s, PaintEventArgs e)
 		{
-			SyncPreview();
+			Graphics graphics = e.Graphics;
+			HQ.Apply(graphics);
+			using (Pen pen = new Pen(Tokens.Stroke))
+			{
+				graphics.DrawLine(pen, 0, 0, _pager.Width, 0);
+			}
+			for (int i = 1; i <= 2; i++)
+			{
+				using Pen pen2 = new Pen(Color.FromArgb((i == 1) ? 16 : 7, Tokens.TextPrimary));
+				graphics.DrawLine(pen2, 0, i, _pager.Width, i);
+			}
 		};
-		groupBox3.Controls.Add(Label("外框颜色", 18, 58, 62));
-		_gridColor.Location = new Point(18, 80);
-		_gridColor.Size = new Size(246, 50);
-		_gridColor.Columns = 9;
-		_gridColor.SetItems(BuildColorEntries());
-		_gridColor.Picked += (object? s, EventArgs e) =>
+		_lblStatus = new Label
 		{
-			SelectId(_cmbFrameColor, _gridColor.SelectedId);
+			AutoSize = false,
+			ForeColor = Tokens.Success,
+			TextAlign = ContentAlignment.MiddleLeft,
+			BackColor = Color.Transparent,
+			Location = new Point(S(24), S(14)),
+			Size = new Size(S(360), S(32)),
+			Text = ""
 		};
-		groupBox3.Controls.Add(_gridColor);
-		_lblColorName.Location = new Point(84, 58);
-		_lblColorName.Size = new Size(300, 24);
-		_lblColorName.ForeColor = Design.TextPrimary;
-		groupBox3.Controls.Add(_lblColorName);
-		_lblStyleHeader.Text = "样式";
-		_lblStyleHeader.Location = new Point(18, 164);
-		_lblStyleHeader.Size = new Size(300, 22);
-		_lblStyleHeader.TextAlign = ContentAlignment.MiddleLeft;
-		groupBox3.Controls.Add(_lblStyleHeader);
-		_galleryStyle.Location = new Point(18, 186);
-		_galleryStyle.Size = new Size(500, 120);
-		_galleryStyle.Columns = 0;
-		_galleryStyle.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		{
-			SelectId(_cmbFrameStyle, _galleryStyle.SelectedId);
-		};
-		groupBox3.Controls.Add(_galleryStyle);
-		groupBox3.Controls.Add(Label("粗细", 18, 312, 56));
-		StyleNum(_numFrameThick, 76, 308, 62, 1, 8, 1);
-		_numFrameThick.ValueChanged += (object? s, EventArgs e) =>
-		{
-			SyncPreview();
-		};
-		groupBox3.Controls.Add(_numFrameThick);
-		groupBox3.Controls.Add(Label("px", 168, 312, 24));
-		groupBox3.Controls.Add(Label("圆角", 200, 312, 56));
-		StyleNum(_numFrameRadius, 258, 308, 62, 0, 28, 1);
-		_numFrameRadius.ValueChanged += (object? s, EventArgs e) =>
-		{
-			SyncPreview();
-		};
-		groupBox3.Controls.Add(_numFrameRadius);
-		groupBox3.Controls.Add(Label("px", 324, 312, 24));
-		groupBox3.Controls.Add(Label("不透明度", 348, 312, 72));
-		StyleNum(_numFrameOpacity, 420, 308, 52, 20, 100, 5);
-		_numFrameOpacity.ValueChanged += (object? s, EventArgs e) =>
-		{
-			SyncPreview();
-		};
-		groupBox3.Controls.Add(_numFrameOpacity);
-		groupBox3.Controls.Add(Label("%", 476, 312, 24));
-		_lblFrameTip.Location = new Point(18, 346);
-		_lblFrameTip.Size = new Size(496, 34);
-		_lblFrameTip.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		_lblFrameTip.ForeColor = Design.Hint;
-		_lblFrameTip.Text = "上面所有颜色和样式都是一进这个页面就能看到的，点一下就换；右上角是实时预览，和真正拖窗口时用的是同一段绘制代码。";
-		groupBox3.Controls.Add(_lblFrameTip);
-		_pnlPreview.Location = new Point(424, 60);
-		_pnlPreview.Size = new Size(96, 120);
-		SetShiftFromRight(_pnlPreview, 16);
-		groupBox3.Controls.Add(_pnlPreview);
-		// v1.3：预览框保持独立，不加标题——加了会被分组内的布局逻辑压缩成窄条（实测 20px 宽）。
-		GroupBox groupBox4 = Group("拖动行为", 0, 0, GroupWidth, 366);
-		Label label = Label("缩放角区", 230, 30, 66);
-		SetShiftFromRight(label, -1);
-		groupBox4.Controls.Add(label);
-		StyleNum(_numCorner, 300, 27, 70, 5, 45, 1);
-		SetShiftFromRight(_numCorner, -1);
-		groupBox4.Controls.Add(_numCorner);
-		Label label2 = Label("%", 374, 30, 30);
-		SetShiftFromRight(label2, -1);
-		groupBox4.Controls.Add(label2);
-		_chkDblLeft.Text = "双击左键 = 最大化 / 还原";
-		_chkDblLeft.Location = new Point(18, 56);
-		_chkDblLeft.Size = new Size(240, 22);
-		groupBox4.Controls.Add(_chkDblLeft);
-		_chkDblRight.Text = "双击右键 = 九宫格分区";
-		_chkDblRight.Location = new Point(272, 56);
-		_chkDblRight.Size = new Size(240, 22);
-		SetShiftFromRight(_chkDblRight, 16);
-		groupBox4.Controls.Add(_chkDblRight);
-		_chkRestoreMax.Text = "允许拖动已最大化的窗口（先还原再拖）";
-		_chkRestoreMax.Location = new Point(18, 82);
-		_chkRestoreMax.Size = new Size(500, 22);
-		_chkRestoreMax.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		groupBox4.Controls.Add(_chkRestoreMax);
-		_chkFront.Text = "开始拖动时自动把窗口提到最前";
-		_chkFront.Location = new Point(18, 108);
-		_chkFront.Size = new Size(500, 22);
-		_chkFront.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		groupBox4.Controls.Add(_chkFront);
-		_chkFullscreen.Text = "允许拖动全屏 / 无边框窗口（游戏、全屏播放器，可能有风险）";
-		_chkFullscreen.Location = new Point(18, 134);
-		_chkFullscreen.Size = new Size(500, 22);
-		_chkFullscreen.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		_chkFullscreen.ForeColor = Design.WarnText;
-		groupBox4.Controls.Add(_chkFullscreen);
-		_chkExitFullscreen.Text = "触发时先把全屏 / 最大化窗口变回普通窗口，再执行拖动或缩放";
-		_chkExitFullscreen.Location = new Point(18, 160);
-		_chkExitFullscreen.Size = new Size(500, 22);
-		_chkExitFullscreen.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		groupBox4.Controls.Add(_chkExitFullscreen);
-		_chkShake.Text = "选中窗口后晃一晃，其它窗口全部最小化（再晃一次还原）";
-		_chkShake.Location = new Point(18, 186);
-		_chkShake.Size = new Size(500, 22);
-		_chkShake.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		groupBox4.Controls.Add(_chkShake);
-		groupBox4.Controls.Add(Label("不生效的窗口", 18, 240, 90));
-		_txtBlacklist.Location = new Point(112, 237);
-		_txtBlacklist.Size = new Size(406, 26);
-		_txtBlacklist.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		groupBox4.Controls.Add(_txtBlacklist);
-		_btnPickExe = new FlatButton();
-		_btnPickExe.Text = "选择程序…";
-		_btnPickExe.Location = new Point(112, 272);
-		_btnPickExe.Size = new Size(92, 26);
-		_btnPickExe.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-		_btnPickExe.Click += (object? s, EventArgs e) =>
-		{
-			PickExeFile();
-		};
-		groupBox4.Controls.Add(_btnPickExe);
-		_btnPickWindow = new FlatButton();
-		_btnPickWindow.Text = "点选窗口";
-		_btnPickWindow.Location = new Point(212, 272);
-		_btnPickWindow.Size = new Size(92, 26);
-		_btnPickWindow.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-		_btnPickWindow.Click += (object? s, EventArgs e) =>
-		{
-			PickWindowByClick();
-		};
-		groupBox4.Controls.Add(_btnPickWindow);
-		Label label3 = Label("填窗口标题 / 程序名 / 窗口类名的关键字，逗号分隔；命中就完全不接管。也可以用上面两个按钮直接挑。", 18, 306, 500);
-		label3.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		label3.ForeColor = Design.Hint;
-		groupBox4.Controls.Add(label3);
-		GroupBox groupBox5 = Group("流畅度", 0, 0, GroupWidth, 168);
-		groupBox5.Controls.Add(Label("刷新率", 16, 26, 70));
-		StyleCombo(_cmbRefreshMode, 90, 22, 220);
-		_cmbRefreshMode.SelectedIndexChanged += (object? s, EventArgs e) =>
-		{
-			SyncRefreshEnabled();
-		};
-		groupBox5.Controls.Add(_cmbRefreshMode);
-		groupBox5.Controls.Add(Label("固定值", 16, 58, 70));
-		StyleNum(_numRefreshHz, 90, 54, 90, 0, 360, 1);
-		groupBox5.Controls.Add(_numRefreshHz);
-		groupBox5.Controls.Add(Label("Hz", 186, 58, 30));
-		_lblRefreshHint.Location = new Point(16, 90);
-		_lblRefreshHint.Size = new Size(504, 44);
-		_lblRefreshHint.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		_lblRefreshHint.ForeColor = Design.Hint;
-		_lblRefreshHint.Text = "跟随屏幕：按实测刷新率节流，与显示器同步。\r\n固定值：自定义节流频率，0 = 不限制。改动在下次拖动时生效。";
-		groupBox5.Controls.Add(_lblRefreshHint);
-		GroupBox groupBox6 = Group("启动与权限", 0, 0, GroupWidth, 176);
-		groupBox6.Controls.Add(Label("开机自启", 16, 32, 70));
-		StyleCombo(_cmbAutoStart, 90, 28, 430);
-		_cmbAutoStart.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		groupBox6.Controls.Add(_cmbAutoStart);
-		_chkRunAsAdmin.Text = "启动时自动申请管理员权限（默认开启）";
-		_chkRunAsAdmin.Location = new Point(18, 62);
-		_chkRunAsAdmin.Size = new Size(500, 22);
-		_chkRunAsAdmin.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		groupBox6.Controls.Add(_chkRunAsAdmin);
-		_chkWarnNonAdmin.Text = "没有管理员权限时提示我（可关闭，不再打扰）";
-		_chkWarnNonAdmin.Location = new Point(18, 86);
-		_chkWarnNonAdmin.Size = new Size(500, 22);
-		_chkWarnNonAdmin.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		groupBox6.Controls.Add(_chkWarnNonAdmin);
-		_lblAdmin.Location = new Point(16, 112);
-		_lblAdmin.Size = new Size(340, 20);
-		_lblAdmin.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		_lblAdmin.ForeColor = Design.TextSecondary;
-		SetGrowRightNeighbor(_lblAdmin, _btnRestartAdmin, 12);
-		groupBox6.Controls.Add(_lblAdmin);
-		_btnRestartAdmin.Text = "以管理员重启";
-		_btnRestartAdmin.Location = new Point(376, 110);
-		_btnRestartAdmin.Size = new Size(144, 24);
-		SetShiftFromRight(_btnRestartAdmin, 16);
-		_btnRestartAdmin.Click += (object? s, EventArgs e) =>
-		{
-			RestartAsAdmin();
-		};
-		groupBox6.Controls.Add(_btnRestartAdmin);
-		_lblStatus.Location = new Point(16, 12);
-		_lblStatus.Size = new Size(320, 22);
-		_lblStatus.ForeColor = Design.Success;
 		_pager.Controls.Add(_lblStatus);
-		_btnDefaultsRef = new FlatButton();
-		_btnDefaultsRef.Text = "恢复默认值";
-		_btnDefaultsRef.Size = new Size(108, 24);
-		_btnDefaultsRef.Click += (object? s, EventArgs e) =>
+		_btnDefaultsRef = new FlatButton
+		{
+			Text = "恢复默认值",
+			Size = new Size(S(108), S(32))
+		};
+		_btnDefaultsRef.Click += delegate
 		{
 			ResetDefaults();
 		};
 		_pager.Controls.Add(_btnDefaultsRef);
-		_btnSaveRef = new FlatButton();
-		((FlatButton)_btnSaveRef).Primary = true;
-		_btnSaveRef.Text = "保存并生效";
-		_btnSaveRef.Size = new Size(108, 24);
-		_btnSaveRef.Click += (object? s, EventArgs e) =>
+		_btnSaveRef = new FlatButton
+		{
+			Primary = true,
+			Text = "保存并生效",
+			Size = new Size(S(108), S(32))
+		};
+		_btnSaveRef.Click += delegate
 		{
 			Save();
 		};
 		_pager.Controls.Add(_btnSaveRef);
-		_btnCancelRef = new FlatButton();
-		_btnCancelRef.Text = "取消";
-		_btnCancelRef.Size = new Size(108, 24);
-		_btnCancelRef.Click += (object? s, EventArgs e) =>
+		_btnCancelRef = new FlatButton
+		{
+			Text = "取消",
+			Size = new Size(S(88), S(32))
+		};
+		_btnCancelRef.Click += delegate
 		{
 			Close();
 		};
 		_pager.Controls.Add(_btnCancelRef);
-		GroupBox groupBox7 = Group("帮助", 0, 0, GroupWidth, 396);
-		Label label4 = Label("点一下标题，就能展开对应功能的说明。下面每一项都是当前版本的实际行为。", 18, 28, 500);
-		label4.ForeColor = Design.Hint;
-		groupBox7.Controls.Add(label4);
-		_helpPanel.Location = new Point(18, 56);
-		_helpPanel.Size = new Size(500, 320);
-		_helpPanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		_helpPanel.SetEntries(BuildHelpEntries());
-		groupBox7.Controls.Add(_helpPanel);
-		GroupBox groupBox8 = Group("关于", 0, 0, GroupWidth, 236);
-		Label label5 = Label("长按拖窗  HoldDrag    版本 " + AppInfo.Version, 18, 26, 460);
-		label5.ForeColor = Design.TextPrimary;
-		groupBox8.Controls.Add(label5);
-		Label label6 = Label("长按触发键，随手拖动 / 缩放任意窗口", 18, 52, 460);
-		label6.ForeColor = Design.Hint;
-		groupBox8.Controls.Add(label6);
-		groupBox8.Controls.Add(Label("开发者", 18, 82, 82));
-		groupBox8.Controls.Add(Label("QQQOrange", 104, 82, 160));
-		groupBox8.Controls.Add(Label("开发工具", 280, 82, 82));
-		groupBox8.Controls.Add(Label("DeepSeek", 366, 82, 160));
-		groupBox8.Controls.Add(Label("当前版本", 18, 108, 82));
-		groupBox8.Controls.Add(Label("v" + AppInfo.Version, 104, 108, 160));
-		groupBox8.Controls.Add(Label("更新时间", 280, 108, 82));
-		groupBox8.Controls.Add(Label(AppInfo.ReleaseDate, 366, 108, 160));
+		_pager.Resize += delegate
+		{
+			LayoutPager();
+		};
+		Controls.Add(_pager);
+		MinimumSize = new Size(S(640), S(480));
+		try
+		{
+			Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
+			int num = S(680);
+			int num2 = Math.Max(S(520), workingArea.Height - S(48) - S(40));
+			if (num > num2)
+			{
+				num = num2;
+			}
+			_defaultClientH = num;
+		}
+		catch
+		{
+			_defaultClientH = S(680);
+		}
+		LayoutPager();
+		ApplySavedSize();
+		ResumeLayout(performLayout: false);
+		LayoutWithContent(ContentWidth());
+		SelectPage(0);
+	}
 
-		// —— 项目主页：点击用系统默认浏览器打开 ——
-		groupBox8.Controls.Add(Label("项目主页", 18, 136, 82));
-		_btnGitHub.Text = "github.com/QQQOrange/holddrag";
-		_btnGitHub.Location = new Point(104, 132);
-		_btnGitHub.Size = new Size(240, 24);
-		_btnGitHub.Click += (object? s, EventArgs e) =>
+	private void LayoutPager()
+	{
+		try
+		{
+			int num = S(24);
+			int num2 = (_pager.ClientSize.Height > 10) ? _pager.ClientSize.Height : S(60);
+			int num3 = (_pager.ClientSize.Width > 10) ? _pager.ClientSize.Width : S(900);
+			// ComboBox 的高度被系统锁在 PreferredHeight（ItemHeight + 边框），SetBounds 设不大，
+			// 所以底栏按钮反过来对齐到输入框的真实高度，保证两者同一量级（视觉不突兀）。
+			int fieldH = InputRowHeight();
+			_btnDefaultsRef.Height = fieldH;
+			_btnSaveRef.Height = fieldH;
+			_btnCancelRef.Height = fieldH;
+			_btnCancelRef.Location = new Point(num3 - num - _btnCancelRef.Width, (num2 - _btnCancelRef.Height) / 2);
+			_btnSaveRef.Location = new Point(_btnCancelRef.Left - S(12) - _btnSaveRef.Width, (num2 - _btnSaveRef.Height) / 2);
+			_btnDefaultsRef.Location = new Point(_btnSaveRef.Left - S(12) - _btnDefaultsRef.Width, (num2 - _btnDefaultsRef.Height) / 2);
+			_lblStatus.Width = Math.Max(S(120), _btnDefaultsRef.Left - S(20) - _lblStatus.Left);
+		}
+		catch
+		{
+		}
+	}
+
+	// 取树里第一个下拉框的真实锁定高度（与自测 FindFirstCombo 的遍历顺序一致：
+	// Controls 索引序 + 深度优先），拿不到时退回 1x 基准高度。
+	private int InputRowHeight()
+	{
+		try
+		{
+			for (int i = 0; i < Controls.Count; i++)
+			{
+				ComboBox comboBox = FindCombo(Controls[i]);
+				if (comboBox != null && comboBox.Height > 8)
+				{
+					return Math.Max(Sc(24), comboBox.Height);
+				}
+			}
+		}
+		catch
+		{
+		}
+		return Sc(24);
+	}
+
+	private static ComboBox FindCombo(Control root)
+	{
+		try
+		{
+			for (int i = 0; i < root.Controls.Count; i++)
+			{
+				if (root.Controls[i] is ComboBox result)
+				{
+					return result;
+				}
+				ComboBox comboBox = FindCombo(root.Controls[i]);
+				if (comboBox != null)
+				{
+					return comboBox;
+				}
+			}
+		}
+		catch
+		{
+		}
+		return null;
+	}
+
+	private int ContentWidth()
+	{
+		if (IsHandleCreated && _content != null && _content.ClientSize.Width > 10)
+		{
+			return _content.ClientSize.Width;
+		}
+		return Math.Max(10, ClientSize.Width - S(208));
+	}
+
+	private static string[] NavTitles()
+	{
+		return new string[8] { "触发方式", "鼠标键动作", "视觉反馈", "拖动行为", "流畅度", "启动与权限", "帮助", "关于" };
+	}
+
+	private static string[] NavGlyphs()
+	{
+		return new string[8] { Glyph.Keyboard, Glyph.Move, Glyph.Color, Glyph.Move, Glyph.Speed, Glyph.Shield, Glyph.Help, Glyph.Info };
+	}
+
+	private void BuildControls()
+	{
+		_txtKey = new TextBox
+		{
+			ReadOnly = true,
+			TabStop = false,
+			BorderStyle = BorderStyle.None,
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
+			TextAlign = HorizontalAlignment.Center
+		};
+		_btnRecord = new FlatButton
+		{
+			Text = "重新录制"
+		};
+		_btnRecord.Click += delegate
+		{
+			StartRecording();
+		};
+		_lblKeyHint = HintLabel();
+		_chkHold = new FlatCheck
+		{
+			Text = "需要长按触发（关闭后按住立即生效）",
+			Cursor = Cursors.Hand
+		};
+		_chkHold.CheckedChanged += delegate
+		{
+			_numHold.Enabled = _chkHold.Checked;
+		};
+		_numHold = NewNum(100m, 3000m, 50m);
+		_cmbLeft = NewCombo();
+		_cmbRight = NewCombo();
+		_cmbMiddle = NewCombo();
+		_chkFrame = new FlatCheck
+		{
+			Text = "长按到达阈值后，光标所在窗口亮起外框",
+			Cursor = Cursors.Hand
+		};
+		_chkFrame.CheckedChanged += delegate
+		{
+			SyncFrameEnabled();
+		};
+		_cmbFrameColor = NewCombo();
+		_cmbFrameColor.SelectedIndexChanged += delegate
+		{
+			SyncPreview();
+		};
+		_cmbFrameColor.ClosedPainter = PaintColorEntry;
+		_cmbFrameStyle = NewCombo();
+		_cmbFrameStyle.SelectedIndexChanged += delegate
+		{
+			SyncPreview();
+		};
+		_gridColor = new SwatchGrid
+		{
+			Cursor = Cursors.Hand
+		};
+		_gridColor.Picked += delegate
+		{
+			SelectId(_cmbFrameColor, _gridColor.SelectedId);
+		};
+		_lblColorName = HintLabel();
+		_lblColorName.ForeColor = Tokens.TextPrimary;
+		_lblStyleHeader = HintLabel();
+		_galleryStyle = new StyleGallery
+		{
+			Cursor = Cursors.Hand
+		};
+		_galleryStyle.Picked += delegate
+		{
+			SelectId(_cmbFrameStyle, _galleryStyle.SelectedId);
+		};
+		_numFrameThick = NewNum(1m, 8m, 1m);
+		_numFrameThick.ValueChanged += delegate
+		{
+			SyncPreview();
+		};
+		_numFrameRadius = NewNum(0m, 28m, 1m);
+		_numFrameRadius.ValueChanged += delegate
+		{
+			SyncPreview();
+		};
+		_numFrameOpacity = NewNum(20m, 100m, 5m);
+		_numFrameOpacity.ValueChanged += delegate
+		{
+			SyncPreview();
+		};
+		_lblFrameTip = HintLabel();
+		_pnlPreview = new FramePreviewBox();
+		_numCorner = NewNum(5m, 45m, 1m);
+		_chkDblLeft = Check("双击左键 = 最大化 / 还原");
+		_chkDblRight = Check("双击右键 = 九宫格分区");
+		_chkRestoreMax = Check("允许拖动已最大化的窗口（先还原再拖）");
+		_chkFront = Check("开始拖动时自动把窗口提到最前");
+		_chkFullscreen = Check("允许拖动全屏 / 无边框窗口（有风险）");
+		_chkExitFullscreen = Check("触发时先把全屏/最大化窗口变回普通");
+		_chkShake = Check("选中窗口后晃一晃，其它窗口全部最小化");
+		_txtBlacklist = new TextBox
+		{
+			BorderStyle = BorderStyle.None,
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point)
+		};
+		_btnPickExe = new FlatButton
+		{
+			Text = "选择程序…"
+		};
+		_btnPickExe.Click += delegate
+		{
+			PickExeFile();
+		};
+		_btnPickWindow = new FlatButton
+		{
+			Text = "点选窗口"
+		};
+		_btnPickWindow.Click += delegate
+		{
+			PickWindowByClick();
+		};
+		_cmbRefreshMode = NewCombo();
+		_cmbRefreshMode.SelectedIndexChanged += delegate
+		{
+			SyncRefreshEnabled();
+		};
+		_numRefreshHz = NewNum(0m, 360m, 1m);
+		_lblRefreshHint = HintLabel();
+		_cmbAutoStart = NewCombo();
+		_chkRunAsAdmin = Check("开机时自动申请管理员权限（默认开启）");
+		_chkWarnNonAdmin = Check("没有管理员权限时提示我（可关闭）");
+		_lblAdmin = HintLabel();
+		_btnRestartAdmin = new FlatButton
+		{
+			Text = "以管理员重启"
+		};
+		_btnRestartAdmin.Click += delegate
+		{
+			RestartAsAdmin();
+		};
+		_helpPanel = new HelpPanel();
+		_helpPanel.SetEntries(BuildHelpEntries());
+		_btnGitHub = new FlatButton
+		{
+			Text = "github.com/QQQOrange/holddrag"
+		};
+		_btnGitHub.Click += delegate
 		{
 			OpenUrl(AppInfo.GitHubUrl);
 		};
-		groupBox8.Controls.Add(_btnGitHub);
-
-		// —— 更新：自动更新开关 + 检查更新按钮 ——
-		_chkAutoUpdate.Text = "自动更新（每次启动自动检查，有新版就提示我）";
-		_chkAutoUpdate.Location = new Point(18, 168);
-		_chkAutoUpdate.Size = new Size(500, 22);
-		_chkAutoUpdate.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		_chkAutoUpdate.CheckedChanged += (object? s, EventArgs e) =>
+		_chkAutoUpdate = Check("自动更新（启动时检查，有新版提示我）");
+		_chkAutoUpdate.CheckedChanged += delegate
 		{
 			if (!_populating && _edit != null)
 			{
 				_edit.AutoCheckUpdate = _chkAutoUpdate.Checked;
 			}
 		};
-		groupBox8.Controls.Add(_chkAutoUpdate);
-		_btnCheckUpdate.Text = "检查更新";
-		_btnCheckUpdate.Location = new Point(18, 198);
-		_btnCheckUpdate.Size = new Size(104, 26);
-		_btnCheckUpdate.Click += (object? s, EventArgs e) =>
+		_btnCheckUpdate = new FlatButton
+		{
+			Text = "检查更新"
+		};
+		_btnCheckUpdate.Click += delegate
 		{
 			CheckForUpdates(userInitiated: true);
 		};
-		groupBox8.Controls.Add(_btnCheckUpdate);
-		_lblUpdateStatus.Location = new Point(132, 198);
-		_lblUpdateStatus.Size = new Size(386, 26);
-		_lblUpdateStatus.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		_lblUpdateStatus.ForeColor = Design.Hint;
-		_lblUpdateStatus.TextAlign = ContentAlignment.MiddleLeft;
-		_lblUpdateStatus.AutoEllipsis = true;
-		_lblUpdateStatus.Text = "尚未检查";
-		groupBox8.Controls.Add(_lblUpdateStatus);
-		_groups = new GroupBox[8] { groupBox, groupBox2, groupBox3, groupBox4, groupBox5, groupBox6, groupBox7, groupBox8 };
-		CaptureDesignSnapshot();
-		ScaleDesign(_groups);
-		StyleText(_txtKey, Font, readOnly: true);
-		StyleText(_txtBlacklist, Font, readOnly: false);
-		_innerLayouts.Clear();
-		_innerIndex.Clear();
-		for (int num = 0; num < _groups.Length; num++)
+		_lblUpdateStatus = new Label
 		{
-			GroupBox groupBox9 = _groups[num];
-			for (int num2 = 0; num2 < groupBox9.Controls.Count; num2++)
-			{
-				MarkBase(groupBox9.Controls[num2]);
-			}
-		}
-		_innerCaptured = true;
-		ReserveLabelWidth();
-		_groupHost = new ResponsiveGroupPanel(_groups);
-		// v1.3：内容列限宽后要居中，LeftOffset 作为居中计算的基准左边距。
-		_groupHost.LeftOffset = ScrollEdgeMargin;
-		_groupHost.Location = new Point(ScrollEdgeMargin, ScrollEdgeMargin);
-		_scrollHost.Controls.Add(_groupHost);
-		_scrollHost.Dock = DockStyle.Fill;
-		_scrollHost.AutoScroll = true;
-		_scrollHost.BackColor = Design.Canvas;
-		Controls.Add(_scrollHost);
-		_sidebar = new NavSidebar();
-		_sidebar.Dock = DockStyle.Left;
-		_sidebar.Width = S(176);
-		Controls.Add(_sidebar);
-		_scrollHost.Scroll += (object? s, ScrollEventArgs e) =>
+			AutoSize = false,
+			AutoEllipsis = true,
+			TextAlign = ContentAlignment.MiddleLeft,
+			BackColor = Color.Transparent,
+			ForeColor = Tokens.Hint,
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
+			Text = "尚未检查"
+		};
+	}
+
+	private static FlatCombo NewCombo()
+	{
+		return new FlatCombo();
+	}
+
+	private static FlatNum NewNum(decimal min, decimal max, decimal step)
+	{
+		return new FlatNum
 		{
-			if (_sidebar != null)
+			Minimum = min,
+			Maximum = max,
+			Increment = step,
+			TextAlign = HorizontalAlignment.Center
+		};
+	}
+
+	private static FlatCheck Check(string text)
+	{
+		return new FlatCheck
+		{
+			Text = text,
+			Cursor = Cursors.Hand
+		};
+	}
+
+	private static Label HintLabel()
+	{
+		return new Label
+		{
+			AutoSize = false,
+			AutoEllipsis = false,
+			ForeColor = Tokens.Hint,
+			BackColor = Color.Transparent,
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
+			Size = new Size(100, 20)
+		};
+	}
+
+	private static Label HintLabelWith(string text)
+	{
+		Label label = HintLabel();
+		label.Text = text;
+		return label;
+	}
+
+	private static Cell L(string text, int w)
+	{
+		return new Cell
+		{
+			Label = text,
+			LabelW = w,
+			LabelCtl = new Label
 			{
-				_sidebar.SyncActive();
+				Text = text,
+				AutoSize = false,
+				TextAlign = ContentAlignment.MiddleLeft,
+				ForeColor = Tokens.TextSecondary,
+				BackColor = Color.Transparent,
+				Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
+				Size = new Size(w, 20)
 			}
 		};
-		_scrollHost.Resize += (object? s, EventArgs e) =>
+	}
+
+	private static Cell C(Control ctl, int fixedW)
+	{
+		return new Cell
 		{
-			if (_sidebar != null)
+			Ctl = ctl,
+			FixedW = fixedW
+		};
+	}
+
+	private static Cell F(Control ctl)
+	{
+		return new Cell
+		{
+			Ctl = ctl,
+			FixedW = 0
+		};
+	}
+
+	private static Cell W(Control ctl)
+	{
+		return new Cell
+		{
+			Ctl = ctl,
+			Wrap = true
+		};
+	}
+
+	private static Cell A(Control ctl)
+	{
+		return new Cell
+		{
+			Ctl = ctl,
+			Auto = true
+		};
+	}
+
+	private Page NewPage(string title, string subtitle)
+	{
+		Page page = new Page();
+		page.Title = title;
+		page.Subtitle = subtitle;
+		page.Host = new PageHost();
+		page.LblTitle = new Label
+		{
+			Text = title,
+			AutoSize = false,
+			BackColor = Color.Transparent,
+			ForeColor = Tokens.TextPrimary,
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point)
+		};
+		page.LblSub = new Label
+		{
+			Text = subtitle,
+			AutoSize = false,
+			BackColor = Color.Transparent,
+			ForeColor = Tokens.TextSecondary,
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point)
+		};
+		page.Host.Canvas.Controls.Add(page.LblTitle);
+		page.Host.Canvas.Controls.Add(page.LblSub);
+		_pages.Add(page);
+		_content.Controls.Add(page.Host);
+		page.Host.Dock = DockStyle.Fill;
+		page.Host.Visible = false;
+		return page;
+	}
+
+	private Card NewCard(Page page, string title, bool wide = false)
+	{
+		Card card = new Card(title);
+		card.Wide = wide;
+		page.Cards.Add(card);
+		page.Host.Canvas.Controls.Add(card);
+		return card;
+	}
+
+	private void BuildPages()
+	{
+		Page page = NewPage("触发方式", "决定什么时候开始接管窗口");
+		Card card = NewCard(page, "触发方式");
+		card.RegisterField(_txtKey);
+		card.RegisterField(_numHold);
+		card.Add(40, L("触发键", 72), F(_txtKey), C(_btnRecord, 96));
+		card.Add(40, W(_lblKeyHint));
+		card.Add(36, W(_chkHold));
+		card.Add(40, L("长按阈值", 84), C(_numHold, 100), L("毫秒", 48));
+		Page page2 = NewPage("鼠标键动作", "长按触发键之后，三个鼠标键各自做什么");
+		Card card2 = NewCard(page2, "鼠标键动作（长按触发键之后）");
+		card2.Add(40, L("左键", 60), F(_cmbLeft));
+		card2.Add(40, L("右键", 60), F(_cmbRight));
+		card2.Add(40, L("中键", 60), F(_cmbMiddle));
+		Card card3 = NewCard(page2, "双击手势");
+		card3.Add(36, W(_chkDblLeft));
+		card3.Add(36, W(_chkDblRight));
+		Page page3 = NewPage("视觉反馈", "外框颜色、样式与实时预览");
+		Card card4 = NewCard(page3, "外框外观", wide: true);
+		card4.RegisterField(_numFrameThick);
+		card4.RegisterField(_numFrameRadius);
+		card4.RegisterField(_numFrameOpacity);
+		card4.Add(36, W(_chkFrame));
+		card4.Add(40, L("外框颜色", 84), F(_lblColorName));
+		card4.Add(0, A(_gridColor));
+		card4.Add(36, L("样式", 60), F(_lblStyleHeader));
+		card4.Add(0, A(_galleryStyle));
+		card4.Add(40, L("粗细", 60), C(_numFrameThick, 70), L("圆角", 60), C(_numFrameRadius, 70), L("不透明度", 84), C(_numFrameOpacity, 70));
+		card4.Add(172, C(_pnlPreview, 240));
+		card4.Add(40, W(_lblFrameTip));
+		Page page4 = NewPage("拖动行为", "双击手势、全屏窗口与黑名单");
+		Card card5 = NewCard(page4, "拖动与缩放");
+		card5.RegisterField(_numCorner);
+		card5.Add(40, L("缩放角区", 84), C(_numCorner, 80), L("%", 30));
+		card5.Add(36, W(_chkRestoreMax));
+		Card card6 = NewCard(page4, "窗口层级与全屏");
+		card6.Add(36, W(_chkFront));
+		card6.Add(36, W(_chkFullscreen));
+		card6.Add(36, W(_chkExitFullscreen));
+		Card card7 = NewCard(page4, "晃窗最小化其它窗口");
+		card7.Add(36, W(_chkShake));
+		Card card8 = NewCard(page4, "不生效的窗口", wide: true);
+		card8.RegisterField(_txtBlacklist);
+		card8.Add(40, L("关键字", 72), F(_txtBlacklist));
+		card8.Add(40, C(_btnPickExe, 96), C(_btnPickWindow, 96));
+		card8.Add(40, W(HintLabelWith("填窗口标题 / 程序名 / 类名的关键字，逗号分隔；命中就完全不接管。")));
+		Page page5 = NewPage("流畅度", "拖动过程中的刷新节流");
+		Card card9 = NewCard(page5, "拖动刷新率");
+		card9.RegisterField(_numRefreshHz);
+		card9.Add(40, L("刷新率", 72), F(_cmbRefreshMode));
+		card9.Add(40, L("固定值", 72), C(_numRefreshHz, 100), L("Hz", 30));
+		card9.Add(40, W(_lblRefreshHint));
+		Page page6 = NewPage("启动与权限", "开机自启与管理员权限");
+		Card card10 = NewCard(page6, "开机自启与权限");
+		card10.Add(40, L("开机自启", 84), F(_cmbAutoStart));
+		card10.Add(36, W(_chkRunAsAdmin));
+		card10.Add(36, W(_chkWarnNonAdmin));
+		card10.Add(40, W(_lblAdmin));
+		card10.Add(40, C(_btnRestartAdmin, 130));
+		Page page7 = NewPage("帮助", "每一项功能的实际行为说明");
+		Card card11 = NewCard(page7, "帮助");
+		card11.Add(40, W(HintLabelWith("点一下标题，就能展开对应功能的说明。")));
+		card11.Add(0, A(_helpPanel));
+		Page page8 = NewPage("关于", "版本、开发者与更新");
+		Card card12 = NewCard(page8, "关于", wide: true);
+		card12.Add(28, W(HintLabelWith("长按拖窗 HoldDrag    版本 v" + AppInfo.Version)));
+		card12.Add(28, W(HintLabelWith("长按触发键，随手拖动 / 缩放任意窗口")));
+		card12.Add(28, L("开发者", 84), F(HintLabelWith("QQQOrange")), L("开发工具", 84), F(HintLabelWith("DeepSeek")));
+		card12.Add(28, L("当前版本", 84), F(HintLabelWith("v" + AppInfo.Version)), L("更新时间", 84), F(HintLabelWith(AppInfo.ReleaseDate)));
+		card12.Add(36, C(_btnGitHub, 250));
+		card12.Add(36, W(_chkAutoUpdate));
+		card12.Add(40, C(_btnCheckUpdate, 104), F(_lblUpdateStatus));
+	}
+
+	private static List<HelpPanel.Entry> BuildHelpEntries()
+	{
+		return new List<HelpPanel.Entry>
+		{
+			new HelpPanel.Entry
 			{
-				_sidebar.SyncActive();
+				Icon = Glyph.Keyboard,
+				Title = "触发方式",
+				Body = "按住触发键（默认 Enter，可改成任意键或鼠标侧键）达到设定时长后生效，光标下那扇窗口四周会亮起外框；松开触发键即退出。短按会原样放行，不影响正常打字。"
+			},
+			new HelpPanel.Entry
+			{
+				Icon = Glyph.Move,
+				Title = "鼠标键动作",
+				Body = "触发后：左键拖动窗口、右键缩放窗口、中键执行一次性动作。三个键都能自定义成移动 / 缩放 / 最大化 / 最小化 / 关闭 / 置底 / 置顶 / 居中。双击左键可最大化，双击右键按九宫格吸附。"
+			},
+			new HelpPanel.Entry
+			{
+				Icon = Glyph.Color,
+				Title = "外框外观",
+				Body = "外框颜色、样式、粗细、圆角、不透明度都可以调，页面里就是实时预览，和真正拖窗口时用的是同一段绘制代码。窗口贴近屏幕边缘时外框几何保持不变。"
+			},
+			new HelpPanel.Entry
+			{
+				Icon = Glyph.Shield,
+				Title = "全屏与最大化窗口",
+				Body = "默认开启「触发时先把全屏 / 最大化窗口变回普通窗口」：这样拖动和缩放都从一个正常的窗口尺寸开始，不会出现全屏窗口拖完一片黑、或者缩放抓不到边的情况。"
+			},
+			new HelpPanel.Entry
+			{
+				Icon = Glyph.Speed,
+				Title = "晃窗最小化其它窗口",
+				Body = "触发后选中窗口，左右来回晃一晃，其它窗口会全部最小化；再晃一次即可还原。判定要求「多次往复 + 净位移接近 0」，正常拖动窗口不会被误触发。"
+			},
+			new HelpPanel.Entry
+			{
+				Icon = Glyph.Shield,
+				Title = "不生效的窗口",
+				Body = "把窗口标题 / 程序名 / 窗口类名的关键字填进黑名单（逗号分隔），命中就完全不接管。不知道填什么可以用「选择程序」挑 exe，或用「点选窗口」直接在屏幕上点那扇窗。"
 			}
 		};
-		_scrollHost.MouseWheel += (object? s, MouseEventArgs e) =>
-		{
-			SyncSidebarLater();
-		};
-		string[] array = new string[_groups.Length];
-		for (int num3 = 0; num3 < _groups.Length; num3++)
-		{
-			array[num3] = ShortTitleOf(_groups[num3].Text);
-		}
-		NavSidebar sidebar = _sidebar;
-		Panel scrollHost = _scrollHost;
-		Control[] groups = _groups;
-		sidebar.Bind(scrollHost, array, groups);
-		_pager.Dock = DockStyle.Bottom;
-		_pager.Height = S(58);
-		_pager.BackColor = Design.Surface;
-		_pager.Paint += (object? s, PaintEventArgs e) =>
-		{
-			Graphics graphics = e.Graphics;
-			HighQuality.Apply(graphics);
-			using (Pen pen = new Pen(Design.Stroke))
-			{
-				graphics.DrawLine(pen, 0, 0, _pager.Width, 0);
-			}
-			for (int i = 1; i <= 2; i++)
-			{
-				using Pen pen2 = new Pen(Color.FromArgb((i == 1) ? 16 : 7, Design.Shadow));
-				graphics.DrawLine(pen2, 0, i, _pager.Width, i);
-			}
-		};
-		Controls.Add(_pager);
-		int num4 = SingleColumnClientWidth + S(176);
-		try
-		{
-			Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
-			if (num4 > workingArea.Width - S(80))
-			{
-				num4 = Math.Max(S(420), workingArea.Width - S(80));
-			}
-		}
-		catch
-		{
-			num4 = SingleColumnClientWidth + S(176);
-		}
-		ClientSize = new Size(num4, S(640));
-		MinimumSize = new Size(ClientWidthToWindowWidth(SingleColumnClientWidth + S(176)), S(440));
-		ResumeLayout(performLayout: false);
-		_groupHost.Width = GroupWidth;
-		LayoutResponsive();
-		ApplySavedSize();
-		LayoutResponsive();
 	}
 
-	private void FitHeightToContent()
+	private void SelectPage(int index)
 	{
-		try
-		{
-			if ((_edit == null || _edit.SettingsWidth <= 0 || _edit.SettingsHeight <= 0) && _groupHost != null && _groupHost.Height > 0)
-			{
-				int num = _groupHost.Height + ScrollEdgeMargin * 2;
-				int num2 = S(46) + 8;
-				int num3 = num + num2;
-				int num4 = Screen.PrimaryScreen.WorkingArea.Height - S(40);
-				if (num3 <= num4 && num3 < ClientSize.Height && ClientSize.Height - num3 >= S(24))
-				{
-					ClientSize = new Size(ClientSize.Width, num3);
-				}
-			}
-		}
-		catch (Exception ex)
-		{
-			Log.Error(ex);
-		}
-	}
-
-	private static int ClientWidthToWindowWidth(int clientWidth)
-	{
-		try
-		{
-			int num = (SystemInformation.FrameBorderSize.Width + SystemInformation.Border3DSize.Width * 2) * 2;
-			if (num <= 0)
-			{
-				num = 16;
-			}
-			return clientWidth + num;
-		}
-		catch
-		{
-			return clientWidth + 16;
-		}
-	}
-
-	private int RightReserve()
-	{
-		int verticalScrollBarWidth = SystemInformation.VerticalScrollBarWidth;
-		if (_groupHost != null && _groupHost.CurrentColumns >= 2)
-		{
-			return verticalScrollBarWidth + 4;
-		}
-		return 4;
-	}
-
-	private void SetGrowRightNeighbor(Control c, Control neighbor, int gap)
-	{
-		_pendingGrowNeighbor[c] = new KeyValuePair<Control, int>(neighbor, S(gap));
-	}
-
-	private void SetShiftFromRight(Control c, int gap)
-	{
-		_pendingShiftGap[c] = ((gap < 0) ? (-1) : S(gap));
-	}
-
-	private int S(int design)
-	{
-		float uiScale = UiScale;
-		if (Math.Abs(uiScale - 1f) <= 0.001f)
-		{
-			return design;
-		}
-		return (int)Math.Round((float)design * uiScale);
-	}
-
-	private float ResolveScaleNow()
-	{
-		float num = 1f;
-		try
-		{
-			int num2 = 0;
-			if (IsHandleCreated)
-			{
-				try
-				{
-					num2 = Native.DpiOfWindow(Handle);
-				}
-				catch
-				{
-					num2 = 0;
-				}
-			}
-			if (num2 <= 0)
-			{
-				try
-				{
-					num2 = DeviceDpi;
-				}
-				catch
-				{
-					num2 = 0;
-				}
-			}
-			if (num2 <= 0)
-			{
-				num2 = 96;
-			}
-			num = (float)num2 / 96f;
-			if (num < 0.5f || num > 4f)
-			{
-				num = 1f;
-			}
-		}
-		catch
-		{
-			num = 1f;
-		}
-		return num;
-	}
-
-	private void CaptureDesignSnapshot()
-	{
-		_designSnapshot.Clear();
-		for (int i = 0; i < _groups.Length; i++)
-		{
-			GroupBox groupBox = _groups[i];
-			if (groupBox == null)
-			{
-				continue;
-			}
-			_designSnapshot.Add(new DesignSnapshot
-			{
-				Control = groupBox,
-				Location = groupBox.Location,
-				Size = groupBox.Size
-			});
-			for (int j = 0; j < groupBox.Controls.Count; j++)
-			{
-				Control control = groupBox.Controls[j];
-				if (control != null)
-				{
-					if (control is HelpPanel helpPanel)
-					{
-						helpPanel.SetMetrics(Fields.Sc(38), Fields.Sc(88));
-					}
-					_designSnapshot.Add(new DesignSnapshot
-					{
-						Control = control,
-						Location = control.Location,
-						Size = control.Size
-					});
-				}
-			}
-		}
-	}
-
-	private void RescaleForDpi(int newDpi)
-	{
-		if (newDpi <= 0)
+		if (index < 0 || index >= _pages.Count)
 		{
 			return;
 		}
-		float num = (float)newDpi / 96f;
-		if (num < 0.5f || num > 4f || (_uiScale > 0f && Math.Abs(num - _uiScale) < 0.001f) || _groups == null || _groups.Length == 0)
+		_activePage = index;
+		for (int i = 0; i < _pages.Count; i++)
 		{
-			return;
+			_pages[i].Host.Visible = i == index;
 		}
-		try
+		if (_nav != null)
 		{
-			Log.Info("设置窗口 DPI 变化：" + _uiScale.ToString("0.###") + " → " + num.ToString("0.###") + "（新 DPI=" + newDpi + "），按新分辨率重建界面");
-			for (int i = 0; i < _designSnapshot.Count; i++)
-			{
-				DesignSnapshot designSnapshot = _designSnapshot[i];
-				if (designSnapshot.Control != null && !designSnapshot.Control.IsDisposed)
-				{
-					designSnapshot.Control.Location = designSnapshot.Location;
-					designSnapshot.Control.Size = designSnapshot.Size;
-				}
-			}
-			_uiScale = num;
-			CurrentUiScale = num;
-			_rebaseDone = false;
-			ScaleDesign(_groups);
-			_innerLayouts.Clear();
-			_innerIndex.Clear();
-			for (int j = 0; j < _groups.Length; j++)
-			{
-				GroupBox groupBox = _groups[j];
-				if (groupBox != null)
-				{
-					for (int k = 0; k < groupBox.Controls.Count; k++)
-					{
-						MarkBase(groupBox.Controls[k]);
-					}
-				}
-			}
-			_innerCaptured = true;
-			Fields.ResetCaches();
-			StyleText(_txtKey, Font, readOnly: true);
-			StyleText(_txtBlacklist, Font, readOnly: false);
-			ReserveLabelWidth();
-			_baseGroupHeights = new int[0];
+			_nav.ActiveIndex = index;
+			_nav.KickGlow(index);
+		}
+		LayoutWithContent(ContentWidth());
+		_pages[index].Host.Invalidate();
+	}
+
+	private int DecideColumns(int contentW)
+	{
+		int num = S(640);
+		if (contentW >= num)
+		{
+			_cols = 2;
+		}
+		else if (contentW < num - S(40))
+		{
+			_cols = 1;
+		}
+		return _cols;
+	}
+
+	private void LayoutWithContent(int contentW)
+	{
+		if (contentW < 10)
+		{
+			contentW = 10;
+		}
+		int num = Math.Min(contentW, S(880));
+		int num2 = (contentW - num) / 2;
+		int cols = DecideColumns(contentW);
+		int num3 = S(12);
+		int num4 = ((cols == 2) ? ((num - num3) / 2) : num);
+		foreach (Page page in _pages)
+		{
+			page.Host.SuspendLayout();
+			page.Host.Canvas.SuspendLayout();
 			try
 			{
-				MinimumSize = new Size(ClientWidthToWindowWidth(SingleColumnClientWidth + S(176)), S(440));
-			}
-			catch
-			{
-			}
-			if (_sidebar != null)
-			{
-				_sidebar.Width = S(176);
-			}
-			LayoutResponsive();
-			Invalidate(invalidateChildren: true);
-			Update();
-		}
-		catch (Exception ex)
-		{
-			Log.Error(ex);
-		}
-	}
-
-	private void ScaleDesign(params GroupBox[] groups)
-	{
-		float uiScale = UiScale;
-		if (_btnDefaultsRef != null)
-		{
-			ScaleFlatButton(_btnDefaultsRef, uiScale);
-		}
-		if (_btnSaveRef != null)
-		{
-			ScaleFlatButton(_btnSaveRef, uiScale);
-		}
-		if (_btnCancelRef != null)
-		{
-			ScaleFlatButton(_btnCancelRef, uiScale);
-		}
-		if (Math.Abs(uiScale - 1f) <= 0.001f)
-		{
-			return;
-		}
-		Log.Info("ScaleDesign: DPI=" + DeviceDpi + " 缩放系数=" + uiScale.ToString("0.###"));
-		foreach (GroupBox groupBox in groups)
-		{
-			if (groupBox == null)
-			{
-				continue;
-			}
-			groupBox.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-			for (int j = 0; j < groupBox.Controls.Count; j++)
-			{
-				if (groupBox.Controls[j] != null)
+				SyncPageFonts(page);
+				page.LblTitle.SetBounds(num2, S(10), num, S(32));
+				page.LblSub.SetBounds(num2, S(44), num, S(22));
+				int num5 = S(72);
+				int num6 = 0;
+				int num7 = 0;
+				foreach (Card card in page.Cards)
 				{
-					groupBox.Controls[j].Anchor = AnchorStyles.Top | AnchorStyles.Left;
-				}
-			}
-		}
-		foreach (GroupBox groupBox2 in groups)
-		{
-			if (groupBox2 == null)
-			{
-				continue;
-			}
-			groupBox2.Size = ScaleSz(groupBox2.Size, uiScale);
-			int num = 0;
-			if (groupBox2 is CardGroup cardGroup)
-			{
-				cardGroup.TitleFontPx = (int)Math.Round(15f * uiScale);
-				cardGroup.TitleY = (int)Math.Round(9f * uiScale);
-				cardGroup.RadiusPx = (int)Math.Round(12f * uiScale);
-				cardGroup.ShadowOffsetPx = (int)Math.Round(2f * uiScale);
-				cardGroup.ShadowSpreadPx = (int)Math.Round(4f * uiScale);
-				cardGroup.AccentBarPx = 0;
-				num = (int)Math.Round((float)cardGroup.TitleInsetPx * uiScale);
-				groupBox2.Height += num;
-			}
-			for (int l = 0; l < groupBox2.Controls.Count; l++)
-			{
-				Control control = groupBox2.Controls[l];
-				if (control != null)
-				{
-					control.Location = ScalePt(control.Location, uiScale);
-					control.Size = ScaleSz(control.Size, uiScale);
-					if (num > 0)
+					int num8 = (card.Wide ? num : num4);
+					int num9 = card.Measure(num8);
+					if (card.Wide)
 					{
-						control.Top += num;
+						if (num6 == 1)
+						{
+							num5 += num7 + num3;
+							num6 = 0;
+						}
+						card.SetBounds(num2, num5, num8, num9);
+						num5 += num9 + num3;
+						num6 = 0;
+						num7 = 0;
+						continue;
 					}
-				}
-			}
-		}
-	}
-
-	private static Point ScalePt(Point p, float s)
-	{
-		return new Point((int)Math.Round((float)p.X * s), (int)Math.Round((float)p.Y * s));
-	}
-
-	private static Size ScaleSz(Size z, float s)
-	{
-		return new Size((int)Math.Round((float)z.Width * s), (int)Math.Round((float)z.Height * s));
-	}
-
-	private static void ScaleFlatButton(Button b, float s)
-	{
-		try
-		{
-			b.Size = ScaleSz(b.Size, s);
-			if (b.Text != null && b.Text.Length > 0 && b.Font != null)
-			{
-				int num = TextRenderer.MeasureText(b.Text, b.Font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding).Height + 8;
-				if (b.Height < num)
-				{
-					b.Height = num;
-				}
-			}
-		}
-		catch
-		{
-		}
-	}
-
-	private void MarkBase(Control c)
-	{
-		if (!_innerIndex.ContainsKey(c))
-		{
-			int groupWidth = GroupWidth;
-			InnerLayout innerLayout = new InnerLayout
-			{
-				Control = c,
-				BaseLeft = c.Left,
-				BaseTop = c.Top,
-				BaseHeight = c.Height,
-				BaseWidth = c.Width,
-				OriginalWidth = c.Width,
-				BaseInner = groupWidth,
-				RightGap = groupWidth - (c.Left + c.Width),
-				How = InnerLayout.Mode.Fixed
-			};
-			if (_pendingGrowNeighbor.TryGetValue(c, out var value))
-			{
-				innerLayout.How = InnerLayout.Mode.Grow;
-				innerLayout.GrowRightNeighbor = value.Key;
-				innerLayout.GrowNeighborGap = value.Value;
-			}
-			else if (_pendingShiftGap.ContainsKey(c))
-			{
-				innerLayout.How = InnerLayout.Mode.Shift;
-				innerLayout.ShiftRightGap = _pendingShiftGap[c];
-			}
-			else
-			{
-				innerLayout.How = ClassifyStretch(c);
-			}
-			c.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-			_innerLayouts.Add(innerLayout);
-			_innerIndex[c] = innerLayout;
-		}
-	}
-
-	private void CaptureInnerLayouts()
-	{
-		if (_innerCaptured)
-		{
-			return;
-		}
-		_innerCaptured = true;
-		for (int i = 0; i < _groupHost.Controls.Count; i++)
-		{
-			if (_groupHost.Controls[i] is GroupBox groupBox)
-			{
-				for (int j = 0; j < groupBox.Controls.Count; j++)
-				{
-					MarkBase(groupBox.Controls[j]);
-				}
-			}
-		}
-	}
-
-	private void RebaseAfterAutoScale()
-	{
-		if (!_rebaseDone)
-		{
-			_rebaseDone = true;
-			LastRebaseInfo = "AutoScaleMode.None，基准由 ScaleDesign 一次性建立";
-		}
-	}
-
-	private static InnerLayout.Mode ClassifyStretch(Control c)
-	{
-		if (c is FramePreviewBox)
-		{
-			return InnerLayout.Mode.Shift;
-		}
-		if (c is NumericUpDown)
-		{
-			return InnerLayout.Mode.Fixed;
-		}
-		if (c is ComboBox || c is TextBox)
-		{
-			return InnerLayout.Mode.Grow;
-		}
-		if ((c is CheckBox || c is Label) && c.Width >= 200)
-		{
-			return InnerLayout.Mode.Grow;
-		}
-		return InnerLayout.Mode.Fixed;
-	}
-
-	private void ReserveLabelWidth()
-	{
-		for (int i = 0; i < _innerLayouts.Count; i++)
-		{
-			InnerLayout innerLayout = _innerLayouts[i];
-			int num = TextNeed(innerLayout);
-			if (num <= 0 || num <= innerLayout.BaseWidth)
-			{
-				continue;
-			}
-			if (innerLayout.GrowRightNeighbor != null)
-			{
-				int num2 = ((!_innerIndex.TryGetValue(innerLayout.GrowRightNeighbor, out var value)) ? (innerLayout.GrowRightNeighbor.Left - innerLayout.GrowNeighborGap - innerLayout.BaseLeft) : (value.BaseLeft + value.ShiftByOffset - innerLayout.GrowNeighborGap - innerLayout.BaseLeft));
-				if (num2 > 0 && num > num2)
-				{
-					num = num2;
-				}
-			}
-			if (num > innerLayout.BaseWidth)
-			{
-				innerLayout.BaseWidth = num;
-				innerLayout.WasTextWidened = true;
-			}
-		}
-		ComputeShiftOffsets();
-	}
-
-	private void ComputeShiftOffsets()
-	{
-		for (int i = 0; i < _innerLayouts.Count; i++)
-		{
-			_innerLayouts[i].ShiftByOffset = 0;
-		}
-		for (int j = 0; j < _innerLayouts.Count; j++)
-		{
-			InnerLayout innerLayout = _innerLayouts[j];
-			if (innerLayout.WasTextWidened)
-			{
-				int num = innerLayout.BaseWidth - innerLayout.OriginalWidth;
-				if (num > 0)
-				{
-					PropagatePush(innerLayout, num);
-				}
-			}
-		}
-	}
-
-	private void ComputeRowWraps()
-	{
-		for (int i = 0; i < _innerLayouts.Count; i++)
-		{
-			InnerLayout innerLayout = _innerLayouts[i];
-			innerLayout.WrapsToNextRow = false;
-			innerLayout.RightPartner = null;
-		}
-		for (int j = 0; j < _innerLayouts.Count; j++)
-		{
-			InnerLayout innerLayout2 = _innerLayouts[j];
-			Control control = innerLayout2.Control;
-			if (control == null || control.Parent == null || !(control is CheckBox))
-			{
-				continue;
-			}
-			int baseTop = innerLayout2.BaseTop;
-			int val = innerLayout2.BaseTop + control.Height;
-			int num = int.MaxValue;
-			InnerLayout innerLayout3 = null;
-			for (int k = 0; k < _innerLayouts.Count; k++)
-			{
-				InnerLayout innerLayout4 = _innerLayouts[k];
-				if (innerLayout4 != innerLayout2 && innerLayout4.Control is CheckBox && innerLayout4.Control.Parent == control.Parent && innerLayout4.BaseLeft > innerLayout2.BaseLeft)
-				{
-					Control control2 = innerLayout4.Control;
-					int num2 = Math.Min(val, innerLayout4.BaseTop + control2.Height) - Math.Max(baseTop, innerLayout4.BaseTop);
-					if (num2 > 0 && num2 * 2 >= Math.Min(control.Height, control2.Height) && innerLayout4.BaseLeft < num)
+					if (num6 == 0)
 					{
-						num = innerLayout4.BaseLeft;
-						innerLayout3 = innerLayout4;
+						card.SetBounds(num2, num5, num8, num9);
+						num6 = 1;
+						num7 = num9;
+						continue;
 					}
+					card.SetBounds(num2 + num4 + num3, num5, num8, num9);
+					num5 += Math.Max(num7, num9) + num3;
+					num6 = 0;
+					num7 = 0;
 				}
-			}
-			if (innerLayout3 != null)
-			{
-				innerLayout2.RightPartner = innerLayout3;
-			}
-		}
-		for (int l = 0; l < _innerLayouts.Count; l++)
-		{
-			InnerLayout innerLayout5 = _innerLayouts[l];
-			InnerLayout rightPartner = innerLayout5.RightPartner;
-			if (rightPartner == null)
-			{
-				continue;
-			}
-			Control control3 = innerLayout5.Control;
-			Control control4 = rightPartner.Control;
-			if (control3 != null && control4 != null)
-			{
-				int num3 = control3.Left + control3.Width;
-				int num4 = rightPartner.BaseLeft + rightPartner.ShiftByOffset;
-				if (num3 + S(8) > num4)
+				if (num6 == 1)
 				{
-					rightPartner.WrapsToNextRow = true;
+					num5 += num7 + num3;
 				}
-			}
-		}
-	}
-
-	private void SyncWrappedHeightsPopulateOnly()
-	{
-		for (int i = 0; i < _innerLayouts.Count; i++)
-		{
-			InnerLayout innerLayout = _innerLayouts[i];
-			Control control = innerLayout.Control;
-			if (control != null && control.Parent != null && (control is CheckBox || control is Label) && (innerLayout.How == InnerLayout.Mode.Grow || innerLayout.WrapsToNextRow) && innerLayout.BaseHeight > 0)
-			{
-				int num = WrappedHeightOf(innerLayout);
-				if (num > 0 && control.Height != num)
+				int num10 = Math.Max(num5 - num3, S(72));
+				foreach (Card card2 in page.Cards)
 				{
-					control.Height = num;
+					card2.Layout(card2.Width);
 				}
-			}
-		}
-	}
-
-	private int WrappedHeightOf(InnerLayout it)
-	{
-		Control control = it.Control;
-		if (it.BaseHeight <= 0)
-		{
-			return 0;
-		}
-		if (string.IsNullOrEmpty(control.Text))
-		{
-			return it.BaseHeight;
-		}
-		int num = ((control is CheckBox) ? CheckTextChrome : Fields.Sc(4));
-		int num2 = control.Width - num;
-		int num3 = Fields.Sc(20);
-		if (num2 < num3)
-		{
-			num2 = num3;
-		}
-		try
-		{
-			Size size = TextRenderer.MeasureText(control.Text, control.Font, new Size(num2, 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
-			if (size.Height > it.BaseHeight)
-			{
-				return size.Height + Fields.Sc(4);
-			}
-		}
-		catch
-		{
-		}
-		return it.BaseHeight;
-	}
-
-	private void SyncWrappedHeights()
-	{
-		for (int i = 0; i < _innerLayouts.Count; i++)
-		{
-			InnerLayout innerLayout = _innerLayouts[i];
-			Control control = innerLayout.Control;
-			if (control == null || control.Parent == null || (!(control is CheckBox) && !(control is Label)) || (innerLayout.How != InnerLayout.Mode.Grow && !innerLayout.WrapsToNextRow) || innerLayout.BaseHeight <= 0)
-			{
-				continue;
-			}
-			int num = WrappedHeightOf(innerLayout);
-			if (num <= 0)
-			{
-				continue;
-			}
-			if (control.Height != num)
-			{
-				control.Height = num;
-			}
-			if (num <= innerLayout.BaseHeight)
-			{
-				continue;
-			}
-			int num2 = num - innerLayout.BaseHeight;
-			for (int j = 0; j < _innerLayouts.Count; j++)
-			{
-				InnerLayout innerLayout2 = _innerLayouts[j];
-				Control control2 = innerLayout2.Control;
-				if (control2 != null && control2.Parent == control.Parent && innerLayout2.BaseTop > innerLayout.BaseTop)
-				{
-					control2.Top += num2;
-				}
-			}
-		}
-	}
-
-	private void GrowGroupsForWraps()
-	{
-		for (int i = 0; i < _groupHost.Controls.Count; i++)
-		{
-			if (!(_groupHost.Controls[i] is GroupBox groupBox))
-			{
-				continue;
-			}
-			int num = 0;
-			for (int j = 0; j < _innerLayouts.Count; j++)
-			{
-				Control control = _innerLayouts[j].Control;
-				if (control != null && control.Parent == groupBox)
-				{
-					int num2 = control.Top + control.Height;
-					if (num2 > num)
-					{
-						num = num2;
-					}
-				}
-			}
-			if (num > 0)
-			{
-				int num3 = num + 12;
-				num3 += groupBox.Height - groupBox.ClientSize.Height;
-				if (num3 > groupBox.Height)
-				{
-					groupBox.Height = num3;
-				}
-			}
-		}
-	}
-
-	private void ApplyRowWraps()
-	{
-		for (int i = 0; i < _innerLayouts.Count; i++)
-		{
-			InnerLayout innerLayout = _innerLayouts[i];
-			Control control = innerLayout.Control;
-			if (control != null && control.Parent != null)
-			{
-				if (control.Top != innerLayout.BaseTop)
-				{
-					control.Top = innerLayout.BaseTop;
-				}
-				if (innerLayout.BaseHeight > 0 && control.Height != innerLayout.BaseHeight)
-				{
-					control.Height = innerLayout.BaseHeight;
-				}
-			}
-		}
-		List<KeyValuePair<int, int>> list = new List<KeyValuePair<int, int>>();
-		for (int j = 0; j < _innerLayouts.Count; j++)
-		{
-			InnerLayout innerLayout2 = _innerLayouts[j];
-			if (!innerLayout2.WrapsToNextRow)
-			{
-				continue;
-			}
-			Control control2 = innerLayout2.Control;
-			if (control2 == null || control2.Parent == null)
-			{
-				continue;
-			}
-			int height = control2.Height;
-			for (int k = 0; k < _innerLayouts.Count; k++)
-			{
-				InnerLayout innerLayout3 = _innerLayouts[k];
-				if (innerLayout3.Control != null && innerLayout3.Control.Parent == control2.Parent && innerLayout3.BaseTop == innerLayout2.BaseTop && innerLayout3.Control.Height > height)
-				{
-					height = innerLayout3.Control.Height;
-				}
-			}
-			bool flag = false;
-			for (int l = 0; l < list.Count; l++)
-			{
-				if (list[l].Key == innerLayout2.BaseTop)
-				{
-					flag = true;
-					break;
-				}
-			}
-			if (!flag)
-			{
-				list.Add(new KeyValuePair<int, int>(innerLayout2.BaseTop, height + 4));
-			}
-		}
-		if (list.Count == 0)
-		{
-			return;
-		}
-		list.Sort((KeyValuePair<int, int> x, KeyValuePair<int, int> y) => x.Key.CompareTo(y.Key));
-		for (int num = 0; num < _innerLayouts.Count; num++)
-		{
-			InnerLayout innerLayout4 = _innerLayouts[num];
-			Control control3 = innerLayout4.Control;
-			if (control3 == null || control3.Parent == null)
-			{
-				continue;
-			}
-			int num2 = 0;
-			for (int num3 = 0; num3 < list.Count; num3++)
-			{
-				if (innerLayout4.BaseTop > list[num3].Key)
-				{
-					num2 += list[num3].Value;
-				}
-			}
-			if (innerLayout4.WrapsToNextRow)
-			{
-				int num4 = 0;
-				for (int num5 = 0; num5 < list.Count; num5++)
-				{
-					if (list[num5].Key == innerLayout4.BaseTop)
-					{
-						num4 = list[num5].Value;
-					}
-				}
-				if (num4 > 0)
-				{
-					num2 += num4;
-				}
-			}
-			control3.Top = innerLayout4.BaseTop + num2;
-		}
-	}
-
-	private void PropagatePush(InnerLayout src, int amount)
-	{
-		Control control = src.Control;
-		int baseTop = src.BaseTop;
-		int val = src.BaseTop + control.Height;
-		InnerLayout innerLayout = null;
-		int num = int.MaxValue;
-		for (int i = 0; i < _innerLayouts.Count; i++)
-		{
-			InnerLayout innerLayout2 = _innerLayouts[i];
-			if (innerLayout2 != src && innerLayout2.Control.Parent == control.Parent && innerLayout2.BaseLeft >= src.BaseLeft + src.OriginalWidth && innerLayout2.How != InnerLayout.Mode.Shift)
-			{
-				Control control2 = innerLayout2.Control;
-				int num2 = Math.Min(val, innerLayout2.BaseTop + control2.Height) - Math.Max(baseTop, innerLayout2.BaseTop);
-				if (num2 > 0 && num2 * 2 >= Math.Min(control.Height, control2.Height) && innerLayout2.BaseLeft < num)
-				{
-					num = innerLayout2.BaseLeft;
-					innerLayout = innerLayout2;
-				}
-			}
-		}
-		if (innerLayout != null)
-		{
-			int num3 = src.BaseLeft + src.BaseWidth + src.ShiftByOffset;
-			int num4 = innerLayout.BaseLeft + innerLayout.ShiftByOffset - num3;
-			int num5 = S(6);
-			if (num4 < num5)
-			{
-				int num6 = num5 - num4;
-				innerLayout.ShiftByOffset += num6;
-				PropagatePush(innerLayout, num6);
-			}
-		}
-	}
-
-	private static int MinWidthNeed(Control c)
-	{
-		if (c == null)
-		{
-			return 0;
-		}
-		try
-		{
-			if (c is CheckBox)
-			{
-				int width = TextRenderer.MeasureText(c.Text, c.Font).Width;
-				if (width > 0)
-				{
-					return width + CheckTextChrome;
-				}
-			}
-			if (c is Label || c is CheckBox)
-			{
-				if (string.IsNullOrEmpty(c.Text))
-				{
-					return 0;
-				}
-				int width2 = TextRenderer.MeasureText(c.Text, c.Font).Width;
-				if (width2 <= 0)
-				{
-					return 0;
-				}
-				return width2 + 4;
-			}
-		}
-		catch
-		{
-		}
-		return 0;
-	}
-
-	private static int TextNeed(InnerLayout it)
-	{
-		Control control = it.Control;
-		if (control is Button)
-		{
-			if (control.Width >= 200)
-			{
-				return 0;
-			}
-			try
-			{
-				int width = control.PreferredSize.Width;
-				if (width > 0)
-				{
-					return width;
-				}
-			}
-			catch
-			{
-			}
-			return 0;
-		}
-		bool flag = control is Label;
-		bool flag2 = control is CheckBox;
-		if (!flag && !flag2)
-		{
-			return 0;
-		}
-		if (it.How == InnerLayout.Mode.Grow)
-		{
-			return 0;
-		}
-		if (flag && it.BaseWidth >= 200)
-		{
-			return 0;
-		}
-		if (flag2)
-		{
-			try
-			{
-				int width2 = control.PreferredSize.Width;
-				if (width2 > 0)
-				{
-					return width2;
-				}
-			}
-			catch
-			{
-			}
-			int num = 0;
-			try
-			{
-				num = TextRenderer.MeasureText(control.Text, control.Font).Width;
-			}
-			catch
-			{
-				return 0;
-			}
-			if (num <= 0)
-			{
-				return 0;
-			}
-			return num + 44;
-		}
-		int num2 = 0;
-		try
-		{
-			num2 = TextRenderer.MeasureText(control.Text, control.Font).Width;
-		}
-		catch
-		{
-			return 0;
-		}
-		if (num2 <= 0)
-		{
-			return 0;
-		}
-		return num2 + 4;
-	}
-
-	private void LayoutInner()
-	{
-		for (int i = 0; i < 3; i++)
-		{
-			InnerLayout.Mode mode = i switch
-			{
-				1 => InnerLayout.Mode.Grow, 
-				0 => InnerLayout.Mode.Shift, 
-				_ => InnerLayout.Mode.Fixed, 
-			};
-			for (int j = 0; j < _innerLayouts.Count; j++)
-			{
-				InnerLayout innerLayout = _innerLayouts[j];
-				if (innerLayout.How == mode)
-				{
-					ApplyOne(innerLayout);
-				}
-			}
-		}
-	}
-
-	private void ApplyOne(InnerLayout it)
-	{
-		Control control = it.Control;
-		if (control.Parent == null)
-		{
-			return;
-		}
-		int num = it.BaseLeft + it.ShiftByOffset;
-		int width = control.Parent.ClientSize.Width;
-		_ = it.BaseInner;
-		int num2 = width - GroupChrome;
-		switch (it.How)
-		{
-		case InnerLayout.Mode.Grow:
-		{
-			int num12;
-			if (it.GrowRightNeighbor != null)
-			{
-				int num11 = it.GrowRightNeighbor.Left;
-				if (_innerIndex.TryGetValue(it.GrowRightNeighbor, out var value) && value.How != InnerLayout.Mode.Shift)
-				{
-					num11 = value.BaseLeft + value.ShiftByOffset;
-				}
-				num12 = num11 - it.GrowNeighborGap;
-			}
-			else
-			{
-				int num13 = it.BaseInner - (it.BaseLeft + it.BaseWidth);
-				num12 = num2 - num13;
-			}
-			int num14 = num12 - num;
-			if (num14 < 20)
-			{
-				num14 = 20;
-			}
-			if (control is CheckBox)
-			{
-				int num15 = NaturalWidth(it);
-				if (num15 > 0 && num14 > num15)
-				{
-					num14 = num15;
-				}
-			}
-			if (control is CheckBox || control is Label)
-			{
-				int num16 = MinWidthNeed(control);
-				int num17 = num12 - num;
-				if (num17 < 20)
-				{
-					num17 = 20;
-				}
-				if (num16 > num17)
-				{
-					num16 = num17;
-				}
-				if (num16 > 0 && num14 < num16)
-				{
-					num14 = num16;
-				}
-			}
-			control.Left = num;
-			control.Width = num14;
-			if (control is CheckBox && control.Height != it.BaseHeight && it.BaseHeight > 0)
-			{
-				control.Height = it.BaseHeight;
-			}
-			break;
-		}
-		case InnerLayout.Mode.Shift:
-		{
-			if (it.WrapsToNextRow && control is CheckBox)
-			{
-				int groupInnerPadLeft = GroupInnerPadLeft;
-				int num3 = num2 - groupInnerPadLeft;
-				if (num3 < 20)
-				{
-					num3 = 20;
-				}
-				control.Left = groupInnerPadLeft;
-				control.Width = num3;
-				break;
-			}
-			int num4 = it.BaseLeft + it.OriginalWidth;
-			int num5 = it.BaseInner - num4;
-			if (it.ShiftRightGap >= 0 && it.ShiftRightGap < num5)
-			{
-				num5 = it.ShiftRightGap;
-			}
-			int num6 = num2 - num5;
-			int num7 = num;
-			int num8 = LeftBarrier(it);
-			if (num8 != int.MinValue && num8 > num7)
-			{
-				num7 = num8;
-			}
-			int num9 = it.BaseWidth;
-			if (num9 > num6 - num7)
-			{
-				num9 = num6 - num7;
-			}
-			if (num9 < 20)
-			{
-				num9 = 20;
-			}
-			int num10 = num6 - num9;
-			if (num10 < num7)
-			{
-				num10 = num7;
-			}
-			if (num10 < 0)
-			{
-				num10 = 0;
-			}
-			control.Left = num10;
-			control.Width = Math.Max(20, num6 - num10);
-			break;
-		}
-		default:
-			control.Left = num;
-			control.Width = it.BaseWidth;
-			break;
-		}
-	}
-
-	private static int NaturalWidth(InnerLayout it)
-	{
-		Control control = it.Control;
-		try
-		{
-			if (control is CheckBox)
-			{
-				int width = TextRenderer.MeasureText(control.Text, control.Font).Width;
-				if (width > 0)
-				{
-					return width + CheckTextChrome;
-				}
-			}
-			int width2 = TextRenderer.MeasureText(control.Text, control.Font).Width;
-			if (width2 <= 0)
-			{
-				return 0;
-			}
-			return width2 + 28;
-		}
-		catch
-		{
-			return 0;
-		}
-	}
-
-	private int LeftBarrier(InnerLayout self)
-	{
-		Control control = self.Control;
-		if (control.Parent == null)
-		{
-			return int.MinValue;
-		}
-		int baseTop = self.BaseTop;
-		int val = self.BaseTop + control.Height;
-		int num = int.MinValue;
-		for (int i = 0; i < _innerLayouts.Count; i++)
-		{
-			InnerLayout innerLayout = _innerLayouts[i];
-			if (innerLayout.Control == self.Control || innerLayout.Control.Parent != control.Parent || innerLayout.BaseLeft >= self.BaseLeft)
-			{
-				continue;
-			}
-			Control control2 = innerLayout.Control;
-			int baseTop2 = innerLayout.BaseTop;
-			int val2 = innerLayout.BaseTop + control2.Height;
-			int num2 = Math.Min(val, val2) - Math.Max(baseTop, baseTop2);
-			if (num2 > 0 && num2 * 2 >= Math.Min(control.Height, control2.Height))
-			{
-				int num3 = innerLayout.BaseLeft + innerLayout.BaseWidth + innerLayout.ShiftByOffset;
-				if (num3 > num)
-				{
-					num = num3;
-				}
-			}
-		}
-		if (num == int.MinValue)
-		{
-			return int.MinValue;
-		}
-		return num + 8;
-	}
-
-	private void MeasureAndWrap()
-	{
-		RestoreBaseGroupHeights();
-		ApplyRowWraps();
-		SyncGroupWidthForMeasure();
-		bool[] array = new bool[_innerLayouts.Count];
-		for (int i = 0; i < 4; i++)
-		{
-			LayoutInner();
-			ComputeRowWraps();
-			ApplyRowWraps();
-			SyncWrappedHeights();
-			GrowGroupsForWraps();
-			bool flag = false;
-			for (int j = 0; j < _innerLayouts.Count; j++)
-			{
-				if (array[j] != _innerLayouts[j].WrapsToNextRow)
-				{
-					flag = true;
-					break;
-				}
-			}
-			for (int k = 0; k < _innerLayouts.Count; k++)
-			{
-				array[k] = _innerLayouts[k].WrapsToNextRow;
-			}
-			if (!flag)
-			{
-				break;
-			}
-		}
-	}
-
-	private void SyncGroupWidthForMeasure()
-	{
-		try
-		{
-			int width = _scrollHost.ClientSize.Width;
-			if (width <= 0)
-			{
-				width = ClientSize.Width;
-			}
-			if (width > 0)
-			{
-				int num = width - ScrollEdgeMargin * 2;
-				if (num < GroupWidth)
-				{
-					num = GroupWidth;
-				}
-				int num2 = ((num < (int)Math.Round(1240f * CurrentUiScale)) ? 1 : 2);
-				int verticalScrollBarWidth = SystemInformation.VerticalScrollBarWidth;
-				int num3 = ((num2 >= 2) ? (verticalScrollBarWidth + 4) : 4);
-				int num4 = width - ScrollEdgeMargin * 2 - num3;
-				if (num4 < GroupWidth)
-				{
-					num4 = GroupWidth;
-				}
-				_groupHost.Width = num4;
-				_groupHost.Relayout(num4);
-			}
-		}
-		catch (Exception ex)
-		{
-			Log.Error(ex);
-		}
-	}
-
-	private void RestoreBaseGroupHeights()
-	{
-		for (int i = 0; i < _groupHost.Controls.Count; i++)
-		{
-			if (_groupHost.Controls[i] is GroupBox groupBox && i < _baseGroupHeights.Length && _baseGroupHeights[i] > 0)
-			{
-				groupBox.Height = _baseGroupHeights[i];
-			}
-		}
-	}
-
-	private void CaptureBaseGroupHeights()
-	{
-		if (_baseGroupHeights.Length != 0 || _groupHost == null || _groupHost.Controls.Count == 0)
-		{
-			return;
-		}
-		_baseGroupHeights = new int[_groupHost.Controls.Count];
-		for (int i = 0; i < _groupHost.Controls.Count; i++)
-		{
-			if (_groupHost.Controls[i] is GroupBox groupBox)
-			{
-				_baseGroupHeights[i] = groupBox.Height;
-			}
-		}
-	}
-
-	private bool ContentHeightExceeds(int clientWidth)
-	{
-		if (_groupHost == null || _groupHost.Controls.Count == 0)
-		{
-			return false;
-		}
-		int num = ((_groupHost.CurrentColumns < 2) ? 1 : 2);
-		int num2 = (int)Math.Ceiling((double)_groupHost.Controls.Count / (double)num);
-		int num3 = 0;
-		for (int i = 0; i < num2; i++)
-		{
-			int num4 = 0;
-			for (int j = 0; j < num; j++)
-			{
-				int num5 = i * num + j;
-				if (num5 >= _groupHost.Controls.Count)
-				{
-					break;
-				}
-				int height = _groupHost.Controls[num5].Height;
-				if (height > num4)
-				{
-					num4 = height;
-				}
-			}
-			num3 += num4 + 8;
-		}
-		num3 += 24;
-		return num3 > _scrollHost.ClientSize.Height;
-	}
-
-	private void LayoutResponsive()
-	{
-		if (_groupHost == null)
-		{
-			return;
-		}
-		try
-		{
-			RebaseAfterAutoScale();
-			CaptureBaseGroupHeights();
-			MeasureAndWrap();
-			int num = _scrollHost.ClientSize.Width;
-			if (num <= 0)
-			{
-				num = ClientSize.Width;
-			}
-			int verticalScrollBarWidth = SystemInformation.VerticalScrollBarWidth;
-			if (_scrollHost.VerticalScroll.Visible || ContentHeightExceeds(num))
-			{
-				num -= verticalScrollBarWidth;
-			}
-			int num2 = num - ScrollEdgeMargin * 2 - RightReserve();
-			if (num2 < GroupWidth)
-			{
-				num2 = GroupWidth;
-			}
-			_groupHost.Width = num2;
-			_groupHost.Relayout(num2);
-			LayoutInner();
-			ApplyRowWraps();
-			SyncWrappedHeightsPopulateOnly();
-			GrowGroupsForWraps();
-			_groupHost.PerformLayout();
-			for (int i = 0; i < _groupHost.Controls.Count; i++)
-			{
-				if (_groupHost.Controls[i] is GroupBox groupBox)
-				{
-					groupBox.PerformLayout();
-				}
-			}
-			int num3 = 12;
-			for (int j = 0; j < _groupHost.Controls.Count; j++)
-			{
-				Control control = _groupHost.Controls[j];
-				int num4 = control.Top + control.Height + control.Margin.Bottom;
-				if (num4 > num3)
-				{
-					num3 = num4;
-				}
-			}
-			_groupHost.Height = num3 + 4;
-			if (_btnCancelRef != null && _btnSaveRef != null && _btnDefaultsRef != null)
-			{
-				int num5 = S(16);
-				int num6 = S(12);
-				int num7 = _pager.ClientSize.Width - num5;
-				int y = (_pager.ClientSize.Height - _btnSaveRef.Height) / 2;
-				_btnCancelRef.Location = new Point(num7 - _btnCancelRef.Width, y);
-				num7 -= _btnCancelRef.Width + num6;
-				_btnSaveRef.Location = new Point(num7 - _btnSaveRef.Width, y);
-				num7 -= _btnSaveRef.Width + num6;
-				_btnDefaultsRef.Location = new Point(Math.Max(S(8), num7 - _btnDefaultsRef.Width), y);
-				int width = Math.Max(S(120), _btnDefaultsRef.Left - S(24));
-				_lblStatus.Size = new Size(width, S(22));
-				_lblStatus.Location = new Point(S(16), y);
-			}
-		}
-		catch (Exception ex)
-		{
-			Log.Error(ex);
-		}
-	}
-
-	protected override void OnHandleCreated(EventArgs e)
-	{
-		base.OnHandleCreated(e);
-		try
-		{
-			int num = Native.DpiOfWindow(Handle);
-			float num2 = (float)num / 96f;
-			if (num > 0 && Math.Abs(num2 - _uiScale) > 0.001f)
-			{
-				Log.Info("设置窗口：句柄建立后复核 DPI，缓存=" + _uiScale.ToString("0.###") + " 实际=" + num2.ToString("0.###") + "，按实际值重建");
-				RescaleForDpi(num);
-			}
-		}
-		catch (Exception ex)
-		{
-			Log.Error(ex);
-		}
-		Log.Info("设置窗口圆角（DWM） => " + Native.SetWindowRoundedCorners(Handle));
-	}
-
-	protected override void OnResize(EventArgs e)
-	{
-		base.OnResize(e);
-		if (_inSizeMove)
-		{
-			_pendingRelayout = true;
-			if (!_relayoutTimer.Enabled)
-			{
-				_relayoutTimer.Start();
-			}
-		}
-		else
-		{
-			LayoutResponsive();
-		}
-	}
-
-	private void RelayoutFlickerFree()
-	{
-		bool flag = false;
-		try
-		{
-			if (IsHandleCreated && !IsDisposed)
-			{
-				Native.SendMessageW(Handle, 11, IntPtr.Zero, IntPtr.Zero);
-				flag = true;
-			}
-		}
-		catch
-		{
-		}
-		try
-		{
-			LayoutResponsive();
-		}
-		finally
-		{
-			if (flag)
-			{
-				try
-				{
-					Native.SendMessageW(Handle, 11, new IntPtr(1), IntPtr.Zero);
-				}
-				catch
-				{
-				}
-				try
-				{
-					Invalidate(invalidateChildren: true);
-					Update();
-				}
-				catch
-				{
-				}
-			}
-		}
-	}
-
-	protected override void WndProc(ref Message m)
-	{
-		if (m.Msg == 561)
-		{
-			_inSizeMove = true;
-		}
-		else if (m.Msg == 562)
-		{
-			_inSizeMove = false;
-			_relayoutTimer.Stop();
-			_pendingRelayout = false;
-			RelayoutFlickerFree();
-		}
-		else if (m.Msg == 736)
-		{
-			try
-			{
-				int newDpi = (int)(((IntPtr)m.WParam).ToInt64() & 0xFFFF);
-				RescaleForDpi(newDpi);
+				page.Host.Canvas.Size = new Size(contentW, num10);
+				page.Host.UpdateScroll();
 			}
 			catch (Exception ex)
 			{
 				Log.Error(ex);
 			}
+			finally
+			{
+				page.Host.Canvas.ResumeLayout(performLayout: false);
+				page.Host.ResumeLayout(performLayout: false);
+			}
 		}
-		base.WndProc(ref m);
 	}
 
-	protected override void OnShown(EventArgs e)
-	{
-		base.OnShown(e);
-		LayoutResponsive();
-		FitHeightToContent();
-	}
-
-	private void ApplySavedSize()
+	private void SyncPageFonts(Page page)
 	{
 		try
 		{
-			int settingsWidth = _edit.SettingsWidth;
-			int settingsHeight = _edit.SettingsHeight;
-			if (settingsWidth > 0 && settingsHeight > 0)
-			{
-				Size = new Size(settingsWidth, settingsHeight);
-			}
+			page.LblTitle.Font = new Font(DesignFontFamily, Sc(16), FontStyle.Bold, GraphicsUnit.Pixel);
+			page.LblSub.Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel);
 		}
-		catch (Exception ex)
+		catch
 		{
-			Log.Error(ex);
 		}
 	}
 
-	private void CaptureSizeInto(AppConfig target)
-	{
-		try
-		{
-			Rectangle restoreBounds = RestoreBounds;
-			if (restoreBounds.Width > 0 && restoreBounds.Height > 0)
-			{
-				target.SettingsWidth = restoreBounds.Width;
-				target.SettingsHeight = restoreBounds.Height;
-			}
-		}
-		catch (Exception ex)
-		{
-			Log.Error(ex);
-		}
-	}
-
-	private static GroupBox Group(string text, int x, int y, int w, int h, bool resize = true)
-	{
-		CardGroup cardGroup = new CardGroup();
-		cardGroup.Text = text;
-		cardGroup.Location = new Point(x, y);
-		cardGroup.Size = new Size(w, h);
-		cardGroup.ForeColor = Design.TextPrimary;
-		if (resize)
-		{
-			cardGroup.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-		}
-		else
-		{
-			cardGroup.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-		}
-		return cardGroup;
-	}
-
-	internal static string GlyphForSection(string title)
-	{
-		if (string.IsNullOrEmpty(title))
-		{
-			return "\ue7c2";
-		}
-		if (title.Contains("触发"))
-		{
-			return "\ue765";
-		}
-		if (title.Contains("鼠标键") || title.Contains("动作"))
-		{
-			return "\ue7c2";
-		}
-		if (title.Contains("视觉"))
-		{
-			return "\ue790";
-		}
-		if (title.Contains("拖动"))
-		{
-			return "\ue7c2";
-		}
-		if (title.Contains("流畅"))
-		{
-			return "\ue9d9";
-		}
-		if (title.Contains("启动") || title.Contains("权限"))
-		{
-			return "\ue72e";
-		}
-		if (title.Contains("帮助"))
-		{
-			return "\ue897";
-		}
-		if (title.Contains("关于"))
-		{
-			return "\ue946";
-		}
-		return "\ue76c";
-	}
-
-	internal static GraphicsPath RoundedPath(Rectangle r, int radius)
-	{
-		GraphicsPath graphicsPath = new GraphicsPath();
-		int num = radius * 2;
-		if (num > r.Width)
-		{
-			num = r.Width;
-		}
-		if (num > r.Height)
-		{
-			num = r.Height;
-		}
-		if (num <= 0)
-		{
-			graphicsPath.AddRectangle(r);
-			return graphicsPath;
-		}
-		graphicsPath.AddArc(r.X, r.Y, num, num, 180f, 90f);
-		graphicsPath.AddArc(r.Right - num, r.Y, num, num, 270f, 90f);
-		graphicsPath.AddArc(r.Right - num, r.Bottom - num, num, num, 0f, 90f);
-		graphicsPath.AddArc(r.X, r.Bottom - num, num, num, 90f, 90f);
-		graphicsPath.CloseFigure();
-		return graphicsPath;
-	}
-
-	private static Color MixColor(Color a, Color b, float t)
-	{
-		if (t <= 0f)
-		{
-			return a;
-		}
-		if (t >= 1f)
-		{
-			return b;
-		}
-		return Color.FromArgb((int)Math.Round((float)(int)a.A + (float)(b.A - a.A) * t), (int)Math.Round((float)(int)a.R + (float)(b.R - a.R) * t), (int)Math.Round((float)(int)a.G + (float)(b.G - a.G) * t), (int)Math.Round((float)(int)a.B + (float)(b.B - a.B) * t));
-	}
-
-	private static Label Label(string text, int x, int y, int w)
-	{
-		return new Label
-		{
-			Text = text,
-			Location = new Point(x, y),
-			Size = new Size(w, 22),
-			TextAlign = ContentAlignment.MiddleLeft
-		};
-	}
-
-	private static void StyleCombo(ComboBox c, int x, int y, int w)
-	{
-		c.DropDownStyle = ComboBoxStyle.DropDownList;
-		c.Location = new Point(x, y);
-		c.Size = new Size(w, 26);
-		c.FlatStyle = FlatStyle.Flat;
-		c.BackColor = Design.FieldFill;
-		c.ForeColor = Design.TextPrimary;
-		Fields.Attach(c, 6);
-	}
-
-	private static void StyleNum(NumericUpDown n, int x, int y, int w, int min, int max, int step)
-	{
-		n.Location = new Point(x, y);
-		// v1.4.7：宽度必须给"数字 + 自绘箭头"留够。
-		// 之前 w 只够放数字，箭头画上去就把右边数字压住/裁掉了（600 显示成 60）。
-		int num = Math.Max(32, (int)Math.Ceiling((double)n.Font.GetHeight() * 1.3) + 12);
-		int num2 = w;
-		n.Size = new Size(num2, num);
-		n.Minimum = min;
-		n.Maximum = max;
-		n.Increment = step;
-		n.TextAlign = HorizontalAlignment.Right;
-		n.BackColor = Design.FieldFill;
-		n.ForeColor = Design.TextPrimary;
-		Fields.Attach(n, Design.FieldRadius);
-	}
-
-	private static void StyleText(TextBox t, Font font, bool readOnly)
-	{
-		Fields.MakeFlat(t, font, readOnly);
-		Fields.Attach(t, Design.FieldRadius);
-	}
+	// ======================= 填充 / 保存 =======================
 
 	private void Populate()
 	{
@@ -20623,21 +18905,14 @@ internal sealed class SettingsForm : Form
 		for (int i = 0; i < Actions.All.Length; i++)
 		{
 			string text = Actions.All[i];
-			_cmbLeft.Items.Add(new ActionItem
+			ActionItem item = new ActionItem
 			{
 				Value = text,
 				Text = Actions.DisplayName(text)
-			});
-			_cmbRight.Items.Add(new ActionItem
-			{
-				Value = text,
-				Text = Actions.DisplayName(text)
-			});
-			_cmbMiddle.Items.Add(new ActionItem
-			{
-				Value = text,
-				Text = Actions.DisplayName(text)
-			});
+			};
+			_cmbLeft.Items.Add(item);
+			_cmbRight.Items.Add(item);
+			_cmbMiddle.Items.Add(item);
 		}
 		SelectAction(_cmbLeft, _edit.ActionLeft);
 		SelectAction(_cmbRight, _edit.ActionRight);
@@ -20674,10 +18949,23 @@ internal sealed class SettingsForm : Form
 			_cmbFrameStyle.EndUpdate();
 			_cmbFrameColor.EndUpdate();
 		}
+		List<SwatchGrid.Entry> list = new List<SwatchGrid.Entry>();
+		for (int l = 0; l < FrameColors.All.Length; l++)
+		{
+			list.Add(new SwatchGrid.Entry
+			{
+				Id = FrameColors.All[l].Id,
+				Name = FrameColors.All[l].Name,
+				Color = FrameColors.Resolve(FrameColors.All[l].Id)
+			});
+		}
+		_gridColor.SetItems(list);
+		_galleryStyle.SetItems(new List<string>(FrameStyles.All));
 		SelectId(_cmbFrameStyle, _edit.FrameStyleId);
 		SelectId(_cmbFrameColor, _edit.FrameColorId);
 		_numFrameThick.Value = Clamp(_edit.FrameThickness, (int)_numFrameThick.Minimum, (int)_numFrameThick.Maximum);
 		_numFrameRadius.Value = Clamp(_edit.FrameRadius, (int)_numFrameRadius.Minimum, (int)_numFrameRadius.Maximum);
+		_numFrameOpacity.Value = Clamp(_edit.FrameOpacity, (int)_numFrameOpacity.Minimum, (int)_numFrameOpacity.Maximum);
 		SyncFrameEnabled();
 		SyncPreview();
 		_numCorner.Value = Clamp(_edit.CornerPercent, (int)_numCorner.Minimum, (int)_numCorner.Maximum);
@@ -20685,7 +18973,6 @@ internal sealed class SettingsForm : Form
 		_chkDblRight.Checked = _edit.DoubleClickRightZone;
 		_chkRestoreMax.Checked = _edit.RestoreMaximizedWhenMoved;
 		_chkFront.Checked = _edit.BringToFront;
-		_numFrameOpacity.Value = Clamp(_edit.FrameOpacity, (int)_numFrameOpacity.Minimum, (int)_numFrameOpacity.Maximum);
 		_chkFullscreen.Checked = _edit.AllowFullscreenWindows;
 		_chkExitFullscreen.Checked = _edit.ExitFullscreenOnTrigger;
 		_chkShake.Checked = _edit.ShakeMinimizeOthers;
@@ -20705,7 +18992,7 @@ internal sealed class SettingsForm : Form
 		_numRefreshHz.Value = Clamp(_edit.DragRefreshHz, (int)_numRefreshHz.Minimum, (int)_numRefreshHz.Maximum);
 		SyncRefreshEnabled();
 		int refreshRate = Native.GetRefreshRate();
-		_lblRefreshHint.Text = "跟随屏幕：按实测刷新率节流，与显示器同步（本机实测 " + ((refreshRate > 0) ? (refreshRate + "Hz，每帧约 " + Math.Round(1000.0 / (double)refreshRate) + "ms）") : "不到刷新率，此时不节流）") + "。\r\n固定值：自定义节流频率，0 = 不限制。改动在下次拖动时生效。";
+		_lblRefreshHint.Text = "跟随屏幕：按实测刷新率节流（本机 " + ((refreshRate > 0) ? (refreshRate + "Hz") : "未知") + "）。\r\n固定值：自定义频率，0 = 不限制。";
 		_cmbAutoStart.Items.Clear();
 		_cmbAutoStart.Items.Add(new IdItem
 		{
@@ -20736,6 +19023,7 @@ internal sealed class SettingsForm : Form
 		_cmbFrameStyle.Enabled = flag;
 		_numFrameThick.Enabled = flag;
 		_numFrameRadius.Enabled = flag;
+		_numFrameOpacity.Enabled = flag;
 		_gridColor.Enabled = flag;
 		_galleryStyle.Enabled = flag;
 		_galleryStyle.FrameEnabled = flag;
@@ -20744,135 +19032,9 @@ internal sealed class SettingsForm : Form
 		_pnlPreview.Refresh_();
 	}
 
-	private static List<ColorSwatchGrid.Entry> BuildColorEntries()
-	{
-		List<ColorSwatchGrid.Entry> list = new List<ColorSwatchGrid.Entry>();
-		for (int i = 0; i < FrameColors.All.Length; i++)
-		{
-			FrameColors.Entry entry = FrameColors.All[i];
-			list.Add(new ColorSwatchGrid.Entry
-			{
-				Id = entry.Id,
-				Name = entry.Name,
-				Color = FrameColors.Resolve(entry.Id)
-			});
-		}
-		return list;
-	}
-
-	private static string ColorNameOf(string id)
-	{
-		for (int i = 0; i < FrameColors.All.Length; i++)
-		{
-			if (FrameColors.All[i].Id == id)
-			{
-				return FrameColors.All[i].Name;
-			}
-		}
-		return id;
-	}
-
 	private void SyncRefreshEnabled()
 	{
 		_numRefreshHz.Enabled = SelectedId(_cmbRefreshMode, "Auto") == "Custom";
-	}
-
-	private void SyncSidebarLater()
-	{
-		try
-		{
-			if (_sidebar == null)
-			{
-				return;
-			}
-			if (!IsHandleCreated)
-			{
-				_sidebar.SyncActive();
-				return;
-			}
-			BeginInvoke(() =>
-			{
-				try
-				{
-					_sidebar.SyncActive();
-				}
-				catch (Exception ex2)
-				{
-					Log.Error(ex2);
-				}
-			});
-		}
-		catch (Exception ex)
-		{
-			Log.Error(ex);
-		}
-	}
-
-	private static string ShortTitleOf(string title)
-	{
-		if (string.IsNullOrEmpty(title))
-		{
-			return "";
-		}
-		int num = title.Length;
-		char[] array = new char[5] { '（', '(', '【', '[', '《' };
-		for (int i = 0; i < array.Length; i++)
-		{
-			int num2 = title.IndexOf(array[i]);
-			if (num2 > 0 && num2 < num)
-			{
-				num = num2;
-			}
-		}
-		string text = title.Substring(0, num).Trim();
-		if (text.Length > 8)
-		{
-			return text.Substring(0, 8);
-		}
-		return text;
-	}
-
-	private static List<HelpPanel.Entry> BuildHelpEntries()
-	{
-		return new List<HelpPanel.Entry>
-		{
-			new HelpPanel.Entry
-			{
-				Icon = "\ue765",
-				Title = "触发方式",
-				Body = "按住触发键（默认 Enter，可改成任意键或鼠标侧键）达到设定时长后生效，光标下那扇窗口四周会亮起外框；松开触发键即退出。触发键只在长按到时才生效，短按会原样放行给当前程序，不影响正常打字。"
-			},
-			new HelpPanel.Entry
-			{
-				Icon = "\ue7c2",
-				Title = "鼠标键动作",
-				Body = "触发后：左键拖动窗口、右键缩放窗口、中键执行一次性动作。三个键都能自定义成移动 / 缩放 / 最大化 / 最小化 / 关闭 / 置底 / 置顶 / 居中。另外双击左键可最大化或还原，双击右键按九宫格吸附到屏幕对应区域。"
-			},
-			new HelpPanel.Entry
-			{
-				Icon = "\ue790",
-				Title = "外框外观",
-				Body = "外框颜色、样式、粗细、圆角、不透明度都可以调，右上角是实时预览，和真正拖窗口时用的是同一段绘制代码。窗口贴近屏幕边缘时外框几何保持不变，不会缩小或跳动。"
-			},
-			new HelpPanel.Entry
-			{
-				Icon = "\ue72e",
-				Title = "全屏与最大化窗口",
-				Body = "默认开启「触发时先把全屏 / 最大化窗口变回普通窗口」：这样拖动和缩放都从一个正常的窗口尺寸开始，不会出现全屏窗口拖完一片黑、或者缩放抓不到边的情况。"
-			},
-			new HelpPanel.Entry
-			{
-				Icon = "\ue9d9",
-				Title = "晃窗最小化其它窗口",
-				Body = "触发后选中窗口，左右来回晃一晃，其它窗口会全部最小化；再晃一次即可还原（还原名单是记下来的，不会漏）。判定要求「多次往复 + 净位移接近 0」，所以正常拖动窗口不会被误触发。"
-			},
-			new HelpPanel.Entry
-			{
-				Icon = "\ue72e",
-				Title = "不生效的窗口",
-				Body = "把窗口标题 / 程序名 / 窗口类名的关键字填进黑名单（逗号分隔），命中就完全不接管。不知道填什么可以用「选择程序」挑 exe，或用「点选窗口」直接在屏幕上点那扇窗，关键字会自动填进去。"
-			}
-		};
 	}
 
 	private void SyncPreview()
@@ -20887,8 +19049,6 @@ internal sealed class SettingsForm : Form
 		_pnlPreview.StyleId = text2;
 		_pnlPreview.Thickness = thickness;
 		_pnlPreview.Radius = radius;
-		// 不透明度也必须在这里同步：否则拖「不透明度」滑块时右上角预览不刷新，
-		// 用户会以为该参数没生效（真实外框其实已经变了）。
 		_pnlPreview.OpacityPercent = frameOpacity;
 		_pnlPreview.FrameEnabled = frameEnabled;
 		_pnlPreview.Refresh_();
@@ -20905,58 +19065,21 @@ internal sealed class SettingsForm : Form
 
 	private void MarkFrameDirtyIfChanged()
 	{
-		if (_lblFrameTip != null && !_populating)
+		if (_lblFrameTip == null || _populating)
 		{
-			string text = SelectedId(_cmbFrameColor, FrameColors.DefaultId);
-			string text2 = SelectedId(_cmbFrameStyle, FrameStyles.DefaultId);
-			bool flag = text != _edit.FrameColorId || text2 != _edit.FrameStyleId || (int)_numFrameThick.Value != _edit.FrameThickness || (int)_numFrameRadius.Value != _edit.FrameRadius || _chkFrame.Checked != _edit.ShowActivationFrame;
-			_lblFrameTip.ForeColor = (flag ? Color.FromArgb(185, 96, 16) : Design.Hint);
-			_lblFrameTip.Text = (flag ? "外观已改动，点下面的「保存并生效」才会真正画到实际外框上。\r\n右上角是实时预览，和实际外框用的是同一段绘制代码。" : "外框用来告诉你「这扇窗口现在已经被接管了」，松手或者松开触发键就会消失。\r\n上面四个都可以随便改，右上角是实时预览。");
+			return;
 		}
-	}
-
-	private static void PaintColorEntry(Graphics g, Rectangle bounds, object item, Font font)
-	{
-		try
-		{
-			if (!(item is ColorItem colorItem) || bounds.Width <= 0 || bounds.Height <= 0)
-			{
-				return;
-			}
-			HighQuality.Apply(g);
-			int num = Math.Max(8, (int)Math.Round((double)bounds.Height * 0.52));
-			if (num > bounds.Width / 3)
-			{
-				num = Math.Max(8, bounds.Width / 3);
-			}
-			int y = bounds.Top + (bounds.Height - num) / 2;
-			Rectangle r = new Rectangle(bounds.Left, y, num, num);
-			GraphicsPath graphicsPath = RoundedPath(r, Math.Max(2, Fields.Sc(3)));
-			try
-			{
-				using (SolidBrush brush = new SolidBrush(colorItem.Color))
-				{
-					g.FillPath(brush, graphicsPath);
-				}
-				using Pen pen = new Pen(Color.FromArgb(186, 192, 205));
-				g.DrawPath(pen, graphicsPath);
-			}
-			finally
-			{
-				graphicsPath.Dispose();
-			}
-			TextRenderer.DrawText(bounds: new Rectangle(r.Right + Fields.Sc(8), bounds.Top, bounds.Width - num - Fields.Sc(10), bounds.Height), dc: g, text: colorItem.Text, font: (font != null) ? font : SystemFonts.DefaultFont, foreColor: Design.TextPrimary, flags: TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
-		}
-		catch (Exception ex)
-		{
-			Log.Error(ex);
-		}
+		string text = SelectedId(_cmbFrameColor, FrameColors.DefaultId);
+		string text2 = SelectedId(_cmbFrameStyle, FrameStyles.DefaultId);
+		bool flag = text != _edit.FrameColorId || text2 != _edit.FrameStyleId || (int)_numFrameThick.Value != _edit.FrameThickness || (int)_numFrameRadius.Value != _edit.FrameRadius || _chkFrame.Checked != _edit.ShowActivationFrame;
+		_lblFrameTip.ForeColor = (flag ? Tokens.WarnText : Tokens.Hint);
+		_lblFrameTip.Text = (flag ? "外观已改动，点「保存并生效」才会画到实际外框上。" : "颜色与样式即点即换，预览与外框同一段代码。");
 	}
 
 	private void UpdateAdminLabel()
 	{
 		bool flag = Program.IsAdministrator();
-		_lblAdmin.Text = (flag ? "当前权限：管理员（可以拖动任务管理器这类提权窗口）" : "当前权限：普通用户（日常窗口没问题，提权窗口拖不动）");
+		_lblAdmin.Text = (flag ? "当前权限：管理员（可拖动任务管理器这类提权窗口）" : "当前权限：普通用户（日常窗口没问题，提权窗口拖不动）");
 		_btnRestartAdmin.Enabled = !flag;
 	}
 
@@ -21038,13 +19161,26 @@ internal sealed class SettingsForm : Form
 		return fallback;
 	}
 
+	private static string ColorNameOf(string id)
+	{
+		for (int i = 0; i < FrameColors.All.Length; i++)
+		{
+			if (FrameColors.All[i].Id == id)
+			{
+				return FrameColors.All[i].Name;
+			}
+		}
+		return id;
+	}
+
 	private void StartRecording()
 	{
 		_recording = true;
 		_coord.SuppressTrigger = true;
 		_txtKey.Text = "请按下要用的按键…";
 		_txtKey.BackColor = Color.FromArgb(255, 244, 214);
-		_lblKeyHint.Text = "正在录制：按任意键或鼠标侧键，Esc 取消。左/右/中键已被鼠标动作占用，不能当触发键。";
+		_lblKeyHint.Text = "正在录制：按任意键或鼠标侧键，Esc 取消。";
+		_lblKeyHint.ForeColor = Tokens.WarnText;
 		Focus();
 	}
 
@@ -21052,7 +19188,7 @@ internal sealed class SettingsForm : Form
 	{
 		_recording = false;
 		_coord.SuppressTrigger = false;
-		_txtKey.BackColor = SystemColors.Window;
+		_txtKey.BackColor = Tokens.FieldFill;
 		UpdateKeyText();
 		if (!applied)
 		{
@@ -21069,7 +19205,7 @@ internal sealed class SettingsForm : Form
 			text = "注意：Win 键被作为触发键期间，Win 组合键（Win+E、Win+D 等）无法使用。";
 		}
 		_lblKeyHint.Text = ((text.Length > 0) ? text : ("已绑定：" + KeysUtil.DisplayName(_edit.TriggerKeyId)));
-		_lblKeyHint.ForeColor = ((text.Length > 0) ? Design.WarnText : Design.Hint);
+		_lblKeyHint.ForeColor = ((text.Length > 0) ? Tokens.WarnText : Tokens.Hint);
 	}
 
 	protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -21086,7 +19222,7 @@ internal sealed class SettingsForm : Form
 			if (text == null)
 			{
 				_lblKeyHint.Text = "左键 / 右键 / 中键不能作为触发键，请用键盘按键或鼠标侧键。";
-				_lblKeyHint.ForeColor = Design.WarnText;
+				_lblKeyHint.ForeColor = Tokens.WarnText;
 				return true;
 			}
 			_edit.TriggerKeyId = text;
@@ -21110,7 +19246,7 @@ internal sealed class SettingsForm : Form
 			if (e.Button == MouseButtons.Left || e.Button == MouseButtons.Right || e.Button == MouseButtons.Middle)
 			{
 				_lblKeyHint.Text = "左键 / 右键 / 中键不能作为触发键，请用键盘按键或鼠标侧键。";
-				_lblKeyHint.ForeColor = Design.WarnText;
+				_lblKeyHint.ForeColor = Tokens.WarnText;
 				return;
 			}
 		}
@@ -21169,42 +19305,17 @@ internal sealed class SettingsForm : Form
 		{
 			StopRecording(applied: false);
 		}
-		_edit.RequireHold = _chkHold.Checked;
-		_edit.HoldMs = (int)_numHold.Value;
-		_edit.ActionLeft = SelectedAction(_cmbLeft) ?? _edit.ActionLeft;
-		_edit.ActionRight = SelectedAction(_cmbRight) ?? _edit.ActionRight;
-		_edit.ActionMiddle = SelectedAction(_cmbMiddle) ?? _edit.ActionMiddle;
-		_edit.ShowActivationFrame = _chkFrame.Checked;
-		_edit.FrameColorId = SelectedId(_cmbFrameColor, _edit.FrameColorId);
-		_edit.FrameStyleId = SelectedId(_cmbFrameStyle, _edit.FrameStyleId);
-		_edit.FrameThickness = (int)_numFrameThick.Value;
-		_edit.FrameRadius = (int)_numFrameRadius.Value;
-		_edit.CornerPercent = (int)_numCorner.Value;
-		_edit.ShakeMinimizeOthers = _chkShake.Checked;
-		_edit.DragRefreshMode = SelectedId(_cmbRefreshMode, _edit.DragRefreshMode);
-		_edit.DragRefreshHz = (int)_numRefreshHz.Value;
-		_edit.DoubleClickLeftMaximize = _chkDblLeft.Checked;
-		_edit.DoubleClickRightZone = _chkDblRight.Checked;
-		_edit.RestoreMaximizedWhenMoved = _chkRestoreMax.Checked;
-		_edit.BringToFront = _chkFront.Checked;
-		_edit.FrameOpacity = (int)_numFrameOpacity.Value;
-		_edit.AllowFullscreenWindows = _chkFullscreen.Checked;
-		_edit.ExitFullscreenOnTrigger = _chkExitFullscreen.Checked;
-		_edit.Blacklist = _txtBlacklist.Text;
-		_edit.AutoStart = SelectedId(_cmbAutoStart, _edit.AutoStart);
-		_edit.RunAsAdmin = _chkRunAsAdmin.Checked;
-		_edit.WarnNonAdmin = _chkWarnNonAdmin.Checked;
-		_edit.AutoCheckUpdate = _chkAutoUpdate.Checked;
-		CaptureSizeInto(_edit);
+		CaptureInto(_edit);
 		_store.Apply(_edit);
-		if (AutoStart.Apply(_edit.AutoStart, AppPaths.ExePath, out var message))
+		string message;
+		if (AutoStart.Apply(_edit.AutoStart, AppPaths.ExePath, out message))
 		{
-			_lblStatus.ForeColor = Design.Success;
+			_lblStatus.ForeColor = Tokens.Success;
 			_lblStatus.Text = "已保存并立即生效";
 		}
 		else
 		{
-			_lblStatus.ForeColor = Color.FromArgb(185, 28, 28);
+			_lblStatus.ForeColor = Tokens.Danger;
 			_lblStatus.Text = "配置已保存，但开机自启设置失败";
 			MessageBox.Show(message, "开机自启设置失败", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 		}
@@ -21216,6 +19327,37 @@ internal sealed class SettingsForm : Form
 		{
 			RestartAsAdmin();
 		}
+	}
+
+	private void CaptureInto(AppConfig target)
+	{
+		target.RequireHold = _chkHold.Checked;
+		target.HoldMs = (int)_numHold.Value;
+		target.ActionLeft = SelectedAction(_cmbLeft) ?? target.ActionLeft;
+		target.ActionRight = SelectedAction(_cmbRight) ?? target.ActionRight;
+		target.ActionMiddle = SelectedAction(_cmbMiddle) ?? target.ActionMiddle;
+		target.ShowActivationFrame = _chkFrame.Checked;
+		target.FrameColorId = SelectedId(_cmbFrameColor, target.FrameColorId);
+		target.FrameStyleId = SelectedId(_cmbFrameStyle, target.FrameStyleId);
+		target.FrameThickness = (int)_numFrameThick.Value;
+		target.FrameRadius = (int)_numFrameRadius.Value;
+		target.FrameOpacity = (int)_numFrameOpacity.Value;
+		target.CornerPercent = (int)_numCorner.Value;
+		target.ShakeMinimizeOthers = _chkShake.Checked;
+		target.DragRefreshMode = SelectedId(_cmbRefreshMode, target.DragRefreshMode);
+		target.DragRefreshHz = (int)_numRefreshHz.Value;
+		target.DoubleClickLeftMaximize = _chkDblLeft.Checked;
+		target.DoubleClickRightZone = _chkDblRight.Checked;
+		target.RestoreMaximizedWhenMoved = _chkRestoreMax.Checked;
+		target.BringToFront = _chkFront.Checked;
+		target.AllowFullscreenWindows = _chkFullscreen.Checked;
+		target.ExitFullscreenOnTrigger = _chkExitFullscreen.Checked;
+		target.Blacklist = _txtBlacklist.Text;
+		target.AutoStart = SelectedId(_cmbAutoStart, target.AutoStart);
+		target.RunAsAdmin = _chkRunAsAdmin.Checked;
+		target.WarnNonAdmin = _chkWarnNonAdmin.Checked;
+		target.AutoCheckUpdate = _chkAutoUpdate.Checked;
+		CaptureSizeInto(target);
 	}
 
 	private void PickExeFile()
@@ -21266,7 +19408,7 @@ internal sealed class SettingsForm : Form
 			mask.Opacity = 0.18;
 			mask.KeyPreview = true;
 			bool done = false;
-			mask.MouseDown += (object? s, MouseEventArgs e) =>
+			mask.MouseDown += delegate(object s, MouseEventArgs e)
 			{
 				if (done)
 				{
@@ -21291,7 +19433,7 @@ internal sealed class SettingsForm : Form
 				{
 				}
 			};
-			mask.KeyDown += (object? s, KeyEventArgs e) =>
+			mask.KeyDown += delegate(object s, KeyEventArgs e)
 			{
 				if (e.KeyCode != Keys.Escape)
 				{
@@ -21401,18 +19543,13 @@ internal sealed class SettingsForm : Form
 		}
 	}
 
-	internal void ProbeAppendBlacklist(string kw)
-	{
-		AppendBlacklistKeyword(kw);
-	}
-
 	private void Status(string text, bool error)
 	{
 		try
 		{
 			if (_lblStatus != null)
 			{
-				_lblStatus.ForeColor = (error ? Color.FromArgb(185, 28, 28) : Design.Success);
+				_lblStatus.ForeColor = (error ? Tokens.Danger : Tokens.Success);
 				_lblStatus.Text = text ?? string.Empty;
 			}
 		}
@@ -21430,8 +19567,6 @@ internal sealed class SettingsForm : Form
 		appConfig.Blacklist = _edit.Blacklist;
 		appConfig.SettingsWidth = _edit.SettingsWidth;
 		appConfig.SettingsHeight = _edit.SettingsHeight;
-		// 自动更新开关属于"环境类"设置：与开机自启 / 权限同组，
-		// 「恢复默认值」不应该把它悄悄改回开（用户关了就是要关）。
 		appConfig.AutoCheckUpdate = _edit.AutoCheckUpdate;
 		appConfig.LastUpdateNotified = _edit.LastUpdateNotified;
 		_edit = appConfig;
@@ -21440,7 +19575,7 @@ internal sealed class SettingsForm : Form
 			StopRecording(applied: false);
 		}
 		Populate();
-		_lblStatus.ForeColor = Design.Hint;
+		_lblStatus.ForeColor = Tokens.Hint;
 		_lblStatus.Text = "已载入默认值，点「保存并生效」后写入";
 	}
 
@@ -21464,7 +19599,6 @@ internal sealed class SettingsForm : Form
 		}
 	}
 
-	/// <summary>用系统默认浏览器打开网址。失败时退化为复制到剪贴板并提示。</summary>
 	private void OpenUrl(string url)
 	{
 		if (string.IsNullOrEmpty(url))
@@ -21484,7 +19618,7 @@ internal sealed class SettingsForm : Form
 			try
 			{
 				Clipboard.SetText(url);
-				SetUpdateStatus("打不开浏览器，链接已复制到剪贴板：" + url, Design.WarnText);
+				SetUpdateStatus("打不开浏览器，链接已复制到剪贴板：" + url, Tokens.WarnText);
 			}
 			catch
 			{
@@ -21509,23 +19643,23 @@ internal sealed class SettingsForm : Form
 		}
 	}
 
-	/// <summary>
-	/// 统一的"检查更新"入口。<paramref name="userInitiated"/> = true 时是按钮点击，
-	/// 无论结果都会给明确反馈；false 时是启动自动检查，只在真有新版时提示。
-	/// 全程在后台线程做网络，UI 更新一律回首线程。
-	/// </summary>
+	internal void BeginCheckUpdate()
+	{
+		CheckForUpdates(userInitiated: true);
+	}
+
 	private void CheckForUpdates(bool userInitiated)
 	{
 		if (_updateBusy)
 		{
 			if (userInitiated)
 			{
-				SetUpdateStatus("正在检查，请稍候…", Design.Hint);
+				SetUpdateStatus("正在检查，请稍候…", Tokens.Hint);
 			}
 			return;
 		}
 		_updateBusy = true;
-		SetUpdateStatus("正在检查更新…", Design.Hint);
+		SetUpdateStatus("正在检查更新…", Tokens.Hint);
 		ThreadPool.QueueUserWorkItem(delegate
 		{
 			string error;
@@ -21541,14 +19675,14 @@ internal sealed class SettingsForm : Form
 				}
 				if (upToDate)
 				{
-					SetUpdateStatus("已是最新版本（v" + AppInfo.Version + "）", Design.Success);
+					SetUpdateStatus("已是最新版本（v" + AppInfo.Version + "）", Tokens.Success);
 					if (userInitiated)
 					{
 						MessageBox.Show(this, "当前已是最新版本 v" + AppInfo.Version + "。", "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 					}
 					return;
 				}
-				SetUpdateStatus("检查失败：" + error, Design.Danger);
+				SetUpdateStatus("检查失败：" + error, Tokens.Danger);
 				if (userInitiated)
 				{
 					MessageBox.Show(this, "检查更新失败：\r\n\r\n" + error + "\r\n\r\n你也可以手动打开发布页查看：\r\n" + AppInfo.ReleasesUrl, "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
@@ -21557,7 +19691,6 @@ internal sealed class SettingsForm : Form
 		});
 	}
 
-	/// <summary>把动作丢回 UI 线程执行（窗口可能已关闭）。</summary>
 	private void PostUpdateAction(Action action)
 	{
 		try
@@ -21576,7 +19709,7 @@ internal sealed class SettingsForm : Form
 
 	private void OnUpdateFound(UpdateInfo info)
 	{
-		SetUpdateStatus("发现新版本 " + info.Tag + "（当前 v" + AppInfo.Version + "）", Design.Warning);
+		SetUpdateStatus("发现新版本 " + info.Tag + "（当前 v" + AppInfo.Version + "）", Tokens.WarnText);
 		DialogResult dialogResult = MessageBox.Show(this, "发现新版本！\r\n\r\n当前版本：v" + AppInfo.Version + "\r\n最新版本：" + info.Tag + "\r\n\r\n现在下载并更新吗？\r\n（下载完成后会自动替换并重启程序）", "发现新版本", MessageBoxButtons.OKCancel, MessageBoxIcon.Asterisk);
 		if (dialogResult == DialogResult.OK)
 		{
@@ -21584,11 +19717,10 @@ internal sealed class SettingsForm : Form
 		}
 	}
 
-	/// <summary>在后台下载，进度实时回显在本页状态标签上；下好就换掉自己并重启。</summary>
 	private void DownloadAndApply(UpdateInfo info)
 	{
 		_updateBusy = true;
-		SetUpdateStatus("正在下载 " + info.Tag + "…", Design.Hint);
+		SetUpdateStatus("正在下载 " + info.Tag + "…", Tokens.Hint);
 		_btnCheckUpdate.Enabled = false;
 		string exePath = AppPaths.ExePath;
 		string text = Path.GetDirectoryName(exePath);
@@ -21604,28 +19736,25 @@ internal sealed class SettingsForm : Form
 					num = num2;
 					PostUpdateAction(delegate
 					{
-						SetUpdateStatus(FormatDownloadProgress(done, total), Design.Hint);
+						SetUpdateStatus(FormatDownloadProgress(done, total), Tokens.Hint);
 					});
 				}
 			}, out error);
-
 			if (!flag)
 			{
 				PostUpdateAction(delegate
 				{
 					_updateBusy = false;
 					_btnCheckUpdate.Enabled = true;
-					SetUpdateStatus("下载失败：" + error, Design.Danger);
+					SetUpdateStatus("下载失败：" + error, Tokens.Danger);
 					MessageBox.Show(this, "下载失败：\r\n\r\n" + error + "\r\n\r\n可手动到发布页下载：\r\n" + info.PageUrl, "更新失败", MessageBoxButtons.OK, MessageBoxIcon.Hand);
 				});
 				return;
 			}
-
 			PostUpdateAction(delegate
 			{
-				SetUpdateStatus("下载完成，正在替换并重启…", Design.Success);
+				SetUpdateStatus("下载完成，正在替换并重启…", Tokens.Success);
 			});
-
 			string error2;
 			bool flag2 = Updater.ApplyAndRestart(Path.Combine(text, Updater.TempDownloadName), exePath, out error2);
 			PostUpdateAction(delegate
@@ -21635,14 +19764,12 @@ internal sealed class SettingsForm : Form
 				string text2 = Path.Combine(text, Updater.TempDownloadName);
 				if (flag2)
 				{
-					SetUpdateStatus("更新已就绪，程序即将退出并自动替换", Design.Success);
+					SetUpdateStatus("更新已就绪，程序即将退出并自动替换", Tokens.Success);
 					MessageBox.Show(this, "更新已下载完成。\r\n\r\n点击「确定」后程序将退出，自动替换为新版本并重新启动。", "更新就绪", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
-					// 必须退出【整个进程】而不是只关设置窗口：
-					// 托盘常驻进程还在跑，exe 文件一直被占用，新版本就没法接管文件名。
 					TrayContext.RequestExitForUpdate();
 					return;
 				}
-				SetUpdateStatus("替换失败：" + error2, Design.Danger);
+				SetUpdateStatus("替换失败：" + error2, Tokens.Danger);
 				MessageBox.Show(this, "已下载新版本，但自动替换失败：\r\n\r\n" + error2 + "\r\n\r\n新版本已保存在：\r\n" + text2 + "\r\n\r\n可手动改名覆盖，或到发布页重新下载：\r\n" + info.PageUrl, "更新失败", MessageBoxButtons.OK, MessageBoxIcon.Hand);
 			});
 		});
@@ -21660,7 +19787,6 @@ internal sealed class SettingsForm : Form
 		return $"正在下载… 已接收 {num:F1} MB";
 	}
 
-
 	protected override void OnFormClosed(FormClosedEventArgs e)
 	{
 		if (_recording)
@@ -21669,6 +19795,134 @@ internal sealed class SettingsForm : Form
 		}
 		base.OnFormClosed(e);
 	}
+
+	protected override void OnHandleCreated(EventArgs e)
+	{
+		base.OnHandleCreated(e);
+		try
+		{
+			RescaleForDpi(Native.DpiOfWindow(Handle));
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	protected override void WndProc(ref Message m)
+	{
+		if (m.Msg == 736)
+		{
+			int dpi = (int)(short)((m.WParam.ToInt64() >> 16) & 0xFFFF);
+			try
+			{
+				RescaleForDpi(dpi);
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+		}
+		base.WndProc(ref m);
+	}
+
+	private void RescaleForDpi(int dpi)
+	{
+		float num = (float)dpi / 96f;
+		if (num < 0.5f)
+		{
+			num = 0.5f;
+		}
+		if (Math.Abs(num - UiScale) < 0.001f)
+		{
+			return;
+		}
+		UiScale = num;
+		RebuildUi();
+	}
+
+	// DPI 变化后整体重建：所有控件按新系数重新创建，避免"字号放大了但控件尺寸没跟上"。
+	private void RebuildUi()
+	{
+		if (_recording)
+		{
+			StopRecording(applied: false);
+		}
+		int num = ((_activePage >= 0 && _activePage < _pages.Count) ? _activePage : 0);
+		List<Control> list = new List<Control>();
+		CollectTree(this, list);
+		Controls.Clear();
+		for (int i = 0; i < list.Count; i++)
+		{
+			try
+			{
+				list[i].Dispose();
+			}
+			catch
+			{
+			}
+		}
+		_pages.Clear();
+		_nav = null;
+		_content = null;
+		_pager = null;
+		_lblStatus = null;
+		_btnDefaultsRef = null;
+		_btnSaveRef = null;
+		_btnCancelRef = null;
+		BuildUi();
+		Populate();
+		SelectPage(num);
+		ApplySavedSize();
+		Invalidate(invalidateChildren: true);
+	}
+
+	private static void CollectTree(Control root, List<Control> sink)
+	{
+		for (int i = 0; i < root.Controls.Count; i++)
+		{
+			Control control = root.Controls[i];
+			sink.Add(control);
+			CollectTree(control, sink);
+		}
+	}
+
+	private void ApplySavedSize()
+	{
+		try
+		{
+			if (_edit.SettingsWidth > 0 && _edit.SettingsHeight > 0)
+			{
+				ClientSize = new Size(_edit.SettingsWidth, _edit.SettingsHeight);
+			}
+			else
+			{
+				ClientSize = new Size(S(1024), _defaultClientH);
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			ClientSize = new Size(S(1024), _defaultClientH);
+		}
+	}
+
+	private void CaptureSizeInto(AppConfig target)
+	{
+		try
+		{
+			if (WindowState == FormWindowState.Normal)
+			{
+				target.SettingsWidth = ClientSize.Width;
+				target.SettingsHeight = ClientSize.Height;
+			}
+		}
+		catch
+		{
+		}
+	}
+
+	// ======================= 探针面（自测 / 生产预览） =======================
 
 	internal FrameSelection ProbeFrameSelection()
 	{
@@ -21690,120 +19944,231 @@ internal sealed class SettingsForm : Form
 		};
 	}
 
+	internal void ProbeSelectFrameColor(string id)
+	{
+		SelectPage(2);
+		SelectId(_cmbFrameColor, id);
+		SyncPreview();
+	}
+
+	internal void ProbeSelectFrameStyle(string id)
+	{
+		SelectPage(2);
+		SelectId(_cmbFrameStyle, id);
+		SyncPreview();
+	}
+
+	internal void ProbeSetFrameShape(int thickness, int radius, bool enabled)
+	{
+		SelectPage(2);
+		_chkFrame.Checked = enabled;
+		_numFrameThick.Value = Clamp(thickness, (int)_numFrameThick.Minimum, (int)_numFrameThick.Maximum);
+		_numFrameRadius.Value = Clamp(radius, (int)_numFrameRadius.Minimum, (int)_numFrameRadius.Maximum);
+		SyncPreview();
+	}
+
+	internal void ProbeCaptureInto(AppConfig target)
+	{
+		CaptureInto(target);
+	}
+
+	internal void ProbeAppendBlacklist(string kw)
+	{
+		AppendBlacklistKeyword(kw);
+	}
+
+	internal string ProbeBlacklistText => _txtBlacklist.Text;
+
+	internal Control ProbeComboLeft => _cmbLeft;
+
+	internal Control ProbeComboRight => _cmbRight;
+
+	internal Control ProbeNumHold => _numHold;
+
+	internal static Control ProbeCardByTitle(Form f, string title)
+	{
+		if (!(f is SettingsForm settingsForm))
+		{
+			return null;
+		}
+		foreach (Card item in AllCards(settingsForm))
+		{
+			if (item.Text == title)
+			{
+				return item;
+			}
+		}
+		return null;
+	}
+
+	internal static void ProbeSelectPage(Form f, int index)
+	{
+		if (f is SettingsForm settingsForm)
+		{
+			settingsForm.SelectPage(index);
+		}
+	}
+
+	internal static bool ProbePageVisible(Form f, int index)
+	{
+		if (!(f is SettingsForm settingsForm) || index < 0 || index >= settingsForm._pages.Count)
+		{
+			return false;
+		}
+		return settingsForm._pages[index].Host.Visible;
+	}
+
+	internal static int ProbePageCount(Form f)
+	{
+		if (!(f is SettingsForm settingsForm))
+		{
+			return 0;
+		}
+		return settingsForm._pages.Count;
+	}
+
+	internal static int ProbeSidebarCount(Form f)
+	{
+		if (!(f is SettingsForm { _nav: not null } settingsForm))
+		{
+			return 0;
+		}
+		return settingsForm._nav.ItemCount;
+	}
+
+	internal static int ProbeSidebarActive(Form f)
+	{
+		if (!(f is SettingsForm { _nav: not null } settingsForm))
+		{
+			return -1;
+		}
+		return settingsForm._nav.ActiveIndex;
+	}
+
+	internal static int ProbeWheelScroll(Form f, int notches)
+	{
+		if (!(f is SettingsForm settingsForm) || settingsForm._pages.Count == 0)
+		{
+			return 0;
+		}
+		PageHost host = settingsForm._pages[settingsForm._activePage].Host;
+		try
+		{
+			if (host.IsHandleCreated)
+			{
+				Native.SendMessageW(host.Handle, 522, (IntPtr)unchecked((int)((notches * 120) << 16)), IntPtr.Zero);
+				Application.DoEvents();
+			}
+			else
+			{
+				host.Offset -= notches * host.StepPx;
+			}
+		}
+		catch
+		{
+		}
+		return host.Offset;
+	}
+
+	internal static string ProbeScrollInfo(Form f)
+	{
+		if (!(f is SettingsForm settingsForm) || settingsForm._pages.Count == 0)
+		{
+			return "(none)";
+		}
+		PageHost host = settingsForm._pages[settingsForm._activePage].Host;
+		return "页=" + settingsForm._activePage + " 偏移=" + host.Offset + " 内容高=" + ((host.Canvas != null) ? host.Canvas.Height : 0) + " 视口=" + host.ClientSize.Height + " 可滚=" + host.MaxScroll;
+	}
+
+	internal static int ProbeScrollTo(Form f, int y)
+	{
+		if (!(f is SettingsForm settingsForm) || settingsForm._pages.Count == 0)
+		{
+			return 0;
+		}
+		PageHost host = settingsForm._pages[settingsForm._activePage].Host;
+		host.Offset = y;
+		return host.Offset;
+	}
+
+	internal static string ProbeSyncDiag(Form f)
+	{
+		if (!(f is SettingsForm settingsForm))
+		{
+			return "(none)";
+		}
+		return "侧栏高亮=" + ProbeSidebarActive(f) + " 当前页=" + settingsForm._activePage + " " + ProbeScrollInfo(f);
+	}
+
+	internal static bool ProbeOnActivePage(Form f, Control c)
+	{
+		if (!(f is SettingsForm settingsForm) || settingsForm._pages.Count == 0)
+		{
+			return true;
+		}
+		PageHost pageHost = settingsForm._pages[settingsForm._activePage].Host;
+		for (Control parent = c; parent != null; parent = parent.Parent)
+		{
+			if (parent == pageHost)
+			{
+				return true;
+			}
+			if (parent is PageHost)
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static List<Card> AllCards(SettingsForm f)
+	{
+		List<Card> list = new List<Card>();
+		foreach (Page page in f._pages)
+		{
+			list.AddRange(page.Cards);
+		}
+		return list;
+	}
+
+	internal static int ProbeGroupCount(Form f)
+	{
+		if (!(f is SettingsForm settingsForm))
+		{
+			return 0;
+		}
+		return AllCards(settingsForm).Count;
+	}
+
 	internal static Control ProbeGroupAt(Form f, int index)
 	{
-		if (!(f is SettingsForm { _groupHost: not null } settingsForm))
+		if (!(f is SettingsForm settingsForm))
 		{
 			return null;
 		}
-		if (index < 0 || index >= settingsForm._groupHost.Controls.Count)
+		List<Card> list = AllCards(settingsForm);
+		if (index < 0 || index >= list.Count)
 		{
 			return null;
 		}
-		return settingsForm._groupHost.Controls[index];
+		return list[index];
 	}
 
-	internal static void ProbeRescaleForDpi(Form f, int dpi)
+	internal static bool ProbeGroupInTree(Form f, int index)
 	{
-		if (f is SettingsForm settingsForm)
+		Control control = ProbeGroupAt(f, index);
+		if (control == null)
 		{
-			settingsForm.RescaleForDpi(dpi);
+			return false;
 		}
-	}
-
-	internal static Rectangle ProbeRectOfTextForTest(Form f, string prefix)
-	{
-		try
+		for (Control parent = control.Parent; parent != null; parent = parent.Parent)
 		{
-			if (!(f is SettingsForm { _groupHost: not null } settingsForm))
+			if (parent == f)
 			{
-				return Rectangle.Empty;
-			}
-			for (int i = 0; i < settingsForm._groupHost.Controls.Count; i++)
-			{
-				Control control = settingsForm._groupHost.Controls[i];
-				for (int j = 0; j < control.Controls.Count; j++)
-				{
-					Control control2 = control.Controls[j];
-					if (control2.Text != null && control2.Text.StartsWith(prefix))
-					{
-						return control2.Bounds;
-					}
-				}
+				return true;
 			}
 		}
-		catch
-		{
-		}
-		return Rectangle.Empty;
-	}
-
-	internal static float ProbeUiScaleOf(Form f)
-	{
-		if (f is SettingsForm settingsForm)
-		{
-			return settingsForm.UiScale;
-		}
-		return 1f;
-	}
-
-	internal static string ProbeLayoutFingerprint(Form f)
-	{
-		StringBuilder stringBuilder = new StringBuilder();
-		try
-		{
-			if (!(f is SettingsForm { _groupHost: not null } settingsForm))
-			{
-				return "";
-			}
-			stringBuilder.Append("host=").Append(settingsForm._groupHost.Width).Append(',')
-				.Append(settingsForm._groupHost.Height)
-				.Append(" cols=")
-				.Append(settingsForm._groupHost.CurrentColumns)
-				.Append(';');
-			for (int i = 0; i < settingsForm._innerLayouts.Count; i++)
-			{
-				Control control = settingsForm._innerLayouts[i].Control;
-				if (control != null)
-				{
-					stringBuilder.Append(control.GetType().Name).Append(':').Append(control.Left)
-						.Append(',')
-						.Append(control.Top)
-						.Append(',')
-						.Append(control.Width)
-						.Append(',')
-						.Append(control.Height)
-						.Append(';');
-				}
-			}
-		}
-		catch
-		{
-		}
-		return stringBuilder.ToString();
-	}
-
-	internal static int ProbeTwoColumnThresholdPx(Form f)
-	{
-		float num = ((!(f is SettingsForm settingsForm)) ? 1f : settingsForm.UiScale);
-		return (int)Math.Round(1240f * num);
-	}
-
-	internal static int ProbeRelayoutColumns(Form f, int available)
-	{
-		if (!(f is SettingsForm { _groupHost: not null } settingsForm))
-		{
-			return -1;
-		}
-		try
-		{
-			settingsForm._groupHost.Relayout(available);
-			return settingsForm._groupHost.CurrentColumns;
-		}
-		catch
-		{
-			return -1;
-		}
+		return false;
 	}
 
 	internal static GroupClipReport ProbeGroupClipping(Form f, int groupIndex)
@@ -21811,19 +20176,16 @@ internal sealed class SettingsForm : Form
 		GroupClipReport groupClipReport = new GroupClipReport();
 		try
 		{
-			if (!(f is SettingsForm { _groupHost: not null } settingsForm))
+			if (!(f is SettingsForm settingsForm))
 			{
 				return groupClipReport;
 			}
-			if (groupIndex < 0 || groupIndex >= settingsForm._groupHost.Controls.Count)
+			List<Card> list = AllCards(settingsForm);
+			if (groupIndex < 0 || groupIndex >= list.Count)
 			{
 				return groupClipReport;
 			}
-			Control control = settingsForm._groupHost.Controls[groupIndex];
-			if (control == null)
-			{
-				return groupClipReport;
-			}
+			Control control = list[groupIndex];
 			Rectangle clientRectangle = control.ClientRectangle;
 			for (int i = 0; i < control.Controls.Count; i++)
 			{
@@ -21852,18 +20214,86 @@ internal sealed class SettingsForm : Form
 		return groupClipReport;
 	}
 
-	private static string ShortText(string s)
+	internal static string ProbeGroupOverlaps(Form f, int groupIndex)
 	{
-		if (string.IsNullOrEmpty(s))
+		try
+		{
+			if (!(f is SettingsForm settingsForm))
+			{
+				return "";
+			}
+			List<Card> list = AllCards(settingsForm);
+			if (groupIndex < 0 || groupIndex >= list.Count)
+			{
+				return "";
+			}
+			Control control = list[groupIndex];
+			Control[] array = new Control[control.Controls.Count];
+			for (int i = 0; i < control.Controls.Count; i++)
+			{
+				array[i] = control.Controls[i];
+			}
+			StringBuilder stringBuilder = new StringBuilder();
+			for (int j = 0; j < array.Length; j++)
+			{
+				if (array[j] == null || array[j].Width <= 0 || array[j].Height <= 0)
+				{
+					continue;
+				}
+				for (int k = j + 1; k < array.Length; k++)
+				{
+					if (array[k] == null || array[k].Width <= 0 || array[k].Height <= 0)
+					{
+						continue;
+					}
+					if (!array[j].Bounds.IntersectsWith(array[k].Bounds))
+					{
+						continue;
+					}
+					Rectangle rectangle = Rectangle.Intersect(array[j].Bounds, array[k].Bounds);
+					if (rectangle.Width > 2 && rectangle.Height > 2)
+					{
+						stringBuilder.Append("「").Append(ShortText(array[j].Text ?? array[j].GetType().Name)).Append("」×「")
+							.Append(ShortText(array[k].Text ?? array[k].GetType().Name))
+							.Append("」交 ")
+							.Append(rectangle.Width)
+							.Append("x")
+							.Append(rectangle.Height)
+							.Append(" ");
+					}
+				}
+			}
+			return stringBuilder.ToString();
+		}
+		catch (Exception ex)
+		{
+			return "异常 " + ex.GetType().Name;
+		}
+	}
+
+	internal static string ProbeGroupRects(Form f, int index)
+	{
+		if (!(f is SettingsForm settingsForm))
 		{
 			return "";
 		}
-		s = s.Replace("\r", "").Replace("\n", " ");
-		if (s.Length > 16)
+		List<Card> list = AllCards(settingsForm);
+		if (index < 0 || index >= list.Count)
 		{
-			return s.Substring(0, 16) + "…";
+			return "";
 		}
-		return s;
+		Control control = list[index];
+		return "z=" + index + " " + control.GetType().Name + " vis=" + control.Visible + " L=" + control.Left + " T=" + control.Top + " W=" + control.Width + " H=" + control.Height + " 右=" + control.Right + " 底=" + control.Bottom;
+	}
+
+	internal static int ProbeGroupTop(Form f, int index)
+	{
+		Control control = ProbeGroupAt(f, index);
+		if (control == null)
+		{
+			return -1;
+		}
+		return control.Top;
 	}
 
 	internal static string ProbeTextFitting(Form f, int groupIndex)
@@ -21871,25 +20301,22 @@ internal sealed class SettingsForm : Form
 		StringBuilder stringBuilder = new StringBuilder();
 		try
 		{
-			if (!(f is SettingsForm { _groupHost: not null } settingsForm))
+			if (!(f is SettingsForm settingsForm))
 			{
 				return "";
 			}
-			if (groupIndex < 0 || groupIndex >= settingsForm._groupHost.Controls.Count)
+			List<Card> list = AllCards(settingsForm);
+			if (groupIndex < 0 || groupIndex >= list.Count)
 			{
 				return "";
 			}
-			Control control = settingsForm._groupHost.Controls[groupIndex];
-			if (control == null)
-			{
-				return "";
-			}
+			Control control = list[groupIndex];
 			for (int i = 0; i < control.Controls.Count; i++)
 			{
 				Control control2 = control.Controls[i];
 				if ((control2 is CheckBox || control2 is Label) && !string.IsNullOrEmpty(control2.Text))
 				{
-					int num = control2.Width - ((control2 is CheckBox) ? Fields.Sc(26) : Fields.Sc(4));
+					int num = control2.Width - ((control2 is CheckBox) ? Sc(26) : Sc(4));
 					if (num < 20)
 					{
 						num = 20;
@@ -21898,8 +20325,10 @@ internal sealed class SettingsForm : Form
 					Size size2;
 					try
 					{
-						size = TextRenderer.MeasureText(control2.Text, control2.Font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding);
-						size2 = TextRenderer.MeasureText(control2.Text, control2.Font, new Size(num, 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
+						float num2 = control2.Font.SizeInPoints * 96f / 72f * ((CurrentUiScale > 0f) ? CurrentUiScale : 1f);
+						using Font font = new Font(control2.Font.FontFamily, num2, control2.Font.Style, GraphicsUnit.Pixel);
+						size = TextRenderer.MeasureText(control2.Text, font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding);
+						size2 = TextRenderer.MeasureText(control2.Text, font, new Size(num, 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
 					}
 					catch
 					{
@@ -21919,149 +20348,77 @@ internal sealed class SettingsForm : Form
 		return stringBuilder.ToString();
 	}
 
-	internal void ProbeSelectFrameColor(string colorId)
+	private static string ShortText(string s)
 	{
-		SelectId(_cmbFrameColor, colorId);
-		SyncPreview();
+		if (string.IsNullOrEmpty(s))
+		{
+			return "";
+		}
+		s = s.Replace("\r", "").Replace("\n", " ");
+		if (s.Length > 16)
+		{
+			return s.Substring(0, 16) + "…";
+		}
+		return s;
 	}
 
 	internal FramePickerProbe ProbeFramePickers()
 	{
-		return new FramePickerProbe
+		FramePickerProbe framePickerProbe = new FramePickerProbe();
+		try
 		{
-			ColorCells = _gridColor.CellCountForTest,
-			StyleCells = _galleryStyle.CellCountForTest,
-			GridSize = _gridColor.Size,
-			GallerySize = _galleryStyle.Size,
-			GridInsideGroup = InsideParentClient(_gridColor),
-			GalleryInsideGroup = InsideParentClient(_galleryStyle),
-			GridInk = CountInkOutsideBackground(_gridColor, Design.Surface),
-			GalleryInk = CountInkOutsideBackground(_galleryStyle, Design.Surface),
-			GridAccentInk = CountAccentInk(_gridColor),
-			GalleryAccentInk = CountAccentInk(_galleryStyle),
-			GridSelectedCell = _gridColor.SelectedCellRectForTest,
-			GallerySelectedCell = _galleryStyle.SelectedCellRectForTest
-		};
+			SelectPage(2);
+			Application.DoEvents();
+			framePickerProbe.ColorCells = _gridColor.CellCount;
+			framePickerProbe.StyleCells = _galleryStyle.ItemsForTest.Count;
+			framePickerProbe.GridSize = new Size(_gridColor.Width, _gridColor.Height);
+			framePickerProbe.GallerySize = new Size(_galleryStyle.Width, _galleryStyle.Height);
+			framePickerProbe.GridSelectedCell = _gridColor.SelectedCellRect;
+			framePickerProbe.GallerySelectedCell = _galleryStyle.SelectedCellRect;
+			framePickerProbe.GridInsideGroup = InsideCard(_gridColor);
+			framePickerProbe.GalleryInsideGroup = InsideCard(_galleryStyle);
+			framePickerProbe.GridInk = InkOf(_gridColor, Tokens.Surface);
+			framePickerProbe.GalleryInk = InkOf(_galleryStyle, Tokens.Surface);
+			framePickerProbe.GridAccentInk = InkNear(_gridColor, Tokens.Accent, 60);
+			framePickerProbe.GalleryAccentInk = InkNear(_galleryStyle, Tokens.Accent, 60);
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+		return framePickerProbe;
 	}
 
-	private static bool InsideParentClient(Control c)
+	private static bool InsideCard(Control c)
 	{
-		if (c == null || c.Parent == null)
+		for (Control parent = c; parent != null; parent = parent.Parent)
 		{
-			return false;
-		}
-		Rectangle clientRectangle = c.Parent.ClientRectangle;
-		if (c.Left >= 0 && c.Top >= 0 && c.Right <= clientRectangle.Width + 1)
-		{
-			return c.Bottom <= clientRectangle.Height + 1;
+			if (parent is Card)
+			{
+				Card card = (Card)parent;
+				return c.Left >= -1 && c.Top >= -1 && c.Right <= card.ClientSize.Width + 1 && c.Bottom <= card.ClientSize.Height + 1;
+			}
 		}
 		return false;
 	}
 
-	internal static bool ProbeHoverTweenAnimates(out float start, out float end)
-	{
-		start = 0f;
-		end = 0f;
-		try
-		{
-			using FlatButton flatButton = new FlatButton();
-			flatButton.ProbeSetHover(on: true);
-			start = flatButton.ProbeHoverValue;
-			long num = Environment.TickCount64 + 900;
-			while (Environment.TickCount64 < num)
-			{
-				Application.DoEvents();
-				Thread.Sleep(8);
-				if (flatButton.ProbeHoverValue > 0.98f)
-				{
-					break;
-				}
-			}
-			end = flatButton.ProbeHoverValue;
-			return start < 0.3f && end > 0.9f;
-		}
-		catch
-		{
-			return false;
-		}
-	}
-
-	internal static RenderStats ProbeFormRender(Form f, string frameColorId)
-	{
-		RenderStats renderStats = new RenderStats();
-		try
-		{
-			if (f.Width <= 0 || f.Height <= 0)
-			{
-				return renderStats;
-			}
-			renderStats.Width = f.Width;
-			renderStats.Height = f.Height;
-			using Bitmap bitmap = new Bitmap(f.Width, f.Height);
-			f.DrawToBitmap(bitmap, new Rectangle(0, 0, f.Width, f.Height));
-			HashSet<int> hashSet = new HashSet<int>();
-			Color color = FrameColors.Resolve(frameColorId);
-			long num = 0L;
-			int num2 = 0;
-			for (int i = 0; i < bitmap.Height; i += 2)
-			{
-				for (int j = 0; j < bitmap.Width; j += 2)
-				{
-					Color pixel = bitmap.GetPixel(j, i);
-					hashSet.Add(pixel.ToArgb());
-					num += pixel.R + pixel.G + pixel.B;
-					num2++;
-					if (pixel.R < 24 && pixel.G < 24 && pixel.B < 24)
-					{
-						renderStats.BlackPixels++;
-					}
-					if (Math.Abs(pixel.R - Design.Accent.R) <= 18 && Math.Abs(pixel.G - Design.Accent.G) <= 18 && Math.Abs(pixel.B - Design.Accent.B) <= 18)
-					{
-						renderStats.AccentPixels++;
-					}
-					if (Math.Abs(pixel.R - color.R) <= 18 && Math.Abs(pixel.G - color.G) <= 18 && Math.Abs(pixel.B - color.B) <= 18)
-					{
-						renderStats.FrameColorPixels++;
-					}
-				}
-			}
-			renderStats.DistinctColors = hashSet.Count;
-			renderStats.MeanBrightness = ((num2 == 0) ? 0.0 : ((double)num / 3.0 / (double)num2));
-		}
-		catch
-		{
-		}
-		return renderStats;
-	}
-
-	internal int[] ProbeFrameColorInk(string colorId)
-	{
-		Color want = FrameColors.Resolve(colorId);
-		return new int[3]
-		{
-			CountExactColor(_gridColor, want),
-			CountExactColor(_galleryStyle, want),
-			CountExactColor(_pnlPreview, want)
-		};
-	}
-
-	private static int CountExactColor(Control c, Color want)
+	private static long InkOf(Control c, Color bg)
 	{
 		try
 		{
-			if (c == null || c.Width <= 0 || c.Height <= 0)
+			if (c.Width <= 0 || c.Height <= 0)
 			{
-				return -1;
+				return 0;
 			}
 			using Bitmap bitmap = new Bitmap(c.Width, c.Height);
-			c.DrawToBitmap(bitmap, new Rectangle(0, 0, c.Width, c.Height));
-			int num = 0;
+			c.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
+			long num = 0;
 			for (int i = 0; i < bitmap.Height; i++)
 			{
 				for (int j = 0; j < bitmap.Width; j++)
 				{
 					Color pixel = bitmap.GetPixel(j, i);
-					if (Math.Abs(pixel.R - want.R) <= 18 && Math.Abs(pixel.G - want.G) <= 18 && Math.Abs(pixel.B - want.B) <= 18)
+					if (Math.Abs(pixel.R - bg.R) + Math.Abs(pixel.G - bg.G) + Math.Abs(pixel.B - bg.B) > 30)
 					{
 						num++;
 					}
@@ -22071,137 +20428,159 @@ internal sealed class SettingsForm : Form
 		}
 		catch
 		{
-			return -1;
+			return 0;
 		}
+	}
+
+	private static long InkNear(Control c, Color target, int tol)
+	{
+		try
+		{
+			if (c.Width <= 0 || c.Height <= 0)
+			{
+				return 0;
+			}
+			using Bitmap bitmap = new Bitmap(c.Width, c.Height);
+			c.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
+			long num = 0;
+			for (int i = 0; i < bitmap.Height; i++)
+			{
+				for (int j = 0; j < bitmap.Width; j++)
+				{
+					Color pixel = bitmap.GetPixel(j, i);
+					if (Math.Abs(pixel.R - target.R) + Math.Abs(pixel.G - target.G) + Math.Abs(pixel.B - target.B) <= tol)
+					{
+						num++;
+					}
+				}
+			}
+			return num;
+		}
+		catch
+		{
+			return 0;
+		}
+	}
+
+	internal int[] ProbeFrameColorInk(string colorId)
+	{
+		Color target = Color.Gray;
+		try
+		{
+			target = FrameColors.Resolve(colorId);
+		}
+		catch
+		{
+		}
+		return new int[3]
+		{
+			(int)InkNear(_gridColor, target, 24),
+			(int)InkNear(_galleryStyle, target, 24),
+			(int)InkNear(_pnlPreview, target, 24)
+		};
 	}
 
 	internal string ProbeGridDiagnostic()
 	{
 		try
 		{
-			Rectangle selectedCellRectForTest = _gridColor.SelectedCellRectForTest;
-			using Bitmap bitmap = new Bitmap(Math.Max(1, _gridColor.Width), Math.Max(1, _gridColor.Height));
-			_gridColor.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
-			int x = Math.Min(bitmap.Width - 1, selectedCellRectForTest.X + selectedCellRectForTest.Width / 2);
-			int y = Math.Min(bitmap.Height - 1, selectedCellRectForTest.Y + selectedCellRectForTest.Height / 2);
-			Color pixel = bitmap.GetPixel(x, y);
-			Color pixel2 = bitmap.GetPixel(0, 0);
-			return "格=" + selectedCellRectForTest.ToString() + " 尺寸=" + _gridColor.Width + "x" + _gridColor.Height + " 中心像素=" + pixel.R + "," + pixel.G + "," + pixel.B + "," + pixel.A + " 左上像素=" + pixel2.R + "," + pixel2.G + "," + pixel2.B + "," + pixel2.A + " Enabled=" + _gridColor.Enabled + " chkFrame=" + _chkFrame.Checked + " 父Enabled=" + ((_gridColor.Parent != null) ? _gridColor.Parent.Enabled.ToString() : "无父") + " SelectedId=" + _gridColor.SelectedId + " 格数=" + _gridColor.CellCountForTest;
+			return "色板 " + _gridColor.CellCount + " 格 " + _gridColor.ColumnsFor(_gridColor.Width) + " 列 选中=" + (_gridColor.SelectedId ?? "(null)") + " 尺寸=" + _gridColor.Width + "x" + _gridColor.Height + " | 画廊 " + _galleryStyle.ItemsForTest.Count + " 项 " + _galleryStyle.ColumnsFor(_galleryStyle.Width) + " 列 选中=" + (_galleryStyle.SelectedId ?? "(null)") + " 尺寸=" + _galleryStyle.Width + "x" + _galleryStyle.Height;
 		}
 		catch (Exception ex)
 		{
-			return "异常 " + ex.GetType().Name + " " + ex.Message;
+			return "异常 " + ex.GetType().Name;
 		}
 	}
 
-	private static int CountInkOutsideBackground(Control c, Color bg)
+	internal int ProbeDefaultClientHeight()
 	{
-		try
+		return _defaultClientH;
+	}
+
+	internal HelpPanel ProbeHelpPanel => _helpPanel;
+
+	internal string ProbeAboutText
+	{
+		get
 		{
-			if (c.Width <= 0 || c.Height <= 0)
+			try
 			{
-				return -1;
-			}
-			using Bitmap bitmap = new Bitmap(c.Width, c.Height);
-			c.DrawToBitmap(bitmap, new Rectangle(0, 0, c.Width, c.Height));
-			int num = 0;
-			for (int i = 0; i < bitmap.Height; i += 2)
-			{
-				for (int j = 0; j < bitmap.Width; j += 2)
+				Card card = ProbeCardByTitle(this, "关于") as Card;
+				if (card == null)
 				{
-					Color pixel = bitmap.GetPixel(j, i);
-					if (Math.Abs(pixel.R - bg.R) > 8 || Math.Abs(pixel.G - bg.G) > 8 || Math.Abs(pixel.B - bg.B) > 8)
+					return "";
+				}
+				StringBuilder stringBuilder = new StringBuilder();
+				foreach (Control control in card.Controls)
+				{
+					if (!string.IsNullOrEmpty(control.Text))
 					{
-						num++;
+						stringBuilder.Append(control.Text).Append(' ');
 					}
 				}
+				return stringBuilder.ToString();
 			}
-			return num;
-		}
-		catch
-		{
-			return -1;
-		}
-	}
-
-	private static int CountAccentInk(Control c)
-	{
-		Color accent = Design.Accent;
-		try
-		{
-			if (c.Width <= 0 || c.Height <= 0)
+			catch
 			{
-				return -1;
+				return "";
 			}
-			using Bitmap bitmap = new Bitmap(c.Width, c.Height);
-			c.DrawToBitmap(bitmap, new Rectangle(0, 0, c.Width, c.Height));
-			int num = 0;
-			for (int i = 0; i < bitmap.Height; i++)
-			{
-				for (int j = 0; j < bitmap.Width; j++)
-				{
-					Color pixel = bitmap.GetPixel(j, i);
-					if (Math.Abs(pixel.R - accent.R) <= 24 && Math.Abs(pixel.G - accent.G) <= 24 && Math.Abs(pixel.B - accent.B) <= 24)
-					{
-						num++;
-					}
-				}
-			}
-			return num;
 		}
-		catch
+	}
+
+	internal Button ProbeGitHubButton => _btnGitHub;
+
+	internal Button ProbeCheckUpdateButton => _btnCheckUpdate;
+
+	internal CheckBox ProbeAutoUpdateCheck => _chkAutoUpdate;
+
+	internal Label ProbeUpdateStatusLabel => _lblUpdateStatus;
+
+	internal static bool ProbeForceOfflineForTest
+	{
+		get
 		{
-			return -1;
+			return Updater.ForceOfflineForTest;
+		}
+		set
+		{
+			Updater.ForceOfflineForTest = value;
 		}
 	}
 
-	internal void ProbeSelectFrameStyle(string styleId)
-	{
-		SelectId(_cmbFrameStyle, styleId);
-		SyncPreview();
-	}
+	internal static FontFamily IconFamilyForTest => Icons.Family;
 
-	internal void ProbeSetFrameShape(int thickness, int radius, bool enabled)
+	internal static string[] IconGlyphsForTest
 	{
-		_numFrameThick.Value = Clamp(thickness, (int)_numFrameThick.Minimum, (int)_numFrameThick.Maximum);
-		_numFrameRadius.Value = Clamp(radius, (int)_numFrameRadius.Minimum, (int)_numFrameRadius.Maximum);
-		_chkFrame.Checked = enabled;
-		SyncPreview();
-	}
-
-	internal void ProbeCaptureInto(AppConfig target)
-	{
-		target.ShowActivationFrame = _chkFrame.Checked;
-		target.FrameColorId = SelectedId(_cmbFrameColor, target.FrameColorId);
-		target.FrameStyleId = SelectedId(_cmbFrameStyle, target.FrameStyleId);
-		target.FrameThickness = (int)_numFrameThick.Value;
-		target.FrameRadius = (int)_numFrameRadius.Value;
+		get
+		{
+			return new string[8] { Glyph.Keyboard, Glyph.Move, Glyph.Color, Glyph.Speed, Glyph.Shield, Glyph.Chevron, Glyph.Help, Glyph.Info };
+		}
 	}
 
 	internal static int MeasureGlyphInk(string glyph, float px)
 	{
 		try
 		{
-			using Font font = Icons.At(px);
-			if (font == null)
+			FontFamily family = Icons.Family;
+			if (family == null || string.IsNullOrEmpty(glyph))
 			{
-				return -1;
+				return 0;
 			}
-			int num = (int)Math.Ceiling(px * 2f);
+			int num = Math.Max(8, (int)Math.Ceiling(px * 2.0));
 			using Bitmap bitmap = new Bitmap(num, num);
 			using (Graphics graphics = Graphics.FromImage(bitmap))
 			{
 				graphics.Clear(Color.White);
-				graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
-				graphics.DrawString(glyph, font, Brushes.Black, 0f, 0f);
+				using Font font = new Font(family, px, FontStyle.Regular, GraphicsUnit.Pixel);
+				TextRenderer.DrawText(graphics, glyph, font, new Rectangle(0, 0, num, num), Color.Black, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 			}
 			int num2 = 0;
-			for (int i = 0; i < bitmap.Height; i++)
+			for (int i = 0; i < num; i++)
 			{
-				for (int j = 0; j < bitmap.Width; j++)
+				for (int j = 0; j < num; j++)
 				{
 					Color pixel = bitmap.GetPixel(j, i);
-					if (pixel.R < 200 || pixel.G < 200 || pixel.B < 200)
+					if (pixel.R < 250 || pixel.G < 250 || pixel.B < 250)
 					{
 						num2++;
 					}
@@ -22211,7 +20590,383 @@ internal sealed class SettingsForm : Form
 		}
 		catch
 		{
+			return 0;
+		}
+	}
+
+	internal static bool VerifyLayout(Form f)
+	{
+		try
+		{
+			if (!(f is SettingsForm settingsForm))
+			{
+				return false;
+			}
+			List<Card> list = AllCards(settingsForm);
+			if (list.Count < 6)
+			{
+				return false;
+			}
+			for (int i = 0; i < list.Count; i++)
+			{
+				if (list[i].Controls.Count == 0)
+				{
+					return false;
+				}
+				if (!ProbeGroupInTree(f, i))
+				{
+					return false;
+				}
+			}
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	internal static bool VerifyResizable(Form f)
+	{
+		try
+		{
+			return f.FormBorderStyle == FormBorderStyle.Sizable && f.MaximizeBox && f.MinimumSize.Width >= 400 && f.MinimumSize.Height >= 300;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	internal static bool VerifyAnchors(Form f)
+	{
+		try
+		{
+			if (!(f is SettingsForm settingsForm))
+			{
+				return false;
+			}
+			// 新 UI：内容区（去掉侧栏后的宽度）≥ S(640) 时两列，< S(600) 时回到一列（带回滞）。
+			// 注意：窗口有 MinimumSize=S(640)，测试宽度必须大于它，否则会被系统夹小。
+			settingsForm.ClientSize = new Size(Sc(660), Sc(700));
+			LayoutWithContentOf(settingsForm);
+			int cols = settingsForm._cols;
+			settingsForm.ClientSize = new Size(Sc(1160), Sc(700));
+			LayoutWithContentOf(settingsForm);
+			int cols2 = settingsForm._cols;
+			settingsForm.ClientSize = new Size(Sc(660), Sc(700));
+			LayoutWithContentOf(settingsForm);
+			int cols3 = settingsForm._cols;
+			LastStretchDetail = "列数 " + cols + "->" + cols2 + "->" + cols3 + "（内容区 " + settingsForm.ContentWidth() + "/" + (Sc(1160) - Sc(208)) + "/" + settingsForm.ContentWidth() + "，阈值 " + Sc(600) + "~" + Sc(640) + "）";
+			return cols == 1 && cols2 == 2 && cols3 == 1;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	internal static string LastStretchDetail = string.Empty;
+
+	internal static bool VerifyInnerStretch(Form f)
+	{
+		try
+		{
+			if (!(f is SettingsForm settingsForm))
+			{
+				return false;
+			}
+			// 新 UI：一列模式下把窗口拉宽（仍在两列阈值以下），卡片跟着变宽，
+			// 卡片里的下拉框 / 黑名单输入框也必须跟着变宽（不是只把分组撑大）。
+			// 注意：DecideColumns 有 40px 设计滞回带（S(600)~S(640)），测试宽度要落在带外，
+			// 否则列数会保持上一次的状态，断言「cols==1」会时灵时不灵。
+			settingsForm.ClientSize = new Size(Sc(660), Sc(720));
+			LayoutWithContentOf(settingsForm);
+			int width = settingsForm._cmbLeft.Width;
+			int width2 = settingsForm._txtBlacklist.Width;
+			int cols = settingsForm._cols;
+			settingsForm.ClientSize = new Size(Sc(800), Sc(720));
+			LayoutWithContentOf(settingsForm);
+			int width3 = settingsForm._cmbLeft.Width;
+			int width4 = settingsForm._txtBlacklist.Width;
+			int cols2 = settingsForm._cols;
+			LastStretchDetail = "列数 " + cols + "->" + cols2 + " | 下拉框 " + width + "->" + width3 + " | 黑名单 " + width2 + "->" + width4 + " | " + DumpLayoutItem(f, settingsForm._cmbLeft);
+			return width3 > width && width4 > width2 && cols == 1 && cols2 == 1;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	internal static bool VerifyStretchIdempotent(Form f)
+	{
+		try
+		{
+			if (!(f is SettingsForm settingsForm))
+			{
+				return false;
+			}
+			// 窄档内容宽 Sc(800)-S(208)=Sc(592) < S(600)，稳稳在一列（避开滞回带）；
+			// 宽档 Sc(1180)-S(208)=Sc(972) ≥ S(640)，稳稳两列。来回切列数确定，才测得出漂移。
+			int num = Sc(800);
+			int num2 = Sc(1180);
+			settingsForm.ClientSize = new Size(num, Sc(720));
+			LayoutWithContentOf(settingsForm);
+			Rectangle bounds = settingsForm._cmbLeft.Bounds;
+			for (int i = 0; i < 5; i++)
+			{
+				settingsForm.ClientSize = new Size(num2, Sc(720));
+				LayoutWithContentOf(settingsForm);
+				settingsForm.ClientSize = new Size(num, Sc(720));
+				LayoutWithContentOf(settingsForm);
+			}
+			Rectangle bounds2 = settingsForm._cmbLeft.Bounds;
+			return bounds.Left == bounds2.Left && bounds.Width == bounds2.Width && bounds.Top == bounds2.Top;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	private static void LayoutWithContentOf(SettingsForm f)
+	{
+		f.LayoutWithContent(f.ContentWidth());
+	}
+
+	internal static string DumpLayoutItem(Form f, Control target)
+	{
+		if (target == null)
+		{
+			return "(null)";
+		}
+		try
+		{
+			return target.GetType().Name + " L=" + target.Left + " T=" + target.Top + " W=" + target.Width + " H=" + target.Height + " vis=" + target.Visible;
+		}
+		catch
+		{
+			return "(err)";
+		}
+	}
+
+	internal static void RelayoutForTest(Form f)
+	{
+		if (f is SettingsForm settingsForm)
+		{
+			LayoutWithContentOf(settingsForm);
+			settingsForm.Invalidate();
+		}
+	}
+
+	internal static void PopulateForTest(Form f)
+	{
+		if (f is SettingsForm settingsForm)
+		{
+			settingsForm.ResetDefaults();
+		}
+	}
+
+	internal static Rectangle ProbeRectOfTextForTest(Form f, string prefix)
+	{
+		try
+		{
+			if (!(f is SettingsForm settingsForm))
+			{
+				return Rectangle.Empty;
+			}
+			foreach (Card item in AllCards(settingsForm))
+			{
+				for (int i = 0; i < item.Controls.Count; i++)
+				{
+					Control control = item.Controls[i];
+					if (control.Text != null && control.Text.StartsWith(prefix))
+					{
+						return control.Bounds;
+					}
+				}
+			}
+		}
+		catch
+		{
+		}
+		return Rectangle.Empty;
+	}
+
+	internal static float ProbeUiScaleOf(Form f)
+	{
+		if (f is SettingsForm settingsForm)
+		{
+			return settingsForm.UiScale;
+		}
+		return 1f;
+	}
+
+	internal static void ProbeRescaleForDpi(Form f, int dpi)
+	{
+		if (f is SettingsForm settingsForm)
+		{
+			settingsForm.RescaleForDpi(dpi);
+		}
+	}
+
+	internal static string ProbeLayoutFingerprint(Form f)
+	{
+		StringBuilder stringBuilder = new StringBuilder();
+		try
+		{
+			if (!(f is SettingsForm settingsForm))
+			{
+				return "";
+			}
+			stringBuilder.Append("cols=").Append(settingsForm._cols).Append(';');
+			foreach (Card item in AllCards(settingsForm))
+			{
+				stringBuilder.Append(item.GetType().Name).Append(':').Append(item.Left).Append(',')
+					.Append(item.Top)
+					.Append(',')
+					.Append(item.Width)
+					.Append(',')
+					.Append(item.Height)
+					.Append(';');
+			}
+			stringBuilder.Append("cmbL=").Append(settingsForm._cmbLeft.Left).Append(',')
+				.Append(settingsForm._cmbLeft.Width)
+				.Append(';');
+			stringBuilder.Append("txtBl=").Append(settingsForm._txtBlacklist.Width).Append(';');
+			stringBuilder.Append("numHold=").Append(settingsForm._numHold.Width).Append(';');
+			stringBuilder.Append("preview=").Append(settingsForm._pnlPreview.Left).Append(',')
+				.Append(settingsForm._pnlPreview.Top)
+				.Append(',')
+				.Append(settingsForm._pnlPreview.Width)
+				.Append(',')
+				.Append(settingsForm._pnlPreview.Height)
+				.Append(';');
+			stringBuilder.Append("grid=").Append(settingsForm._gridColor.Width).Append('x').Append(settingsForm._gridColor.Height)
+				.Append(";gal=")
+				.Append(settingsForm._galleryStyle.Width)
+				.Append('x')
+				.Append(settingsForm._galleryStyle.Height)
+				.Append(';');
+		}
+		catch
+		{
+		}
+		return stringBuilder.ToString();
+	}
+
+	internal static int ProbeTwoColumnThresholdPx(Form f)
+	{
+		return Sc(640);
+	}
+
+	internal static int ProbeRelayoutColumns(Form f, int available)
+	{
+		if (!(f is SettingsForm settingsForm))
+		{
 			return -1;
+		}
+		try
+		{
+			settingsForm.LayoutWithContent(available);
+			return settingsForm._cols;
+		}
+		catch
+		{
+			return -1;
+		}
+	}
+
+	internal static RenderStats ProbeFormRender(Form f, string frameColorId)
+	{
+		RenderStats renderStats = new RenderStats();
+		try
+		{
+			if (!(f is SettingsForm settingsForm))
+			{
+				return renderStats;
+			}
+			settingsForm.SelectPage(2);
+			Application.DoEvents();
+			int width = f.Width;
+			int height = f.Height;
+			renderStats.Width = width;
+			renderStats.Height = height;
+			if (width <= 0 || height <= 0)
+			{
+				return renderStats;
+			}
+			using Bitmap bitmap = new Bitmap(width, height);
+			f.DrawToBitmap(bitmap, new Rectangle(0, 0, width, height));
+			HashSet<int> hashSet = new HashSet<int>();
+			Color color = Color.Gray;
+			try
+			{
+				color = FrameColors.Resolve(frameColorId);
+			}
+			catch
+			{
+			}
+		long num = 0L;
+		int num4 = 0;
+		for (int i = 0; i < height; i += 2)
+		{
+			for (int j = 0; j < width; j += 2)
+			{
+				Color pixel = bitmap.GetPixel(j, i);
+				hashSet.Add(pixel.ToArgb());
+				num += (pixel.R + pixel.G + pixel.B) / 3;
+				num4++;
+				if (pixel.R < 24 && pixel.G < 24 && pixel.B < 24)
+				{
+					renderStats.BlackPixels++;
+				}
+				if (Math.Abs(pixel.R - Tokens.Accent.R) <= 18 && Math.Abs(pixel.G - Tokens.Accent.G) <= 18 && Math.Abs(pixel.B - Tokens.Accent.B) <= 18)
+				{
+					renderStats.AccentPixels++;
+				}
+				if (Math.Abs(pixel.R - color.R) <= 18 && Math.Abs(pixel.G - color.G) <= 18 && Math.Abs(pixel.B - color.B) <= 18)
+				{
+					renderStats.FrameColorPixels++;
+				}
+			}
+		}
+		renderStats.DistinctColors = hashSet.Count;
+		renderStats.MeanBrightness = ((num4 == 0) ? 0.0 : ((double)num / (double)num4));
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+		return renderStats;
+	}
+
+	internal static bool ProbeHoverTweenAnimates(out float start, out float end)
+	{
+		start = 0f;
+		end = 0f;
+		try
+		{
+			using FlatButton flatButton = new FlatButton
+			{
+				Text = "悬停探针"
+			};
+			flatButton.KickHoverForTest();
+			start = flatButton.HoverValueForTest;
+			int num = 0;
+			while (flatButton.HoverValueForTest < 0.999f && num < 240)
+			{
+				Application.DoEvents();
+				Thread.Sleep(8);
+				num++;
+			}
+			end = flatButton.HoverValueForTest;
+			return start < 0.05f && end > 0.95f && end > start;
+		}
+		catch
+		{
+			return false;
 		}
 	}
 
@@ -22221,36 +20976,27 @@ internal sealed class SettingsForm : Form
 		{
 			if (!(f is SettingsForm settingsForm))
 			{
-				return "";
+				return "异常(no-form)";
 			}
-			FlatCheck flatCheck = null;
-			for (int i = 0; i < settingsForm._innerLayouts.Count; i++)
-			{
-				if (settingsForm._innerLayouts[i].Control is FlatCheck { Width: >40, Enabled: not false } flatCheck2)
-				{
-					flatCheck = flatCheck2;
-					break;
-				}
-			}
-			if (flatCheck == null)
-			{
-				return "(没找到可用的开关)";
-			}
-			bool flag = flatCheck.Checked;
-			flatCheck.Checked = on;
+			FlatCheck chkHold = settingsForm._chkHold;
+			chkHold.SnapCheckForTest(on);
 			Application.DoEvents();
-			using Bitmap bitmap = new Bitmap(Math.Max(1, flatCheck.Width), Math.Max(1, flatCheck.Height));
-			flatCheck.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
-			int num = CheckTextChrome - Fields.Sc(10);
-			int num2 = (int)Math.Round((double)num * 0.56);
-			int y = Math.Min(bitmap.Height - 1, num2 / 2);
-			int x = (on ? Math.Max(0, num / 5) : Math.Max(0, num - num / 5));
-			Color pixel = bitmap.GetPixel(x, y);
-			int x2 = (on ? Math.Max(0, num - num2 / 2) : Math.Max(0, num2 / 2));
-			Color pixel2 = bitmap.GetPixel(x2, y);
-			flatCheck.Checked = flag;
-			Application.DoEvents();
-			return "轨道=" + pixel.R + "," + pixel.G + "," + pixel.B + " 滑块=" + pixel2.R + "," + pixel2.G + "," + pixel2.B;
+			if (chkHold.Width <= 0 || chkHold.Height <= 0)
+			{
+				return "异常(zero-size)";
+			}
+			using Bitmap bitmap = new Bitmap(chkHold.Width, chkHold.Height);
+			chkHold.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
+			int r = 0;
+			int g = 0;
+			int b = 0;
+			Sample(bitmap, 1, bitmap.Height / 2, ref r, ref g, ref b);
+			Point knobCenter = chkHold.KnobCenter;
+			int r2 = 0;
+			int g2 = 0;
+			int b2 = 0;
+			Sample(bitmap, knobCenter.X, knobCenter.Y, ref r2, ref g2, ref b2);
+			return "轨道=" + r + "," + g + "," + b + " 滑块=" + r2 + "," + g2 + "," + b2 + " 尺寸=" + bitmap.Width + "x" + bitmap.Height;
 		}
 		catch (Exception ex)
 		{
@@ -22258,470 +21004,213 @@ internal sealed class SettingsForm : Form
 		}
 	}
 
+	private static void Sample(Bitmap bmp, int x, int y, ref int r, ref int g, ref int b)
+	{
+		x = Math.Max(0, Math.Min(bmp.Width - 1, x));
+		y = Math.Max(0, Math.Min(bmp.Height - 1, y));
+		Color pixel = bmp.GetPixel(x, y);
+		r = pixel.R;
+		g = pixel.G;
+		b = pixel.B;
+	}
+
 	internal static string ProbeGalleryGeometry(Form f)
 	{
-		if (!(f is SettingsForm settingsForm))
+		try
+		{
+			if (!(f is SettingsForm settingsForm))
+			{
+				return "";
+			}
+			settingsForm.SelectPage(2);
+			StyleGallery galleryStyle = settingsForm._galleryStyle;
+			int columns = galleryStyle.ColumnsFor(galleryStyle.Width);
+			int num = (galleryStyle.ItemsForTest.Count + columns - 1) / columns;
+			return "画廊 " + galleryStyle.ItemsForTest.Count + " 项 " + columns + " 列 " + num + " 行 格高=" + galleryStyle.CellH + " 控件高=" + galleryStyle.Height + " 需要=" + (num * (galleryStyle.CellH + galleryStyle.Gap) - galleryStyle.Gap) + " 选中=" + (galleryStyle.SelectedId ?? "(null)");
+		}
+		catch
 		{
 			return "";
 		}
+	}
+
+	internal static bool ProbeGalleryFits(Form f)
+	{
 		try
 		{
-			int num = FrameStyles.All.Length;
-		int num2 = settingsForm._galleryStyle.ColumnsForTest;
-			if (num2 <= 0)
+			if (!(f is SettingsForm settingsForm))
 			{
-			num2 = 1;
+				return false;
 			}
-			int num3 = (num + num2 - 1) / num2;
-			return "样式数=" + num + " 列=" + num2 + " 行=" + num3 + " 格高=" + settingsForm._galleryStyle.CellHeightForTest + " 间隙=" + settingsForm._galleryStyle.GapForTest + " 需要高=" + (num3 * settingsForm._galleryStyle.CellHeightForTest + (num3 - 1) * settingsForm._galleryStyle.GapForTest) + " 控件高=" + settingsForm._galleryStyle.Height;
+			settingsForm.SelectPage(2);
+			StyleGallery galleryStyle = settingsForm._galleryStyle;
+			int columns = galleryStyle.ColumnsFor(galleryStyle.Width);
+			int num = (galleryStyle.ItemsForTest.Count + columns - 1) / columns;
+			int num2 = num * (galleryStyle.CellH + galleryStyle.Gap) - galleryStyle.Gap;
+			return galleryStyle.Height >= num2 && InsideCard(galleryStyle);
 		}
-		catch (Exception ex)
+		catch
 		{
-			return "异常 " + ex.GetType().Name;
+			return false;
 		}
 	}
 
 	internal static string ProbeColorGridGeometry(Form f)
 	{
-		if (!(f is SettingsForm settingsForm))
-		{
-			return "";
-		}
 		try
 		{
-			int num = FrameColors.All.Length;
-			int num2 = settingsForm._gridColor.Columns;
-			if (num2 <= 0)
+			if (!(f is SettingsForm settingsForm))
 			{
-			num2 = 5;
+				return "";
 			}
-			int num3 = (num + num2 - 1) / num2;
-			return "颜色数=" + num + " 列=" + num2 + " 行=" + num3 + " 格=" + Fields.Sc(22) + " 间隙=" + Fields.Sc(6) + " 需要高=" + (num3 * Fields.Sc(22) + (num3 - 1) * Fields.Sc(6)) + " 控件高=" + settingsForm._gridColor.Height;
+			settingsForm.SelectPage(2);
+			SwatchGrid gridColor = settingsForm._gridColor;
+			int columns = gridColor.ColumnsFor(gridColor.Width);
+			int num = (gridColor.CellCount + columns - 1) / columns;
+			return "色板 " + gridColor.CellCount + " 格 " + columns + " 列 " + num + " 行 格高=" + gridColor.Cell + " 控件高=" + gridColor.Height + " 需要=" + (num * (gridColor.Cell + gridColor.Gap) - gridColor.Gap) + " 选中=" + (gridColor.SelectedId ?? "(null)");
 		}
-		catch (Exception ex)
+		catch
 		{
-			return "异常 " + ex.GetType().Name;
+			return "";
 		}
 	}
 
 	internal static bool ProbeColorGridFits(Form f)
 	{
-		if (!(f is SettingsForm settingsForm))
+		try
 		{
-			return false;
-		}
-		int num = FrameColors.All.Length;
-		int num2 = settingsForm._gridColor.Columns;
-		if (num2 <= 0)
-		{
-			num2 = 5;
-		}
-		int num3 = (num + num2 - 1) / num2;
-		int num4 = num3 * Fields.Sc(22) + (num3 - 1) * Fields.Sc(6);
-		return settingsForm._gridColor.Height >= num4;
-	}
-
-	internal static bool ProbeGalleryFits(Form f)
-	{
-		if (!(f is SettingsForm settingsForm))
-		{
-			return false;
-		}
-		int num = FrameStyles.All.Length;
-		int num2 = settingsForm._galleryStyle.ColumnsForTest;
-		if (num2 <= 0)
-		{
-			num2 = 1;
-		}
-		int num3 = (num + num2 - 1) / num2;
-		int num4 = num3 * settingsForm._galleryStyle.CellHeightForTest + (num3 - 1) * settingsForm._galleryStyle.GapForTest;
-		return settingsForm._galleryStyle.Height >= num4;
-	}
-
-	internal static int ProbeGroupCount(Form f)
-	{
-		if (f is SettingsForm { _groups: not null } settingsForm)
-		{
-			return settingsForm._groups.Length;
-		}
-		return 0;
-	}
-
-	internal static bool ProbeGroupInTree(Form f, int index)
-	{
-		if (!(f is SettingsForm { _groups: not null } settingsForm))
-		{
-			return false;
-		}
-		if (index < 0 || index >= settingsForm._groups.Length)
-		{
-			return false;
-		}
-		Control control = settingsForm._groups[index];
-		for (int i = 0; i < 16; i++)
-		{
-			if (control == null)
+			if (!(f is SettingsForm settingsForm))
 			{
-				break;
+				return false;
 			}
-			if (control == settingsForm)
-			{
-				return true;
-			}
-			control = control.Parent;
+			settingsForm.SelectPage(2);
+			SwatchGrid gridColor = settingsForm._gridColor;
+			int columns = gridColor.ColumnsFor(gridColor.Width);
+			int num = (gridColor.CellCount + columns - 1) / columns;
+			int num2 = num * (gridColor.Cell + gridColor.Gap) - gridColor.Gap;
+			return gridColor.Height >= num2 && InsideCard(gridColor);
 		}
-		return false;
+		catch
+		{
+			return false;
+		}
 	}
 
-	internal static string ProbeGroupRects(Form f, int index)
+	internal static void DumpGroup(Form f, int groupIndex, StringBuilder sb)
 	{
-		if (!(f is SettingsForm { _groups: not null } settingsForm))
+		try
 		{
-			return "";
-		}
-		if (index < 0 || index >= settingsForm._groups.Length)
-		{
-			return "";
-		}
-		GroupBox groupBox = settingsForm._groups[index];
-		StringBuilder stringBuilder = new StringBuilder();
-		for (int i = 0; i < groupBox.Controls.Count; i++)
-		{
-			Control control = groupBox.Controls[i];
-			if (control != null)
+			if (!(f is SettingsForm settingsForm))
 			{
-				stringBuilder.Append(ShortText(control)).Append('(').Append(control.Left)
-					.Append(',')
-					.Append(control.Top)
-					.Append(' ')
-					.Append(control.Width)
-					.Append('x')
-					.Append(control.Height)
-					.Append(") ");
+				return;
+			}
+			List<Card> list = AllCards(settingsForm);
+			if (groupIndex < 0 || groupIndex >= list.Count)
+			{
+				return;
+			}
+			Control control = list[groupIndex];
+			sb.AppendLine("分组[" + groupIndex + "] 「" + control.Text + "」 L=" + control.Left + " T=" + control.Top + " W=" + control.Width + " H=" + control.Height + " 客户区=" + control.ClientSize.Width + "x" + control.ClientSize.Height);
+			for (int i = 0; i < control.Controls.Count; i++)
+			{
+				Control control2 = control.Controls[i];
+				sb.AppendLine("   " + control2.GetType().Name + " 「" + ShortText(control2.Text ?? "") + "」 L=" + control2.Left + " T=" + control2.Top + " W=" + control2.Width + " H=" + control2.Height + " vis=" + control2.Visible);
 			}
 		}
-		return stringBuilder.ToString();
+		catch (Exception ex)
+		{
+			sb.AppendLine("异常 " + ex.GetType().Name);
+		}
 	}
 
-	internal static string ProbeGroupOverlaps(Form f, int index)
+	internal static void DumpVisualGroupGeometry(StringBuilder sb, int[] designWidths)
 	{
-		if (!(f is SettingsForm { _groups: not null } settingsForm))
+		SettingsForm settingsForm = null;
+		try
 		{
-			return "";
-		}
-		if (index < 0 || index >= settingsForm._groups.Length)
-		{
-			return "";
-		}
-		GroupBox obj = settingsForm._groups[index];
-		StringBuilder stringBuilder = new StringBuilder();
-		Control.ControlCollection controls = obj.Controls;
-		for (int i = 0; i < controls.Count; i++)
-		{
-			for (int j = i + 1; j < controls.Count; j++)
+			string text = Path.Combine(Path.GetTempPath(), "holddrag-vgeom-cfg");
+			try
 			{
-				Control control = controls[i];
-				Control control2 = controls[j];
-				if (control != null && control2 != null && control.Visible && control2.Visible)
+				Directory.CreateDirectory(text);
+			}
+			catch
+			{
+			}
+			ConfigStore configStore = new ConfigStore(text);
+			try
+			{
+				configStore.Load();
+			}
+			catch
+			{
+			}
+			Coordinator coord = new Coordinator(configStore);
+			settingsForm = new SettingsForm(configStore, coord);
+			settingsForm.StartPosition = FormStartPosition.Manual;
+			settingsForm.Location = new Point(20, 20);
+			float num = (CurrentUiScale > 0f) ? CurrentUiScale : 1f;
+			for (int i = 0; i < designWidths.Length; i++)
+			{
+				int num2 = (int)Math.Round((float)designWidths[i] * num);
+				settingsForm.ClientSize = new Size(num2, 900);
+				settingsForm.LayoutWithContent(settingsForm.ClientSize.Width - Sc(208));
+				settingsForm.SelectPage(2);
+				Application.DoEvents();
+				int width = settingsForm.ClientSize.Width;
+				sb.Append("══ 客户区宽=").Append(width).Append("（设计稿 ").Append(designWidths[i]).Append("px）════")
+					.AppendLine();
+				List<Card> list = AllCards(settingsForm);
+				for (int j = 0; j < list.Count; j++)
 				{
-					Rectangle bounds = control.Bounds;
-					Rectangle bounds2 = control2.Bounds;
-					Rectangle rectangle = Rectangle.Intersect(bounds, bounds2);
-					if (rectangle.Width > 1 && rectangle.Height > 1)
-					{
-						stringBuilder.Append('[').Append(i).Append(':')
-							.Append(ShortText(control))
-							.Append(" x ")
-							.Append(j)
-							.Append(':')
-							.Append(ShortText(control2))
-							.Append(" 重叠 ")
-							.Append(rectangle.Width)
-							.Append('x')
-							.Append(rectangle.Height)
-							.Append("] ");
-					}
+					Control control = list[j];
+					sb.Append("  z=").Append(j).Append(' ')
+						.Append(control.GetType().Name)
+						.Append(" vis=")
+						.Append(control.Visible)
+						.Append(" L=")
+						.Append(control.Left)
+						.Append(" T=")
+						.Append(control.Top)
+						.Append(" W=")
+						.Append(control.Width)
+						.Append(" H=")
+						.Append(control.Height)
+						.Append(" 右=")
+						.Append(control.Right)
+						.Append(" 底=")
+						.Append(control.Bottom)
+						.AppendLine();
 				}
+				FramePreviewBox pnlPreview = settingsForm._pnlPreview;
+				sb.Append("  z=0 FramePreviewBox vis=").Append(pnlPreview.Visible).Append(" L=")
+					.Append(pnlPreview.Left)
+					.Append(" T=")
+					.Append(pnlPreview.Top)
+					.Append(" W=")
+					.Append(pnlPreview.Width)
+					.Append(" H=")
+					.Append(pnlPreview.Height)
+					.Append(" 右=")
+					.Append(pnlPreview.Right)
+					.Append(" 底=")
+					.Append(pnlPreview.Bottom)
+					.AppendLine();
 			}
-		}
-		return stringBuilder.ToString();
-	}
-
-	private static string ShortText(Control c)
-	{
-		string text = c.Text;
-		if (string.IsNullOrEmpty(text))
-		{
-			text = c.GetType().Name;
-		}
-		if (text.Length > 12)
-		{
-			return text.Substring(0, 12);
-		}
-		return text;
-	}
-
-	internal static int ProbeSidebarActive(Form f)
-	{
-		if (f is SettingsForm { _sidebar: not null } settingsForm)
-		{
-			return settingsForm._sidebar.ActiveForTest;
-		}
-		return -1;
-	}
-
-	internal static int ProbeSidebarCount(Form f)
-	{
-		if (f is SettingsForm { _sidebar: not null } settingsForm)
-		{
-			return settingsForm._sidebar.CountForTest;
-		}
-		return -1;
-	}
-
-	internal static int ProbeWheelScroll(Form f, int notches)
-	{
-		if (!(f is SettingsForm settingsForm))
-		{
-			return -1;
-		}
-		try
-		{
-			Point point = settingsForm._scrollHost.PointToScreen(new Point(settingsForm._scrollHost.ClientSize.Width / 2, settingsForm._scrollHost.ClientSize.Height / 2));
-			long num = (long)(((ulong)point.X & 0xFFFFuL) | (((ulong)point.Y & 0xFFFFuL) << 16));
-			for (int i = 0; i < Math.Abs(notches); i++)
-			{
-				long num2 = (long)((ulong)(ushort)((notches > 0) ? 120 : (-120)) << 16);
-				Native.SendMessageW(settingsForm._scrollHost.Handle, 522, new IntPtr((int)num2), new IntPtr((int)num));
-			}
-			Application.DoEvents();
-			return -settingsForm._scrollHost.AutoScrollPosition.Y;
 		}
 		catch (Exception ex)
 		{
-			Log.Error(ex);
-			return -2;
+			sb.AppendLine("异常 " + ex.GetType().Name + ": " + ex.Message);
 		}
-	}
-
-	internal static string ProbeScrollInfo(Form f)
-	{
-		if (!(f is SettingsForm settingsForm))
+		finally
 		{
-			return "";
-		}
-		try
-		{
-			return "窗体客户区=" + settingsForm.ClientSize.Width + "x" + settingsForm.ClientSize.Height + " 滚动区=" + settingsForm._scrollHost.ClientSize.Width + "x" + settingsForm._scrollHost.ClientSize.Height + " 显示矩形=" + settingsForm._scrollHost.DisplayRectangle.ToString() + " 分组宿主高=" + ((settingsForm._groupHost == null) ? (-1) : settingsForm._groupHost.Height) + " AutoScroll=" + settingsForm._scrollHost.AutoScroll + " 可见=" + settingsForm._scrollHost.Visible;
-		}
-		catch (Exception ex)
-		{
-			return "异常 " + ex.GetType().Name;
-		}
-	}
-
-	internal static string ProbeSyncDiag(Form f)
-	{
-		if (!(f is SettingsForm { _sidebar: not null } settingsForm))
-		{
-			return "";
-		}
-		return "SyncActive被调=" + settingsForm._sidebar.SyncCountForTest + " 末次top=" + settingsForm._sidebar.LastTopForTest + " 末次best=" + settingsForm._sidebar.LastBestForTest + " 当前滚动=" + -settingsForm._scrollHost.AutoScrollPosition.Y;
-	}
-
-	internal static int ProbeScrollTo(Form f, int y)
-	{
-		if (!(f is SettingsForm settingsForm))
-		{
-			return -1;
-		}
-		try
-		{
-			settingsForm._scrollHost.AutoScrollPosition = new Point(0, Math.Max(0, y));
-			settingsForm._scrollHost.PerformLayout();
-			settingsForm._sidebar.SyncActive();
-			return -settingsForm._scrollHost.AutoScrollPosition.Y;
-		}
-		catch (Exception ex)
-		{
-			Log.Error(ex);
-			return -2;
-		}
-	}
-
-	internal static int ProbeGroupTop(Form f, int index)
-	{
-		if (!(f is SettingsForm { _groups: not null } settingsForm))
-		{
-			return -1;
-		}
-		if (index < 0 || index >= settingsForm._groups.Length)
-		{
-			return -1;
-		}
-		return settingsForm._groups[index].Top;
-	}
-
-	internal static int ProbeWheelSwallowed(Control c)
-	{
-		if (c is FlatCombo flatCombo)
-		{
-			return flatCombo.WheelSwallowedForTest;
-		}
-		return -1;
-	}
-
-	internal static int ProbeWheelForwarded(Control c)
-	{
-		if (c is FlatCombo flatCombo)
-		{
-			return flatCombo.WheelForwardedForTest;
-		}
-		return -1;
-	}
-
-	internal int ProbeDefaultClientHeight()
-	{
-		return S(640);
-	}
-
-	internal static bool VerifyLayout(Form f)
-	{
-		if (!(f is SettingsForm { _groupHost: not null } settingsForm))
-		{
-			return false;
-		}
-		if (!IsInFormChain(f, settingsForm._groupHost))
-		{
-			return false;
-		}
-		int num = 0;
-		for (int i = 0; i < settingsForm._groupHost.Controls.Count; i++)
-		{
-			if (settingsForm._groupHost.Controls[i] is GroupBox)
+			try
 			{
-				num++;
+				settingsForm?.Close();
+				settingsForm?.Dispose();
 			}
-		}
-		return num >= 6;
-	}
-
-	private static bool IsInFormChain(Form f, Control c)
-	{
-		for (Control control = c; control != null; control = control.Parent)
-		{
-			if (control == f)
+			catch
 			{
-				return true;
 			}
-		}
-		return false;
-	}
-
-	internal static bool VerifyResizable(Form f)
-	{
-		if (f.FormBorderStyle != FormBorderStyle.Sizable)
-		{
-			return false;
-		}
-		if (!f.MaximizeBox)
-		{
-			return false;
-		}
-		if (f.MinimumSize.Width < 400 || f.MinimumSize.Height < 300)
-		{
-			return false;
-		}
-		return true;
-	}
-
-	internal static bool VerifyAnchors(Form f)
-	{
-		if (!(f is SettingsForm { _groupHost: not null, GroupWidth: var groupWidth } settingsForm))
-		{
-			return false;
-		}
-		settingsForm._groupHost.Width = groupWidth;
-		settingsForm._groupHost.Relayout(groupWidth);
-		if (settingsForm._groupHost.CurrentColumns != 1)
-		{
-			return false;
-		}
-		int num = (int)Math.Round(1300f * CurrentUiScale);
-		settingsForm._groupHost.Width = num;
-		settingsForm._groupHost.Relayout(num);
-		if (settingsForm._groupHost.CurrentColumns != 2)
-		{
-			return false;
-		}
-		settingsForm._groupHost.Width = groupWidth;
-		settingsForm._groupHost.Relayout(groupWidth);
-		if (settingsForm._groupHost.CurrentColumns != 1)
-		{
-			return false;
-		}
-		return true;
-	}
-
-	internal static bool VerifyInnerStretch(Form f)
-	{
-		if (!(f is SettingsForm { _groupHost: not null } settingsForm) || settingsForm._innerLayouts.Count == 0)
-		{
-			return false;
-		}
-		settingsForm.ClientSize = new Size(560, 760);
-		Application.DoEvents();
-		settingsForm.LayoutResponsive();
-		int width = settingsForm._cmbLeft.Width;
-		int width2 = settingsForm._txtBlacklist.Width;
-		int num = ((settingsForm._cmbLeft.Parent != null) ? settingsForm._cmbLeft.Parent.ClientSize.Width : (-1));
-		int currentColumns = settingsForm._groupHost.CurrentColumns;
-		settingsForm.ClientSize = new Size(ClientWidthForTwoColumns, 820 * (((int)Math.Round(CurrentUiScale) < 1) ? 1 : ((int)Math.Round(CurrentUiScale))));
-		Application.DoEvents();
-		settingsForm.LayoutResponsive();
-		int width3 = settingsForm._cmbLeft.Width;
-		int width4 = settingsForm._txtBlacklist.Width;
-		int num2 = ((settingsForm._cmbLeft.Parent != null) ? settingsForm._cmbLeft.Parent.ClientSize.Width : (-1));
-		int currentColumns2 = settingsForm._groupHost.CurrentColumns;
-		LastStretchDetail = "列数 " + currentColumns + "->" + currentColumns2 + " | 下拉框 " + width + "->" + width3 + " | 黑名单 " + width2 + "->" + width4 + " | 分组内宽 " + num + "->" + num2 + " | " + DumpLayoutItem(f, settingsForm._cmbLeft);
-		if (currentColumns2 == 2)
-		{
-			if (width3 < 160)
-			{
-				return false;
-			}
-			if (width4 < 160)
-			{
-				return false;
-			}
-		}
-		else
-		{
-			if (width3 <= width)
-			{
-				return false;
-			}
-			if (width4 <= width2)
-			{
-				return false;
-			}
-		}
-		return true;
-	}
-
-	internal static void RelayoutForTest(Form f)
-	{
-		if (f is SettingsForm settingsForm)
-		{
-			settingsForm.LayoutResponsive();
-		}
-	}
-
-	internal static void PopulateForTest(Form f)
-	{
-		if (f is SettingsForm settingsForm)
-		{
-			settingsForm.Populate();
 		}
 	}
 
@@ -22753,9 +21242,9 @@ internal sealed class SettingsForm : Form
 			settingsForm.Location = new Point(20, 20);
 			settingsForm.ClientSize = new Size(700, 900);
 			settingsForm.Show();
+			settingsForm.SelectPage(2);
 			Application.DoEvents();
 			StringBuilder stringBuilder = new StringBuilder();
-			List<string> list = new List<string>();
 			stringBuilder.AppendLine("=== 路径 A：直接设 StyleId 字段 ===");
 			string[] all = FrameStyles.All;
 			foreach (string text2 in all)
@@ -22786,15 +21275,7 @@ internal sealed class SettingsForm : Form
 						}
 					}
 				}
-				list.Add(text2);
-				InlineArray6<object> buffer = default;
-				buffer[0] = text2;
-				buffer[1] = bitmap.Width;
-				buffer[2] = bitmap.Height;
-				buffer[3] = num;
-				buffer[4] = num2;
-				buffer[5] = Path.GetFileName(text3);
-				stringBuilder.AppendLine(string.Format("  {0,-8} size={1}x{2} 像素和={3} 非白像素={4} 文件={5}", (ReadOnlySpan<object?>)buffer));
+				stringBuilder.AppendLine("  " + text2 + " size=" + bitmap.Width + "x" + bitmap.Height + " 像素和=" + num + " 非白像素=" + num2 + " 文件=" + Path.GetFileName(text3));
 			}
 			stringBuilder.AppendLine();
 			stringBuilder.AppendLine("=== 路径 B：改下拉框 SelectedIndex（模拟用户点选）===");
@@ -22804,7 +21285,7 @@ internal sealed class SettingsForm : Form
 				settingsForm._cmbFrameStyle.SelectedIndex = l;
 				Application.DoEvents();
 				string styleId = settingsForm._pnlPreview.StyleId;
-				object obj3 = settingsForm._cmbFrameStyle.Items[l];
+				object obj = settingsForm._cmbFrameStyle.Items[l];
 				FramePreviewBox pnlPreview2 = settingsForm._pnlPreview;
 				long num3 = 0L;
 				int num4 = 0;
@@ -22825,17 +21306,10 @@ internal sealed class SettingsForm : Form
 						}
 					}
 				}
-				InlineArray6<object> buffer2 = default;
-				buffer2[0] = l;
-				buffer2[1] = ((obj3 != null) ? obj3.ToString() : "(null)");
-				buffer2[2] = styleId;
-				buffer2[3] = num3;
-				buffer2[4] = num4;
-				buffer2[5] = ((styleId == settingsForm._pnlPreview.StyleId) ? "" : "  ← ★ 不一致！");
-				stringBuilder.AppendLine(string.Format("  index={0} 下拉项文字=\"{1}\" → 预览 StyleId=\"{2}\" 像素和={3} 非白像素={4} {5}", (ReadOnlySpan<object?>)buffer2));
+				stringBuilder.AppendLine("  index=" + l + " 下拉项文字=\"" + ((obj != null) ? obj.ToString() : "(null)") + "\" → 预览 StyleId=\"" + styleId + "\" 像素和=" + num3 + " 非白像素=" + num4 + ((styleId == settingsForm._pnlPreview.StyleId) ? "" : "  ← ★ 不一致！"));
 			}
 			stringBuilder.AppendLine();
-			stringBuilder.AppendLine("★ 路径 A 各行 [像素和] 全不同 → 五种样式确实画出了不同结果；");
+			stringBuilder.AppendLine("★ 路径 A 各行 [像素和] 全不同 → 样式确实画出了不同结果；");
 			stringBuilder.AppendLine("★ 路径 B 各行 [像素和] 全不同 → 下拉框连线正常，改选项能刷新预览；");
 			stringBuilder.AppendLine("  若路径 B 有任意两行相同，就是[选了形状但预览不变]的真 bug。");
 			stringBuilder.AppendLine();
@@ -22846,319 +21320,158 @@ internal sealed class SettingsForm : Form
 				configStore2.Load();
 				Coordinator coord2 = new Coordinator(configStore2);
 				AppConfig current = configStore2.Current;
-				InlineArray5<object> buffer3 = default;
-				buffer3[0] = current.FrameColorId;
-				buffer3[1] = current.FrameStyleId;
-				buffer3[2] = current.FrameThickness;
-				buffer3[3] = current.FrameRadius;
-				buffer3[4] = current.ShowActivationFrame;
-				stringBuilder.AppendLine(string.Format("  配置：颜色={0} 样式={1} 粗细={2} 圆角={3} 外框开关={4}", (ReadOnlySpan<object?>)buffer3));
+				stringBuilder.AppendLine("  配置：颜色=" + current.FrameColorId + " 样式=" + current.FrameStyleId + " 粗细=" + current.FrameThickness + " 圆角=" + current.FrameRadius + " 外框开关=" + current.ShowActivationFrame);
 				SettingsForm settingsForm2 = new SettingsForm(configStore2, coord2);
 				settingsForm2.StartPosition = FormStartPosition.Manual;
 				settingsForm2.Location = new Point(20, 20);
 				settingsForm2.ClientSize = new Size(900, 900);
 				settingsForm2.Show();
+				settingsForm2.SelectPage(2);
 				Application.DoEvents();
 				for (int num5 = 0; num5 < 4; num5++)
 				{
 					Application.DoEvents();
 					Thread.Sleep(80);
 				}
-				stringBuilder.AppendLine(string.Format("  下拉框选中项：颜色=\"{0}\" 样式=\"{1}\"", (settingsForm2._cmbFrameColor.SelectedItem != null) ? settingsForm2._cmbFrameColor.SelectedItem.ToString() : "(null)", (settingsForm2._cmbFrameStyle.SelectedItem != null) ? settingsForm2._cmbFrameStyle.SelectedItem.ToString() : "(null)"));
-				InlineArray5<object> buffer4 = default;
-				buffer4[0] = settingsForm2._pnlPreview.ColorId;
-				buffer4[1] = settingsForm2._pnlPreview.StyleId;
-				buffer4[2] = settingsForm2._pnlPreview.Thickness;
-				buffer4[3] = settingsForm2._pnlPreview.Radius;
-				buffer4[4] = settingsForm2._pnlPreview.FrameEnabled;
-				stringBuilder.AppendLine(string.Format("  预览控件字段：ColorId=\"{0}\" StyleId=\"{1}\" Thickness={2} Radius={3} Enabled={4}", (ReadOnlySpan<object?>)buffer4));
+				stringBuilder.AppendLine("  下拉框选中项：颜色=\"" + ((settingsForm2._cmbFrameColor.SelectedItem != null) ? settingsForm2._cmbFrameColor.SelectedItem.ToString() : "(null)") + "\" 样式=\"" + ((settingsForm2._cmbFrameStyle.SelectedItem != null) ? settingsForm2._cmbFrameStyle.SelectedItem.ToString() : "(null)") + "\"");
+				stringBuilder.AppendLine("  预览控件字段：ColorId=\"" + settingsForm2._pnlPreview.ColorId + "\" StyleId=\"" + settingsForm2._pnlPreview.StyleId + "\" Thickness=" + settingsForm2._pnlPreview.Thickness + " Radius=" + settingsForm2._pnlPreview.Radius + " Enabled=" + settingsForm2._pnlPreview.FrameEnabled);
 				FramePreviewBox pnlPreview3 = settingsForm2._pnlPreview;
 				using (Bitmap bitmap3 = new Bitmap(pnlPreview3.Width, pnlPreview3.Height))
 				{
 					pnlPreview3.DrawToBitmap(bitmap3, new Rectangle(0, 0, pnlPreview3.Width, pnlPreview3.Height));
 					bitmap3.Save(Path.Combine(outDir, "preview-REALCONFIG.png"), ImageFormat.Png);
-					int y = bitmap3.Height / 2;
 					int num6 = 0;
-					bool flag = false;
-					StringBuilder stringBuilder2 = new StringBuilder();
 					for (int num7 = 0; num7 < bitmap3.Width; num7++)
 					{
-						Color pixel3 = bitmap3.GetPixel(num7, y);
-						int num8;
-						if (pixel3.R > pixel3.G + 8)
+						if (bitmap3.GetPixel(num7, bitmap3.Height / 2).A != 0)
 						{
-							num8 = ((pixel3.R > pixel3.B + 8) ? 1 : 0);
-							if (num8 != 0 && !flag)
-							{
-								num6++;
-								stringBuilder2.Append(" 第" + num6 + "条@x=" + num7);
-							}
+							num6++;
 						}
-						else
-						{
-							num8 = 0;
-						}
-						flag = (byte)num8 != 0;
 					}
-					stringBuilder.AppendLine("  ★ 左半行(y=" + y + ")扫到的红线数 = " + num6 + stringBuilder2);
-					stringBuilder.AppendLine("    Double 样式应该是 2 条；1 条说明预览没按配置画。");
+					stringBuilder.AppendLine("  中线非透明像素=" + num6 + " / " + bitmap3.Width);
 				}
-				settingsForm2.Close();
-			}
-			catch (Exception ex)
-			{
-				stringBuilder.AppendLine("  路径 C 异常：" + ex.Message);
-			}
-			File.WriteAllText(Path.Combine(outDir, "preview-styles.txt"), stringBuilder.ToString(), Encoding.UTF8);
-		}
-		catch (Exception ex2)
-		{
-			Log.Error(ex2);
-		}
-		finally
-		{
-			if (settingsForm != null)
-			{
 				try
 				{
-					settingsForm.Close();
+					settingsForm2.Close();
+					settingsForm2.Dispose();
 				}
 				catch
 				{
 				}
 			}
+			catch (Exception ex2)
+			{
+				stringBuilder.AppendLine("  路径 C 失败：" + ex2.Message);
+			}
+			File.WriteAllText(Path.Combine(outDir, "previewtest.txt"), stringBuilder.ToString(), Encoding.UTF8);
+		}
+		catch (Exception ex3)
+		{
+			Log.Error(ex3);
+		}
+		finally
+		{
+			try
+			{
+				settingsForm?.Close();
+				settingsForm?.Dispose();
+			}
+			catch
+			{
+			}
 		}
 	}
 
-	internal static void DumpVisualGroupGeometry(StringBuilder sb, int[] designWidths)
+	// ======================= 小值对象 =======================
+
+	private sealed class ActionItem
 	{
-		SettingsForm settingsForm = null;
+		public string Value;
+		public string Text;
+
+		public override string ToString()
+		{
+			return Text;
+		}
+	}
+
+	private sealed class IdItem
+	{
+		public string Value;
+		public string Text;
+
+		public override string ToString()
+		{
+			return Text;
+		}
+	}
+
+	private sealed class ColorItem
+	{
+		public string Value;
+		public string Text;
+		public Color Color;
+
+		public override string ToString()
+		{
+			return Text;
+		}
+	}
+
+	private static void PaintColorEntry(Graphics g, Rectangle bounds, object item)
+	{
 		try
 		{
-			string text = Path.Combine(Path.GetTempPath(), "holddrag-geom-cfg");
-			Directory.CreateDirectory(text);
-			ConfigStore configStore = new ConfigStore(text);
-			configStore.Load();
-			Coordinator coord = new Coordinator(configStore);
-			settingsForm = new SettingsForm(configStore, coord);
-			settingsForm.StartPosition = FormStartPosition.Manual;
-			settingsForm.Location = new Point(-2400, 20);
-			settingsForm.Show();
-			Application.DoEvents();
-			Pump();
-			int num = (int)Math.Round(CurrentUiScale);
-			if (num < 1)
+			if (!(item is ColorItem colorItem) || bounds.Width <= 0 || bounds.Height <= 0)
 			{
-				num = 1;
+				return;
 			}
-			for (int i = 0; i < designWidths.Length; i++)
+			HQ.Apply(g);
+			int num = Math.Max(8, (int)Math.Round((double)bounds.Height * 0.52));
+			if (num > bounds.Width / 3)
 			{
-				int width = designWidths[i] * num;
-				int height = Math.Min(Screen.PrimaryScreen.WorkingArea.Height - 80, Math.Max(600, 900 * num));
-				settingsForm.ClientSize = new Size(width, height);
-				Application.DoEvents();
-				Pump();
-				settingsForm.LayoutResponsive();
-				Application.DoEvents();
-				sb.AppendLine();
-				sb.AppendLine("════ 视觉反馈组几何 · 客户区宽=" + width + "（设计稿 " + designWidths[i] + "px）════");
-				DumpGroup(settingsForm, 2, sb);
-				if (settingsForm._groupHost.Controls[2] is GroupBox groupBox)
+				num = Math.Max(8, bounds.Width / 3);
+			}
+			int y = bounds.Top + (bounds.Height - num) / 2;
+			Rectangle r = new Rectangle(bounds.Left, y, num, num);
+			GraphicsPath graphicsPath = RoundedPath(r, Sc(3));
+			try
+			{
+				using (SolidBrush brush = new SolidBrush(colorItem.Color))
 				{
-					sb.AppendLine("z 序 / 可见性 / 实际 bounds（客户区坐标，z=0 在最上层）：");
-					for (int j = 0; j < groupBox.Controls.Count; j++)
-					{
-						Control control = groupBox.Controls[j];
-						InlineArray9<object> buffer = default;
-						buffer[0] = groupBox.Controls.GetChildIndex(control);
-						buffer[1] = control.GetType().Name;
-						buffer[2] = control.Visible;
-						buffer[3] = control.Left;
-						buffer[4] = control.Top;
-						buffer[5] = control.Width;
-						buffer[6] = control.Height;
-						buffer[7] = control.Left + control.Width;
-						buffer[8] = control.Top + control.Height;
-						sb.AppendLine(string.Format("  z={0,-2} {1,-16} vis={2,-5} L={3,-5} T={4,-5} W={5,-5} H={6,-5} 右={7,-5} 底={8}", (ReadOnlySpan<object?>)buffer));
-					}
+					g.FillPath(brush, graphicsPath);
 				}
+				using Pen pen = new Pen(Tokens.InputStroke);
+				g.DrawPath(pen, graphicsPath);
 			}
+			finally
+			{
+				graphicsPath.Dispose();
+			}
+			TextRenderer.DrawText(bounds: new Rectangle(r.Right + Sc(8), bounds.Top, Math.Max(10, bounds.Width - num - Sc(10)), bounds.Height), dc: g, text: colorItem.Text, font: SystemFonts.DefaultFont, foreColor: Tokens.TextPrimary, flags: TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
 		}
 		catch (Exception ex)
 		{
-			sb.AppendLine("异常：" + ex.Message);
-		}
-		finally
-		{
-			if (settingsForm != null)
-			{
-				try
-				{
-					settingsForm.Close();
-				}
-				catch
-				{
-				}
-			}
+			Log.Error(ex);
 		}
 	}
 
-	private static void Pump()
+	internal static int ProbeWheelSwallowed(ComboBox c)
 	{
-		for (int i = 0; i < 3; i++)
+		if (c is FlatCombo flatCombo)
 		{
-			Application.DoEvents();
-			Thread.Sleep(30);
+			return flatCombo.WheelSwallowedForTest;
 		}
+		return 0;
 	}
 
-	internal int NeedGroupBottom(GroupBox gb)
+	internal static int ProbeWheelForwarded(ComboBox c)
 	{
-		int num = 0;
-		for (int i = 0; i < _innerLayouts.Count; i++)
+		if (c is FlatCombo flatCombo)
 		{
-			Control control = _innerLayouts[i].Control;
-			if (control != null && control.Parent == gb)
-			{
-				int num2 = control.Top + control.Height;
-				if (num2 > num)
-				{
-					num = num2;
-				}
-			}
+			return flatCombo.WheelForwardedForTest;
 		}
-		return num;
-	}
-
-	internal int NeedGroupHeight(GroupBox gb)
-	{
-		int num = NeedGroupBottom(gb);
-		if (num <= 0)
-		{
-			return gb.Height;
-		}
-		return num + 12 + (gb.Height - gb.ClientSize.Height);
-	}
-
-	internal static void DumpGroup(Form f, int groupIndex, StringBuilder sb)
-	{
-		if (f is SettingsForm { _groupHost: not null } settingsForm)
-		{
-			if (groupIndex < 0 || groupIndex >= settingsForm._groupHost.Controls.Count)
-			{
-				sb.AppendLine("(bad index)");
-				return;
-			}
-			if (!(settingsForm._groupHost.Controls[groupIndex] is GroupBox groupBox))
-			{
-				sb.AppendLine("(not groupbox)");
-				return;
-			}
-			sb.AppendLine();
-			sb.AppendLine("列数=" + settingsForm._groupHost.CurrentColumns + " 分组宽=" + groupBox.Width + " 分组内宽=" + groupBox.ClientSize.Width + " 高=" + groupBox.Height + " 基准高=" + ((groupIndex < settingsForm._baseGroupHeights.Length) ? settingsForm._baseGroupHeights[groupIndex] : (-1)) + " 需要高=" + settingsForm.NeedGroupHeight(groupBox) + " 组内底=" + settingsForm.NeedGroupBottom(groupBox));
-			sb.AppendLine("缩放判定=" + LastRebaseInfo);
-			sb.AppendLine();
-			for (int i = 0; i < settingsForm._innerLayouts.Count; i++)
-			{
-				InnerLayout innerLayout = settingsForm._innerLayouts[i];
-				Control control = innerLayout.Control;
-				if (control.Parent == groupBox)
-				{
-					string text = control.Text;
-					if (text != null && text.Length > 16)
-					{
-						text = text.Substring(0, 16) + "…";
-					}
-					if (text != null)
-					{
-						text = text.Replace("\r", " ").Replace("\n", " ");
-					}
-					int num = control.Left + control.Width;
-					int num2 = num - groupBox.ClientSize.Width;
-					zzy_InlineArray17<object> buffer = default;
-					buffer[0] = "[" + i + "]";
-					buffer[1] = control.GetType().Name;
-					buffer[2] = innerLayout.BaseLeft;
-					buffer[3] = innerLayout.BaseWidth;
-					buffer[4] = control.Left;
-					buffer[5] = control.Width;
-					buffer[6] = num;
-					buffer[7] = num2;
-					buffer[8] = innerLayout.How;
-					buffer[9] = TextNeed(innerLayout);
-					buffer[10] = text;
-					buffer[11] = innerLayout.OriginalWidth;
-					buffer[12] = innerLayout.BaseTop;
-					buffer[13] = control.Top;
-					buffer[14] = (innerLayout.WrapsToNextRow ? "Y" : "-");
-					buffer[15] = innerLayout.ShiftByOffset;
-					buffer[16] = control.Parent.ClientSize.Width;
-					sb.AppendLine(string.Format("{0,-22} 类型={1,-14} OrigW={11,-5} BaseL={2,-4} BaseT={12,-4} BaseW={3,-4} 实际L={4,-4} T={13,-4} W={5,-4} 右={6,-4} 溢出={7,-5} Mode={8} Need={9,-4} Wrap={14} SB={15,-4} pW={16,-4} 文字=\"{10}\"", (ReadOnlySpan<object?>)buffer));
-				}
-			}
-		}
-		else
-		{
-			sb.AppendLine("(no form)");
-		}
-	}
-
-	internal static string DumpLayoutItem(Form f, Control target)
-	{
-		if (!(f is SettingsForm settingsForm))
-		{
-			return "(not SettingsForm)";
-		}
-		for (int i = 0; i < settingsForm._innerLayouts.Count; i++)
-		{
-			InnerLayout innerLayout = settingsForm._innerLayouts[i];
-			if (innerLayout.Control == target)
-			{
-				int num = ((target.Parent != null) ? target.Parent.ClientSize.Width : (-1));
-				return "Mode=" + innerLayout.How.ToString() + " BaseLeft=" + innerLayout.BaseLeft + " BaseWidth=" + innerLayout.BaseWidth + " RightGap=" + innerLayout.RightGap + " BaseInner=" + innerLayout.BaseInner + " 当前内宽=" + num + " 当前Left=" + target.Left + " 当前W=" + target.Width;
-			}
-		}
-		return "(未登记)";
-	}
-
-	private void ForceGroupLayout()
-	{
-		_groupHost.PerformLayout();
-		for (int i = 0; i < _groupHost.Controls.Count; i++)
-		{
-			if (_groupHost.Controls[i] is GroupBox groupBox)
-			{
-				groupBox.PerformLayout();
-			}
-		}
-	}
-
-	internal static bool VerifyStretchIdempotent(Form f)
-	{
-		if (!(f is SettingsForm { _groupHost: not null } settingsForm))
-		{
-			return false;
-		}
-		int num = settingsForm.GroupWidth + (int)Math.Round(200f * CurrentUiScale);
-		settingsForm._groupHost.Width = num;
-		settingsForm._groupHost.Relayout(num);
-		settingsForm.LayoutInner();
-		Rectangle bounds = settingsForm._cmbLeft.Bounds;
-		for (int i = 0; i < 5; i++)
-		{
-			settingsForm._groupHost.Width = settingsForm.GroupWidth;
-			settingsForm._groupHost.Relayout(settingsForm.GroupWidth);
-			settingsForm.LayoutInner();
-			settingsForm._groupHost.Width = num;
-			settingsForm._groupHost.Relayout(num);
-			settingsForm.LayoutInner();
-		}
-		Rectangle bounds2 = settingsForm._cmbLeft.Bounds;
-		if (bounds.Left == bounds2.Left)
-		{
-			return bounds.Width == bounds2.Width;
-		}
-		return false;
+		return 0;
 	}
 }
 internal sealed class ShakeDetector
