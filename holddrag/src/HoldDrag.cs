@@ -59,7 +59,7 @@ internal static class AppInfo
 	public const string ReleasesApiUrl = "https://api.github.com/repos/QQQOrange/holddrag/releases/latest";
 
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.4.1";
+	public const string FallbackVersion = "1.5.0";
 
 	public static string Version
 	{
@@ -774,6 +774,12 @@ internal sealed class AppConfig
 
 	public string FrameColorId { get; set; }
 
+	/// <summary>外框颜色跟随系统强调色：开了以后 FrameColorId / FrameCustomColor 都不生效。</summary>
+	public bool FrameColorFollowAccent { get; set; }
+
+	/// <summary>自定义外框颜色（ARGB）；0 = 没设过，回落到 FrameColorId。</summary>
+	public int FrameCustomColor { get; set; }
+
 	public string FrameStyleId { get; set; }
 
 	public int FrameThickness { get; set; }
@@ -842,6 +848,8 @@ internal sealed class AppConfig
 		ActionMiddle = "Maximize";
 		ShowActivationFrame = true;
 		FrameColorId = FrameColors.DefaultId;
+		FrameColorFollowAccent = false;
+		FrameCustomColor = 0;
 		FrameStyleId = FrameStyles.DefaultId;
 		FrameThickness = 3;
 		FrameRadius = 13;
@@ -877,6 +885,9 @@ internal sealed class AppConfig
 		return (AppConfig)MemberwiseClone();
 	}
 
+	/// <summary>真正拿去画外框的颜色：跟随强调色 &gt; 自定义 &gt; 调色板。</summary>
+	public Color EffectiveFrameColor => FrameColors.ResolveEffective(FrameColorId, FrameColorFollowAccent, FrameCustomColor);
+
 	public void Normalize()
 	{
 		if (string.IsNullOrEmpty(TriggerKeyId))
@@ -906,6 +917,11 @@ internal sealed class AppConfig
 		if (!FrameColors.IsValid(FrameColorId))
 		{
 			FrameColorId = FrameColors.DefaultId;
+		}
+		// 透明色的自定义颜色等于没设：回落到调色板，免得画出"看不见的外框"。
+		if (FrameCustomColor != 0 && ((FrameCustomColor >> 24) & 0xFF) == 0)
+		{
+			FrameCustomColor = 0;
 		}
 		if (!FrameStyles.IsValid(FrameStyleId))
 		{
@@ -3201,7 +3217,7 @@ internal sealed class DragEngine : IDisposable
 					{
 						if (_dragging && _session.Gen == s.Gen && _frameWanted)
 						{
-							_frame.ApplyTheme(appConfig.FrameColorId, appConfig.FrameStyleId, appConfig.FrameThickness, appConfig.FrameRadius, appConfig.FrameOpacity);
+							_frame.ApplyTheme(appConfig.FrameColorId, appConfig.FrameStyleId, appConfig.FrameThickness, appConfig.FrameRadius, appConfig.FrameOpacity, appConfig.EffectiveFrameColor);
 							_frame.SetRectNow(rectNow);
 							DiagFrameUpdates++;
 						}
@@ -3514,7 +3530,7 @@ internal sealed class DragEngine : IDisposable
 		if (_overlaysReady)
 		{
 			Native.RECT rect = FrameRectOf(windowRect, c, out var _);
-			_frame.ApplyTheme(c.FrameColorId, c.FrameStyleId, c.FrameThickness, c.FrameRadius, c.FrameOpacity);
+			_frame.ApplyTheme(c.FrameColorId, c.FrameStyleId, c.FrameThickness, c.FrameRadius, c.FrameOpacity, c.EffectiveFrameColor);
 			if (rect.Width >= 4 && rect.Height >= 4)
 			{
 				_frame.SetRect(rect);
@@ -3527,7 +3543,7 @@ internal sealed class DragEngine : IDisposable
 		if (_overlaysReady && _frameWanted)
 		{
 			AppConfig appConfig = _cfg();
-			_frame.ApplyTheme(appConfig.FrameColorId, appConfig.FrameStyleId, appConfig.FrameThickness, appConfig.FrameRadius, appConfig.FrameOpacity);
+			_frame.ApplyTheme(appConfig.FrameColorId, appConfig.FrameStyleId, appConfig.FrameThickness, appConfig.FrameRadius, appConfig.FrameOpacity, appConfig.EffectiveFrameColor);
 			Native.RECT rect = FrameRectOf(windowRect, appConfig, out var inset);
 			_frame.RaiseAboveAll = true;
 			if (rect.Width >= 4 && rect.Height >= 4)
@@ -3647,7 +3663,7 @@ internal sealed class DragEngine : IDisposable
 		try
 		{
 			AppConfig appConfig = _cfg();
-			_frame.ApplyTheme(appConfig.FrameColorId, appConfig.FrameStyleId, appConfig.FrameThickness, appConfig.FrameRadius, appConfig.FrameOpacity);
+			_frame.ApplyTheme(appConfig.FrameColorId, appConfig.FrameStyleId, appConfig.FrameThickness, appConfig.FrameRadius, appConfig.FrameOpacity, appConfig.EffectiveFrameColor);
 		}
 		catch (Exception ex)
 		{
@@ -3689,7 +3705,7 @@ internal sealed class DragEngine : IDisposable
 		{
 			return;
 		}
-		_frame.ApplyTheme(c.FrameColorId, c.FrameStyleId, c.FrameThickness, c.FrameRadius, c.FrameOpacity);
+		_frame.ApplyTheme(c.FrameColorId, c.FrameStyleId, c.FrameThickness, c.FrameRadius, c.FrameOpacity, c.EffectiveFrameColor);
 		lock (_gate)
 		{
 			if (_dragging && _session.Gen == s.Gen)
@@ -4423,42 +4439,66 @@ internal static class FrameColors
 		}
 		return All[0].Color;
 	}
+
+	/// <summary>按「跟随系统强调色 &gt; 自定义颜色 &gt; 调色板」的优先级算最终颜色。</summary>
+	public static Color ResolveEffective(string id, bool followAccent, int customArgb)
+	{
+		if (followAccent)
+		{
+			return Resolve("Accent");
+		}
+		if (customArgb != 0 && ((customArgb >> 24) & 0xFF) != 0)
+		{
+			return Color.FromArgb(customArgb);
+		}
+		return Resolve(id);
+	}
+
+	/// <summary>当前颜色的显示名（自定义颜色显示成 #RRGGBB）。</summary>
+	public static string NameOf(string id, bool followAccent, int customArgb)
+	{
+		if (followAccent)
+		{
+			return "跟随系统强调色";
+		}
+		if (customArgb != 0 && ((customArgb >> 24) & 0xFF) != 0)
+		{
+			Color color = Color.FromArgb(customArgb);
+			return "自定义 #" + color.R.ToString("X2") + color.G.ToString("X2") + color.B.ToString("X2");
+		}
+		for (int i = 0; i < All.Length; i++)
+		{
+			if (All[i].Id == id)
+			{
+				return All[i].Name;
+			}
+		}
+		return id;
+	}
+
+	public static string HexOf(Color color)
+	{
+		return "#" + color.R.ToString("X2") + color.G.ToString("X2") + color.B.ToString("X2");
+	}
 }
 internal static class FrameStyles
 {
-	public const string Glow = "Glow";
-
-	public const string Flat = "Flat";
-
-	public const string Solid = "Solid";
-
-	public const string Double = "Double";
-
 	public const string Dashed = "Dashed";
 
-	public const string Aurora = "Aurora";
+	public const string Hairline = "Hairline";
 
-	public const string Neon = "Neon";
+	public const string Focus = "Focus";
 
-	public const string Halo = "Halo";
-
-	public const string Corners = "Corners";
+	public const string Glow = "Glow";
 
 	public const string Shadow = "Shadow";
 
-	public const string Underline = "Underline";
+	// 精简后的样式表：#43 起只保留经得起看的 5 种。
+	// 旧的 Flat / Solid / Double / Aurora / Neon / Halo / Corners / Underline / Brackets 全部删除
+	// （用户反馈：丑、不明显、不实用），虚线环是唯一日常在用的，留作默认。
+	public static readonly string[] All = new string[5] { "Dashed", "Hairline", "Focus", "Glow", "Shadow" };
 
-	public const string Brackets = "Brackets";
-
-	public static readonly string[] All = new string[12]
-	{
-		"Glow", "Flat", "Solid", "Double", "Dashed", "Aurora", "Neon", "Halo", "Corners", "Shadow",
-		"Underline", "Brackets"
-	};
-
-	private static readonly int[] GlowAlpha = new int[3] { 48, 30, 18 };
-
-	public static string DefaultId => "Glow";
+	public static string DefaultId => "Dashed";
 
 	internal static int MeasureStyleInkForTest(string style)
 	{
@@ -4505,19 +4545,25 @@ internal static class FrameStyles
 	{
 		return id switch
 		{
-			"Glow" => "柔光环（推荐）", 
-			"Flat" => "纯净环（无光晕）", 
-			"Solid" => "实心描边（最醒目）", 
-			"Double" => "双线（极简）", 
 			"Dashed" => "虚线环", 
-			"Aurora" => "极光（渐变）", 
-			"Neon" => "霓虹（发光）", 
-			"Halo" => "光晕（弥散）", 
-			"Corners" => "四角框（最轻量）", 
-			"Shadow" => "柔和投影（不画实线）", 
-			"Underline" => "下缘光条（只提示底边）", 
-			"Brackets" => "四边中点（四条短线）", 
+			"Hairline" => "细线环", 
+			"Focus" => "焦点环", 
+			"Glow" => "柔光", 
+			"Shadow" => "柔和投影", 
 			_ => id, 
+		};
+	}
+
+	public static string HintFor(string id)
+	{
+		return id switch
+		{
+			"Dashed" => "圆头短划、疏密跟着圆角走，日常最耐看", 
+			"Hairline" => "一根细线，最不打扰界面", 
+			"Focus" => "双层描边，最醒目，接近系统焦点框", 
+			"Glow" => "细腻的多层衰减光晕，暗色窗口上尤其好看", 
+			"Shadow" => "真实柔化投影，像窗口浮起来了一层", 
+			_ => string.Empty, 
 		};
 	}
 
@@ -4527,34 +4573,28 @@ internal static class FrameStyles
 		{
 			thickness = 1;
 		}
-		if (style == "Solid")
+		switch (style)
 		{
-			return Math.Max(2f, (float)thickness * 1.8f);
+		case "Hairline":
+			return Math.Max(1f, (float)thickness * 0.55f);
+		case "Focus":
+			return Math.Max(2f, (float)thickness * 1.15f);
+		default:
+			return thickness;
 		}
-		return thickness;
 	}
 
 	public static int MarginFor(string style, int thickness)
 	{
-		// 外扩量必须 ≥ 笔画宽度，否则 Draw 里内缩 strokeW/2 之后描边外缘会落到浮层边界之外被裁掉
-		// （原实现 Solid 用 0.9t+3，t=8 时只有 10 < 1.8t=14.4，线被砍掉一半 —— 这正是"粗细调不动"的成因之一）。
+		// 外扩量必须 ≥ 笔画宽度，否则 Draw 里内缩 strokeW/2 之后描边外缘会落到浮层边界之外被裁掉。
 		int num = (int)Math.Ceiling((double)StrokeFor(style, thickness));
 		return style switch
 		{
-			"Glow" => num + 10, 
-			"Aurora" => num + 10, 
-			"Neon" => num + 12, 
-			"Halo" => num + 14, 
-			"Dashed" => num + 7, 
-			// Solid 没有光晕，不留额外余量：外框尺寸因此只比原来大 ceil(1.8t) - (0.9t+3)，
-			// t=8 时是 15 vs 10（每边多 5px），而不是 num+3 的每边多 8px。
-			"Solid" => num, 
-			"Double" => num + 7, 
-			"Corners" => num + 4, 
-			"Shadow" => num + 16, 
-			"Underline" => num + 10, 
-			"Brackets" => num + 6, 
-			_ => num + 3, 
+			"Glow" => num + 12, 
+			"Shadow" => num + 17, 
+			"Focus" => num + 7, 
+			"Dashed" => num + 8, 
+			_ => num + 4, 
 		};
 	}
 
@@ -4567,251 +4607,261 @@ internal static class FrameStyles
 		{
 			pathOffset = 0f;
 		}
-		RectangleF rectangleF = new RectangleF(area.X + pathOffset, area.Y + pathOffset, area.Width - pathOffset * 2f, area.Height - pathOffset * 2f);
-		if (rectangleF.Width < 6f || rectangleF.Height < 6f)
+		RectangleF ring = new RectangleF(area.X + pathOffset, area.Y + pathOffset, area.Width - pathOffset * 2f, area.Height - pathOffset * 2f);
+		if (ring.Width < 6f || ring.Height < 6f)
 		{
 			return;
 		}
-		float num2 = ClampRadius(radius, rectangleF.Width, rectangleF.Height);
-		float num3 = strokeW;
+		float r = ClampRadius(radius, ring.Width, ring.Height);
 		g.SmoothingMode = SmoothingMode.AntiAlias;
 		g.PixelOffsetMode = PixelOffsetMode.Half;
 		switch (style)
 		{
-		case "Aurora":
-			DrawAurora(g, rectangleF, num2, color, num3);
-			return;
-		case "Neon":
-			DrawNeon(g, rectangleF, num2, color, num3);
-			return;
-		case "Halo":
-			DrawHalo(g, rectangleF, num2, color, num3);
-			return;
-		case "Corners":
-			DrawCorners(g, rectangleF, num2, color, num3);
-			return;
 		case "Shadow":
-			DrawShadow(g, rectangleF, num2, color, num3);
+			DrawShadow(g, ring, r, color, strokeW);
 			return;
-		case "Underline":
-			DrawUnderline(g, rectangleF, num2, color, num3);
+		case "Glow":
+			DrawGlow(g, ring, r, color, strokeW);
 			return;
-		case "Brackets":
-			DrawBrackets(g, rectangleF, num2, color, num3);
+		case "Focus":
+			DrawFocus(g, ring, r, color, strokeW);
 			return;
-		}
-		if (style == "Glow" || style == "Dashed")
-		{
-			for (int num4 = ((style == "Glow") ? 3 : 2); num4 >= 1; num4--)
-			{
-				using GraphicsPath path = RoundedPath(rectangleF, num2);
-				using Pen pen = new Pen(Color.FromArgb(GlowAlpha[num4 - 1], color), num3 + 3f * (float)num4);
-				pen.LineJoin = LineJoin.Round;
-				ApplyDash(pen, style, num2);
-				g.DrawPath(pen, path);
-			}
-		}
-		using (GraphicsPath path2 = RoundedPath(rectangleF, num2))
-		{
-			using Pen pen2 = new Pen(color, num3);
-			pen2.LineJoin = LineJoin.Round;
-			ApplyDash(pen2, style, num2);
-			g.DrawPath(pen2, path2);
-		}
-		if (!(style == "Double"))
-		{
+		case "Hairline":
+			DrawHairline(g, ring, r, color, strokeW);
 			return;
 		}
-		using GraphicsPath path3 = RoundedPath(new RectangleF(rectangleF.X - 4.5f, rectangleF.Y - 4.5f, rectangleF.Width + 9f, rectangleF.Height + 9f), num2 + 4.5f);
-		using Pen pen3 = new Pen(Color.FromArgb(140, color), 1.5f);
-		pen3.LineJoin = LineJoin.Round;
-		g.DrawPath(pen3, path3);
+		DrawDashed(g, ring, r, color, strokeW);
 	}
 
-	private static void DrawAurora(Graphics g, RectangleF ring, float r, Color color, float t)
+	// 虚线环：外两层极淡的光把虚线"托"起来，三层用同一套物理划长（DashPattern 以笔宽为单位，
+	// 必须按各层笔宽换算），否则几层的划子对不齐，看着就是一团毛刺——旧实现正是这个毛病。
+	private static void DrawDashed(Graphics g, RectangleF ring, float r, Color color, float t)
+	{
+		float dashPx = Math.Max(t * 2.4f, Math.Min(Math.Min(ring.Width, ring.Height) * 0.055f, t * 6f));
+		float gapPx = dashPx * 0.68f;
+		for (int i = 2; i >= 1; i--)
+		{
+			float w = t + 2.2f * (float)i;
+			using GraphicsPath path = RoundedPath(ring, r);
+			using Pen pen = new Pen(Color.FromArgb((i == 2) ? 30 : 17, color), w);
+			pen.LineJoin = LineJoin.Round;
+			pen.DashStyle = DashStyle.Dash;
+			pen.DashCap = DashCap.Round;
+			pen.DashPattern = new float[2]
+			{
+				dashPx / w,
+				gapPx / w
+			};
+			g.DrawPath(pen, path);
+		}
+		using (GraphicsPath path2 = RoundedPath(ring, r))
+		{
+			using Pen pen2 = new Pen(color, t);
+			pen2.LineJoin = LineJoin.Round;
+			pen2.DashStyle = DashStyle.Dash;
+			pen2.DashCap = DashCap.Round;
+			pen2.DashPattern = new float[2]
+			{
+				dashPx / t,
+				gapPx / t
+			};
+			g.DrawPath(pen2, path2);
+		}
+	}
+
+	// 细线环：一层几乎看不见的外扩压锯齿 + 一根实线，界面洁癖的选项。
+	private static void DrawHairline(Graphics g, RectangleF ring, float r, Color color, float t)
 	{
 		using (GraphicsPath path = RoundedPath(ring, r))
 		{
-			using Pen pen = new Pen(Color.FromArgb(38, color), t + 8f);
+			using Pen pen = new Pen(Color.FromArgb(26, color), t + 2.4f);
 			pen.LineJoin = LineJoin.Round;
 			g.DrawPath(pen, path);
 		}
-		using GraphicsPath path2 = RoundedPath(ring, r);
-		using LinearGradientBrush linearGradientBrush = new LinearGradientBrush(ring, Lighten(color, 0.45f), Darken(color, 0.42f), 45f);
-		linearGradientBrush.InterpolationColors = new ColorBlend(3)
+		using (GraphicsPath path2 = RoundedPath(ring, r))
 		{
-			Colors = new Color[3]
+			using Pen pen2 = new Pen(color, Math.Max(1f, t));
+			pen2.LineJoin = LineJoin.Round;
+			g.DrawPath(pen2, path2);
+		}
+	}
+
+	// 焦点环：外圈实色 + 内圈一道提亮细线（中间留 2px 空隙），接近 Windows 11 的焦点框：
+	// 远看干净、近看有层次，是"最醒目"的那一档。
+	private static void DrawFocus(Graphics g, RectangleF ring, float r, Color color, float t)
+	{
+		using (GraphicsPath path = RoundedPath(ring, r))
+		{
+			using Pen pen = new Pen(color, t);
+			pen.LineJoin = LineJoin.Round;
+			g.DrawPath(pen, path);
+		}
+		float inset = t * 0.5f + 2f;
+		RectangleF inner = RectangleF.Inflate(ring, -inset, -inset);
+		if (inner.Width > 4f && inner.Height > 4f)
+		{
+			float ir = Math.Max(0f, r - inset);
+			using GraphicsPath path2 = RoundedPath(inner, ir);
+			using Pen pen2 = new Pen(Color.FromArgb(132, Lighten(color, 0.58f)), Math.Max(1f, t * 0.34f));
+			pen2.LineJoin = LineJoin.Round;
+			g.DrawPath(pen2, path2);
+		}
+	}
+
+	// 柔光：十几层 1.15px 递进+高斯衰减的描边叠出来，没有旧版那种"粗笔刷一圈一圈"的带状感。
+	private static void DrawGlow(Graphics g, RectangleF ring, float r, Color color, float t)
+	{
+		const int layers = 14;
+		double sigma = (double)layers * 0.42;
+		double twoSigmaSq = 2.0 * sigma * sigma;
+		for (int i = layers; i >= 1; i--)
+		{
+			int alpha = (int)Math.Round(46.0 * Math.Exp(-(double)(i * i) / twoSigmaSq));
+			if (alpha < 2)
 			{
-				Lighten(color, 0.48f),
-				color,
-				Darken(color, 0.42f)
-			},
-			Positions = new float[3] { 0f, 0.5f, 1f }
-		};
-		using Pen pen2 = new Pen(linearGradientBrush, Math.Max(2f, t * 1.35f));
-		pen2.LineJoin = LineJoin.Round;
-		g.DrawPath(pen2, path2);
-	}
-
-	private static void DrawNeon(Graphics g, RectangleF ring, float r, Color color, float t)
-	{
-		for (int num = 3; num >= 1; num--)
-		{
-			int alpha = 20 + (3 - num) * 22;
+				continue;
+			}
 			using GraphicsPath path = RoundedPath(ring, r);
-			using Pen pen = new Pen(Color.FromArgb(alpha, color), t + 3.4f * (float)num);
+			using Pen pen = new Pen(Color.FromArgb(alpha, color), t + (float)i * 1.15f * 2f);
 			pen.LineJoin = LineJoin.Round;
 			g.DrawPath(pen, path);
 		}
-		using GraphicsPath path2 = RoundedPath(ring, r);
-		using Pen pen2 = new Pen(Lighten(color, 0.5f), Math.Max(1.6f, t * 0.8f));
-		pen2.LineJoin = LineJoin.Round;
-		g.DrawPath(pen2, path2);
-	}
-
-	private static void DrawHalo(Graphics g, RectangleF ring, float r, Color color, float t)
-	{
-		for (int num = 4; num >= 1; num--)
+		using (GraphicsPath path2 = RoundedPath(ring, r))
 		{
-			int alpha = 12 + (4 - num) * 15;
-			using GraphicsPath path = RoundedPath(ring, r);
-			using Pen pen = new Pen(Color.FromArgb(alpha, color), t + 4.4f * (float)num);
-			pen.LineJoin = LineJoin.Round;
-			g.DrawPath(pen, path);
+			using Pen pen2 = new Pen(color, t);
+			pen2.LineJoin = LineJoin.Round;
+			g.DrawPath(pen2, path2);
 		}
-		using GraphicsPath path2 = RoundedPath(ring, r);
-		using Pen pen2 = new Pen(color, t);
-		pen2.LineJoin = LineJoin.Round;
-		g.DrawPath(pen2, path2);
 	}
 
+	// 柔和投影：走"距离场生成低分辨率阴影 + 双三次放大"，是真正的软阴影；
+	// 旧版用 4 根几像素粗的半透明笔堆，边缘是一圈圈的硬台阶，所以在浅色窗口上看着脏。
 	private static void DrawShadow(Graphics g, RectangleF ring, float r, Color color, float t)
 	{
-		Color baseColor = Color.FromArgb((int)((float)(int)color.R * 0.42f), (int)((float)(int)color.G * 0.42f), (int)((float)(int)color.B * 0.42f));
-		int[] array = new int[4] { 15, 11, 7, 4 };
-		int[] array2 = new int[4] { 12, 18, 26, 38 };
-		for (int i = 0; i < array.Length; i++)
-		{
-			float num = array[i];
-			RectangleF rc = RectangleF.Inflate(ring, num * 0.5f, num * 0.5f);
-			float num2 = Math.Min(r + num * 0.5f, Math.Min(rc.Width, rc.Height) / 2f);
-			if (num2 < 0f)
-			{
-				num2 = 0f;
-			}
-			using GraphicsPath path = RoundedPath(rc, num2);
-			using Pen pen = new Pen(Color.FromArgb(array2[i], baseColor), num);
-			pen.LineJoin = LineJoin.Round;
-			g.DrawPath(pen, path);
-		}
-		using GraphicsPath path2 = RoundedPath(ring, r);
-		using Pen pen2 = new Pen(Color.FromArgb(110, color), Math.Max(1f, t * 0.45f));
-		pen2.LineJoin = LineJoin.Round;
-		g.DrawPath(pen2, path2);
-	}
-
-	private static void DrawUnderline(Graphics g, RectangleF ring, float r, Color color, float t)
-	{
-		float num = Math.Max(2f, t * 1.1f);
-		float num2 = ring.Left + ring.Width * 0.1f;
-		float num3 = ring.Right - ring.Width * 0.1f;
-		float num4 = ring.Bottom - num / 2f;
-		if (num3 <= num2)
+		// pad 必须 ≥ 投影可见半径，否则会在浮层窗口边缘被硬切出一条边
+		int pad = (int)Math.Ceiling(t) + 16;
+		int w = (int)Math.Ceiling(ring.Width) + pad * 2;
+		int h = (int)Math.Ceiling(ring.Height) + pad * 2;
+		if (w < 24 || h < 24 || w > 8192 || h > 8192)
 		{
 			return;
 		}
-		using LinearGradientBrush linearGradientBrush = new LinearGradientBrush(new RectangleF(num2, num4 - num, num3 - num2, num * 2f), color, color, LinearGradientMode.Horizontal);
-		ColorBlend colorBlend = new ColorBlend(3);
-		colorBlend.Colors = new Color[3]
+		long key = ((long)w << 42) ^ ((long)h << 22) ^ ((long)(int)Math.Round(r) << 9) ^ (long)(uint)color.ToArgb() ^ ((long)pad << 3);
+		lock (ShadowGate)
 		{
-			Color.FromArgb(0, color),
-			Color.FromArgb(235, color),
-			Color.FromArgb(0, color)
-		};
-		colorBlend.Positions = new float[3] { 0f, 0.5f, 1f };
-		linearGradientBrush.InterpolationColors = colorBlend;
-		using (Pen pen = new Pen(linearGradientBrush, num + 9f))
-		{
-			pen.StartCap = LineCap.Round;
-			pen.EndCap = LineCap.Round;
-			g.DrawLine(pen, num2, num4, num3, num4);
-		}
-		using Pen pen2 = new Pen(linearGradientBrush, num);
-		pen2.StartCap = LineCap.Round;
-		pen2.EndCap = LineCap.Round;
-		g.DrawLine(pen2, num2, num4, num3, num4);
-	}
-
-	private static void DrawBrackets(Graphics g, RectangleF ring, float r, Color color, float t)
-	{
-		float num = Math.Max(18f, Math.Min(ring.Width, ring.Height) * 0.22f);
-		float num2 = ring.Left + ring.Width / 2f;
-		float num3 = ring.Top + ring.Height / 2f;
-		float num4 = num / 2f;
-		using (Pen pen = new Pen(color, t))
-		{
-			pen.StartCap = LineCap.Round;
-			pen.EndCap = LineCap.Round;
-			g.DrawLine(pen, num2 - num4, ring.Top, num2 + num4, ring.Top);
-			g.DrawLine(pen, num2 - num4, ring.Bottom, num2 + num4, ring.Bottom);
-			g.DrawLine(pen, ring.Left, num3 - num4, ring.Left, num3 + num4);
-			g.DrawLine(pen, ring.Right, num3 - num4, ring.Right, num3 + num4);
+			if (_shadowCache == null || _shadowKey != key)
+			{
+				try
+				{
+					_shadowCache?.Dispose();
+				}
+				catch
+				{
+				}
+				_shadowCache = BuildShadowBitmap(w, h, (float)pad + r, pad, color);
+				_shadowKey = key;
+			}
+			if (_shadowCache == null)
+			{
+				return;
+			}
+			int dy = Math.Max(2, (int)Math.Round((double)(t * 0.9f)));
+			InterpolationMode interpolationMode = g.InterpolationMode;
+			g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+			try
+			{
+				g.DrawImage(_shadowCache, new Rectangle((int)Math.Floor((double)(ring.X - (float)pad)), (int)Math.Floor((double)(ring.Y - (float)pad + (float)dy)), w, h));
+			}
+			finally
+			{
+				g.InterpolationMode = interpolationMode;
+			}
 		}
 		using GraphicsPath path = RoundedPath(ring, r);
-		using Pen pen2 = new Pen(Color.FromArgb(34, color), Math.Max(1f, t * 0.38f));
-		pen2.LineJoin = LineJoin.Round;
-		g.DrawPath(pen2, path);
-	}
-
-	private static void DrawCorners(Graphics g, RectangleF ring, float r, Color color, float t)
-	{
-		float num = Math.Max(16f, Math.Min(ring.Width, ring.Height) * 0.2f);
-		float num2 = Math.Min(r, Math.Min(num * 0.7f, Math.Min(ring.Width, ring.Height) / 2f - 1f));
-		if (num2 < 0f)
-		{
-			num2 = 0f;
-		}
-		using GraphicsPath path = CornerBrackets(ring, num2, num);
-		using Pen pen = new Pen(color, t);
+		using Pen pen = new Pen(Color.FromArgb(226, color), Math.Max(1f, Math.Min(2.2f, t * 0.6f)));
 		pen.LineJoin = LineJoin.Round;
-		pen.StartCap = LineCap.Round;
-		pen.EndCap = LineCap.Round;
 		g.DrawPath(pen, path);
 	}
 
-	private static GraphicsPath CornerBrackets(RectangleF rc, float rad, float len)
+	private static readonly object ShadowGate = new object();
+
+	private static Bitmap _shadowCache;
+
+	private static long _shadowKey = long.MinValue;
+
+	private static Bitmap BuildShadowBitmap(int w, int h, float radius, int pad, Color color)
 	{
-		GraphicsPath graphicsPath = new GraphicsPath();
-		float num = rad * 2f;
-		graphicsPath.StartFigure();
-		graphicsPath.AddLine(rc.Left, rc.Top + len, rc.Left, rc.Top + rad);
-		if (rad > 0.5f)
+		try
 		{
-			graphicsPath.AddArc(rc.Left, rc.Top, num, num, 180f, 90f);
+			const int scale = 4;
+			int sw = Math.Max(8, w / scale);
+			int sh = Math.Max(8, h / scale);
+			Bitmap bitmap = new Bitmap(sw, sh, PixelFormat.Format32bppArgb);
+			Rectangle rect = new Rectangle(0, 0, sw, sh);
+			BitmapData bitmapData = bitmap.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+			try
+			{
+				float num = 1f / (float)scale;
+				float num2 = radius * num;
+				RectangleF rc = new RectangleF((float)pad * num, (float)pad * num, (float)sw - (float)pad * 2f * num, (float)sh - (float)pad * 2f * num);
+				// 2.2 倍模糊半径处基本归零：让衰减正好在 pad 之内收干净
+				float blur = Math.Max(1.6f, (float)pad * num / 2.2f);
+				int r2 = (int)Math.Round((double)((float)(int)color.R * 0.42f));
+				int g2 = (int)Math.Round((double)((float)(int)color.G * 0.42f));
+				int b2 = (int)Math.Round((double)((float)(int)color.B * 0.42f));
+				byte[] buffer = new byte[bitmapData.Stride * sh];
+				for (int i = 0; i < sh; i++)
+				{
+					int num3 = i * bitmapData.Stride;
+					for (int j = 0; j < sw; j++)
+					{
+						float num4 = SdRoundRect((float)j + 0.5f, (float)i + 0.5f, rc, num2);
+						// 只在形状外侧画：内侧必须透明，否则等于给窗口蒙了一层灰（旧版投影"脏"的原因之一）
+						if (!(num4 > 0f))
+						{
+							continue;
+						}
+						float num5 = num4 / blur;
+						if (num5 >= 2.2f)
+						{
+							continue;
+						}
+						double num6 = Math.Exp((double)(-1.1f * num5 * num5));
+						int num7 = (int)Math.Round(num6 * 96.0);
+						if (num7 > 0)
+						{
+							int num8 = num3 + j * 4;
+							buffer[num8] = (byte)b2;
+							buffer[num8 + 1] = (byte)g2;
+							buffer[num8 + 2] = (byte)r2;
+							buffer[num8 + 3] = (byte)Math.Min(255, num7);
+						}
+					}
+				}
+				Marshal.Copy(buffer, 0, bitmapData.Scan0, buffer.Length);
+			}
+			finally
+			{
+				bitmap.UnlockBits(bitmapData);
+			}
+			return bitmap;
 		}
-		graphicsPath.AddLine(rc.Left + rad, rc.Top, rc.Left + len, rc.Top);
-		graphicsPath.StartFigure();
-		graphicsPath.AddLine(rc.Right - len, rc.Top, rc.Right - rad, rc.Top);
-		if (rad > 0.5f)
+		catch
 		{
-			graphicsPath.AddArc(rc.Right - num, rc.Top, num, num, 270f, 90f);
+			return null;
 		}
-		graphicsPath.AddLine(rc.Right, rc.Top + rad, rc.Right, rc.Top + len);
-		graphicsPath.StartFigure();
-		graphicsPath.AddLine(rc.Right, rc.Bottom - len, rc.Right, rc.Bottom - rad);
-		if (rad > 0.5f)
-		{
-			graphicsPath.AddArc(rc.Right - num, rc.Bottom - num, num, num, 0f, 90f);
-		}
-		graphicsPath.AddLine(rc.Right - rad, rc.Bottom, rc.Right - len, rc.Bottom);
-		graphicsPath.StartFigure();
-		graphicsPath.AddLine(rc.Left + len, rc.Bottom, rc.Left + rad, rc.Bottom);
-		if (rad > 0.5f)
-		{
-			graphicsPath.AddArc(rc.Left, rc.Bottom - num, num, num, 90f, 90f);
-		}
-		graphicsPath.AddLine(rc.Left, rc.Bottom - rad, rc.Left, rc.Bottom - len);
-		return graphicsPath;
+	}
+
+	// 圆角矩形的有向距离：里面为负、边界为 0、外面为正。
+	private static float SdRoundRect(float px, float py, RectangleF rc, float r)
+	{
+		float num = rc.Width * 0.5f;
+		float num2 = rc.Height * 0.5f;
+		float num3 = Math.Abs(px - (rc.X + num)) - (num - r);
+		float num4 = Math.Abs(py - (rc.Y + num2)) - (num2 - r);
+		float num5 = Math.Max(num3, 0f);
+		float num6 = Math.Max(num4, 0f);
+		return (float)Math.Sqrt((double)(num5 * num5 + num6 * num6)) + Math.Min(Math.Max(num3, num4), 0f) - r;
 	}
 
 	private static Color Lighten(Color c, float amt)
@@ -4836,21 +4886,6 @@ internal static class FrameStyles
 			num = 255;
 		}
 		return num;
-	}
-
-	private static void ApplyDash(Pen pen, string style, float radius)
-	{
-		if (!(style != "Dashed"))
-		{
-			pen.DashStyle = DashStyle.Dash;
-			pen.DashCap = DashCap.Round;
-			float num = Math.Max(4f, radius * 0.85f);
-			pen.DashPattern = new float[2]
-			{
-				num,
-				num * 0.72f
-			};
-		}
 	}
 
 	public static float ClampRadius(int radius, float w, float h)
@@ -7114,6 +7149,61 @@ internal static class Native
 	[DllImport("dwmapi.dll")]
 	internal static extern int DwmSetWindowAttribute(nint hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
 
+
+	// 标题栏颜色和页面底色对齐：否则内容换成深色、最上面那条还白着，整扇窗就"断层"了。
+	// Win11 22000+ 支持 DWMWA_CAPTION_COLOR(35) / TEXT_COLOR(36) / BORDER_COLOR(34)，能刷成任意色；
+	// 老系统上这三个属性会失败，退回"深色标题栏"(20，再退 19)——至少不再白得刺眼。
+	// 返回是否成功刷上了自定义颜色。
+	internal static bool SetTitleBarTheme(nint hwnd, bool dark, Color caption, Color text, Color border)
+	{
+		try
+		{
+			int pvAttribute = ToColorRef(caption);
+			bool flag = DwmSetWindowAttribute(hwnd, 35, ref pvAttribute, 4) == 0;
+			int pvAttribute2 = ToColorRef(text);
+			DwmSetWindowAttribute(hwnd, 36, ref pvAttribute2, 4);
+			int pvAttribute3 = ToColorRef(border);
+			DwmSetWindowAttribute(hwnd, 34, ref pvAttribute3, 4);
+			if (!flag)
+			{
+				int pvAttribute4 = (dark ? 1 : 0);
+				if (DwmSetWindowAttribute(hwnd, 20, ref pvAttribute4, 4) != 0)
+				{
+					DwmSetWindowAttribute(hwnd, 19, ref pvAttribute4, 4);
+				}
+			}
+			return flag;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
+	internal static int ToColorRef(Color color)
+	{
+		return color.R | (color.G << 8) | (color.B << 16);
+	}
+
+	[DllImport("dwmapi.dll")]
+	internal static extern int DwmGetWindowAttribute(nint hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+
+	internal static int GetWindowIntAttribute(nint hwnd, int attribute)
+	{
+		try
+		{
+			int pvAttribute;
+			if (DwmGetWindowAttribute(hwnd, attribute, out pvAttribute, 4) == 0)
+			{
+				return pvAttribute;
+			}
+		}
+		catch
+		{
+		}
+		return -1;
+	}
+
 	internal static bool SetWindowRoundedCorners(nint hwnd)
 	{
 		try
@@ -8334,7 +8424,11 @@ internal sealed class ActivationFrame : LayeredBitmapOverlay
 
 	internal string StyleIdForTest => _styleId;
 
-	public void ApplyTheme(string colorId, string styleId, int thickness, int radius, int opacityPercent = 100)
+	internal Color? ColorOverrideForTest => _colorOverride;
+
+	private Color? _colorOverride;
+
+	public void ApplyTheme(string colorId, string styleId, int thickness, int radius, int opacityPercent = 100, Color? colorOverride = null)
 	{
 		int num;
 		if (opacityPercent < 5)
@@ -8345,21 +8439,32 @@ internal sealed class ActivationFrame : LayeredBitmapOverlay
 		{
 			num = ((opacityPercent > 100) ? 255 : ((int)Math.Round((double)opacityPercent * 255.0 / 100.0)));
 		}
-		if (_colorId != colorId || _styleId != styleId || _thickness != thickness || _radius != radius || _constantAlpha != num)
+		if (_colorId != colorId || _styleId != styleId || _thickness != thickness || _radius != radius || _constantAlpha != num || !SameColor(_colorOverride, colorOverride))
 		{
 			_colorId = colorId;
 			_styleId = styleId;
 			_thickness = thickness;
 			_radius = radius;
 			_constantAlpha = num;
+			_colorOverride = colorOverride;
 			MarkContentDirty();
 		}
+	}
+
+	private static bool SameColor(Color? a, Color? b)
+	{
+		if (a.HasValue != b.HasValue)
+		{
+			return false;
+		}
+		return !a.HasValue || a.Value.ToArgb() == b.Value.ToArgb();
 	}
 
 	protected override void RenderContent(Graphics g, int w, int h)
 	{
 		RectangleF area = new RectangleF(0f, 0f, w, h);
-		FrameStyles.Draw(g, area, FrameColors.Resolve(_colorId), _styleId, _thickness, _radius);
+		Color color = (_colorOverride.HasValue ? _colorOverride.Value : FrameColors.Resolve(_colorId));
+		FrameStyles.Draw(g, area, color, _styleId, _thickness, _radius);
 	}
 }
 internal static class Program
@@ -9129,6 +9234,9 @@ internal static class SelfTest
 		Safe("T89 关于页 GitHub 链接 + 自动更新开关 + 检查更新按钮（v1.1 更新功能）", TestUpdateFeatures);
 		Safe("T90 更新重启的单实例竞态：新版本必须等旧进程释放互斥体再接管", TestUpdateRestartSingleInstance);
 		Safe("T91 单实例：同一时间只能开一个（重复启动必须自己退出并唤起已有窗口）", TestSingleInstanceOnlyOne);
+		Safe("T92 外框颜色：跟随系统强调色 / 自定义颜色都要真的生效且存得进配置", TestFrameColorAccentAndCustom);
+		Safe("T93 设置页跟随系统深浅色：深浅两套都要够清楚（对比度/层次）", TestSettingsThemeFollowsSystem);
+		Safe("T94 设置窗口是无边框圆角卡片窗：无系统标题栏、标题条与页面同色、三个窗口按钮在位", TestFramelessCardWindow);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();
@@ -9768,8 +9876,8 @@ internal static class SelfTest
 		Settle();
 		Check(!Native.IsWindowVisible(activationFrame.Handle), "拖动结束后外框不再可见");
 		Check(FrameStyles.MarginFor("Glow", 3) >= 8, "柔光样式留出了足够的外扩边距（实际 " + FrameStyles.MarginFor("Glow", 3) + "px）");
-		Check(FrameStyles.MarginFor("Flat", 3) < FrameStyles.MarginFor("Glow", 3), "无柔光的样式留白更小（不为不存在的光晕浪费面积）");
-		Check(FrameStyles.MarginFor("Solid", 8) >= 8, "实心描边越粗，留白越大");
+		Check(FrameStyles.MarginFor("Hairline", 3) < FrameStyles.MarginFor("Glow", 3), "细线环的留白最小（不为不存在的光晕浪费面积）");
+		Check(FrameStyles.MarginFor("Focus", 8) >= 8, "焦点环越粗，留白越大");
 		Eq((int)FrameStyles.ClampRadius(999, 40f, 40f), 19, "离谱的圆角被夹到短边一半以内");
 		Eq((int)FrameStyles.ClampRadius(0, 40f, 40f), 0, "圆角 0 就是直角，不被当成非法值");
 	}
@@ -10005,10 +10113,10 @@ internal static class SelfTest
 		SettingsForm.FrameSelection frameSelection = settingsForm.ProbeFrameSelection();
 		Eq(frameSelection.ColorId, "Red", "★ 在下拉框里选「朱红」之后，读回的 ID 必须是 Red（不能回退成薄荷青）");
 		Eq(frameSelection.PreviewColorId, "Red", "★ 预览框内部状态同步成了朱红（否则预览永远显示薄荷青）");
-		settingsForm.ProbeSelectFrameStyle("Solid");
+		settingsForm.ProbeSelectFrameStyle("Focus");
 		SettingsForm.FrameSelection frameSelection2 = settingsForm.ProbeFrameSelection();
-		Eq(frameSelection2.StyleId, "Solid", "换个样式，读回的 ID 跟着换");
-		Eq(frameSelection2.PreviewStyleId, "Solid", "预览框的样式也同步了");
+		Eq(frameSelection2.StyleId, "Focus", "换个样式，读回的 ID 跟着换");
+		Eq(frameSelection2.PreviewStyleId, "Focus", "预览框的样式也同步了");
 		settingsForm.ProbeSetFrameShape(7, 22, enabled: true);
 		SettingsForm.FrameSelection frameSelection3 = settingsForm.ProbeFrameSelection();
 		Eq(frameSelection3.Thickness, 7, "粗细读回 7");
@@ -10069,16 +10177,10 @@ internal static class SelfTest
 		Check(SettingsForm.VerifyAnchors(settingsForm), "★ 宽度够时分组从 1 列变 2 列，回窄能退回 1 列（拉宽真的多装东西）", SettingsForm.LastStretchDetail);
 		Check(SettingsForm.VerifyInnerStretch(settingsForm), "★ 拉宽后分组内的下拉框/文本框跟着变宽（不是只把分组撑大）", SettingsForm.LastStretchDetail + " || " + SettingsForm.DumpLayoutItem(settingsForm, settingsForm.ProbeComboLeft));
 		Check(SettingsForm.VerifyStretchIdempotent(settingsForm), "★ 来回拉多次，控件位置稳定不漂移（伸缩是幂等的）");
-		bool ok = false;
-		for (int i = 0; i < settingsForm.Controls.Count; i++)
-		{
-			if (settingsForm.Controls[i].Dock == DockStyle.Bottom)
-			{
-				ok = true;
-				break;
-			}
-		}
-		Check(ok, "底部操作条固定在窗口下方（不随内容滚走）");
+		// 底栏现在是"浮在底部的圆角卡片"，不再靠 Dock=Bottom：改查它的实际位置是否贴在窗口下沿
+		Rectangle pagerBounds = settingsForm.ProbePagerBounds();
+		bool ok = pagerBounds.Height > 0 && pagerBounds.Bottom >= settingsForm.ClientSize.Height - settingsForm.ClientSize.Height / 20 && pagerBounds.Right >= settingsForm.ClientSize.Width - settingsForm.ClientSize.Width / 20;
+		Check(ok, "底部操作条固定在窗口下方（不随内容滚走）", pagerBounds.ToString() + " 客户区=" + settingsForm.ClientSize.ToString());
 		settingsForm.Close();
 	}
 
@@ -10502,14 +10604,14 @@ internal static class SelfTest
 			return;
 		}
 		Native.RECT rECT = new Native.RECT(200, 160, 560, 440);
-		activationFrame.ApplyTheme("Teal", "Solid", 6, 6);
+		activationFrame.ApplyTheme("Teal", "Focus", 6, 6);
 		activationFrame.SetRect(rECT);
 		Settle();
 		Check(Native.IsWindowVisible(activationFrame.Handle), "浮层已显示");
 		Color color = FrameColors.Resolve("Teal");
 		Color color2 = FrameColors.Resolve("Red");
 		Color? color3 = CaptureCornerPixel(activationFrame.Handle, rECT, color, color2);
-		activationFrame.ApplyTheme("Red", "Solid", 6, 6);
+		activationFrame.ApplyTheme("Red", "Focus", 6, 6);
 		Settle();
 		Color? color4 = CaptureCornerPixel(activationFrame.Handle, rECT, color, color2);
 		Check(color3.HasValue && color4.HasValue, "能读回浮层的实际像素", "before=" + (color3.HasValue ? color3.Value.ToString() : "null") + " after=" + (color4.HasValue ? color4.Value.ToString() : "null"));
@@ -10530,8 +10632,8 @@ internal static class SelfTest
 	{
 		try
 		{
-			int num = FrameStyles.MarginFor("Solid", 6);
-			int sampleInset = num - (int)Math.Round((double)FrameStyles.StrokeFor("Solid", 6) * 0.5);
+			int num = FrameStyles.MarginFor("Focus", 6);
+			int sampleInset = num - (int)Math.Round((double)FrameStyles.StrokeFor("Focus", 6) * 0.5);
 			if (sampleInset < 1)
 			{
 				sampleInset = 1;
@@ -10613,7 +10715,7 @@ internal static class SelfTest
 	{
 		AppConfig appConfig = new AppConfig();
 		Eq(appConfig.FrameColorId, "Teal", "默认外框颜色是薄荷青（不是 Windows 那个蓝）");
-		Eq(appConfig.FrameStyleId, "Glow", "默认外框样式是柔光环");
+		Eq(appConfig.FrameStyleId, "Dashed", "默认外框样式是虚线环");
 		Eq(appConfig.FrameThickness, 3, "默认外框粗细 3px");
 		Eq(appConfig.FrameRadius, 13, "默认圆角 13px");
 		Check(FrameColors.IsValid("Teal"), "薄荷青是合法颜色 id");
@@ -10626,7 +10728,7 @@ internal static class SelfTest
 		appConfig.FrameRadius = -5;
 		appConfig.Normalize();
 		Eq(appConfig.FrameColorId, "Teal", "非法颜色被拉回默认");
-		Eq(appConfig.FrameStyleId, "Glow", "非法样式被拉回默认");
+		Eq(appConfig.FrameStyleId, "Dashed", "非法样式被拉回默认");
 		Eq(appConfig.FrameThickness, 8, "超范围粗细被夹到上限 8");
 		Eq(appConfig.FrameRadius, 0, "负数圆角被夹到 0");
 		for (int i = 0; i < FrameColors.All.Length; i++)
@@ -12479,7 +12581,7 @@ internal static class SelfTest
 	private static void TestFramePaletteExpanded()
 	{
 		Check(FrameColors.All.Length >= 16, "外框颜色至少 16 种（#37 扩充）", "实际 " + FrameColors.All.Length);
-		Check(FrameStyles.All.Length >= 9, "外框样式至少 9 种（#37 扩充）", "实际 " + FrameStyles.All.Length);
+		Check(FrameStyles.All.Length >= 5, "外框样式至少 5 种（精简后：虚线/细线/焦点/柔光/投影）", "实际 " + FrameStyles.All.Length);
 		HashSet<string> hashSet = new HashSet<string>();
 		int num = 0;
 		string text = "";
@@ -12511,7 +12613,7 @@ internal static class SelfTest
 		Check(num == 0, "每个颜色的 ID 唯一、名字非空、解析为不透明色", text);
 		int num2 = 0;
 		string text2 = "";
-		int num3 = FrameStyles.MarginFor("Flat", 3);
+		int num3 = FrameStyles.MarginFor("Hairline", 3);
 		for (int j = 0; j < FrameStyles.All.Length; j++)
 		{
 			string text3 = FrameStyles.All[j];
@@ -12526,7 +12628,7 @@ internal static class SelfTest
 				num2++;
 				text2 = text2 + text3 + "(留白太小) ";
 			}
-			if (text3 != "Flat" && FrameStyles.MarginFor(text3, 3) < num3)
+			if (text3 != "Hairline" && FrameStyles.MarginFor(text3, 3) < num3)
 			{
 				num2++;
 				text2 = text2 + text3 + "(留白小于纯净环) ";
@@ -12585,6 +12687,157 @@ internal static class SelfTest
 			}
 		}
 		Check(num6 == 0, "★ 每一种样式都能在设置页选中并同步到预览", text7);
+	}
+
+	private static double ContrastRatio(Color a, Color b)
+	{
+		double num = RelativeLuminance(a);
+		double num2 = RelativeLuminance(b);
+		double num3 = Math.Max(num, num2);
+		double num4 = Math.Min(num, num2);
+		return (num3 + 0.05) / (num4 + 0.05);
+	}
+
+	private static double RelativeLuminance(Color c)
+	{
+		return 0.2126 * Channel(c.R) + 0.7152 * Channel(c.G) + 0.0722 * Channel(c.B);
+	}
+
+	private static double Channel(int v)
+	{
+		double num = (double)v / 255.0;
+		return (num <= 0.03928) ? (num / 12.92) : Math.Pow((num + 0.055) / 1.055, 2.4);
+	}
+
+	private static void TestFrameColorAccentAndCustom()
+	{
+		Color accent = FrameColors.Resolve("Accent");
+		AppConfig appConfig = new AppConfig();
+		appConfig.FrameColorId = "Red";
+		appConfig.FrameColorFollowAccent = true;
+		Eq(appConfig.EffectiveFrameColor.ToArgb(), accent.ToArgb(), "★ 开了「跟随系统强调色」之后，最终颜色就是强调色");
+		appConfig.FrameColorFollowAccent = false;
+		Eq(appConfig.EffectiveFrameColor.ToArgb(), FrameColors.Resolve("Red").ToArgb(), "★ 关掉跟随之后回落到调色板里的颜色");
+		appConfig.FrameCustomColor = Color.FromArgb(18, 52, 86).ToArgb();
+		Eq(appConfig.EffectiveFrameColor.ToArgb(), Color.FromArgb(18, 52, 86).ToArgb(), "★ 设了自定义颜色就优先用自定义色");
+		appConfig.FrameColorFollowAccent = true;
+		Eq(appConfig.EffectiveFrameColor.ToArgb(), accent.ToArgb(), "两个都开着时强调色优先（不会两个设置互相打架）");
+		AppConfig appConfig2 = new AppConfig();
+		appConfig2.FrameCustomColor = 16777215;
+		appConfig2.Normalize();
+		Eq(appConfig2.FrameCustomColor, 0, "透明色的自定义值会被归一化成「没设过」");
+		using (DragFixture dragFixture = new DragFixture(null))
+		{
+			using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
+			settingsForm.CreateControl();
+			settingsForm.ProbeSetFollowAccent(on: true);
+			SettingsForm.FrameSelection frameSelection = settingsForm.ProbeFrameSelection();
+			Check(frameSelection.FollowAccent, "设置页上「跟随强调色」是打开的");
+			Eq(frameSelection.EffectiveColorHex, FrameColors.HexOf(accent), "★ 预览框用的颜色跟着变成强调色");
+			settingsForm.ProbeSetCustomColor(Color.FromArgb(34, 136, 68).ToArgb());
+			SettingsForm.FrameSelection frameSelection2 = settingsForm.ProbeFrameSelection();
+			Check(!frameSelection2.FollowAccent, "选自定义色会自动关掉「跟随强调色」（否则点了像没反应）");
+			Eq(frameSelection2.EffectiveColorHex, "#228844", "★ 预览框用的颜色换成自定义色");
+			Check(frameSelection2.ColorNameText.Contains("#228844"), "界面上直接写出了自定义颜色的色号", frameSelection2.ColorNameText);
+			bool flag = false;
+			bool flag2 = false;
+			Walk(settingsForm, delegate(Control control)
+			{
+				if (control is CheckBox checkBox && checkBox.Text.Contains("跟随系统强调色") && checkBox.Width > 0)
+				{
+					flag = true;
+				}
+				if (control is Button button && button.Text.Contains("自定义颜色") && button.Width > 0)
+				{
+					flag2 = true;
+				}
+			});
+			Check(flag, "★ 「跟随系统强调色」开关真的在界面上（不是只改了配置）");
+			Check(flag2, "★ 「自定义颜色…」按钮真的在界面上");
+			AppConfig appConfig3 = new AppConfig();
+			settingsForm.ProbeCaptureInto(appConfig3);
+			Eq(appConfig3.FrameCustomColor, Color.FromArgb(34, 136, 68).ToArgb(), "★ 自定义颜色真的写进了配置");
+			Check(!appConfig3.FrameColorFollowAccent, "跟随强调色的状态也写进了配置");
+		}
+		using ActivationFrame activationFrame = new ActivationFrame();
+		activationFrame.EnsureCreated();
+		if (activationFrame.IsCreated)
+		{
+			Color color = Color.FromArgb(34, 136, 68);
+			activationFrame.ApplyTheme("Teal", "Dashed", 3, 13, 100, color);
+			Check(activationFrame.ColorOverrideForTest.HasValue && activationFrame.ColorOverrideForTest.Value.ToArgb() == color.ToArgb(), "★ 浮层记住了覆盖色（强调色/自定义色走的就是这条路）");
+			activationFrame.HideOverlay();
+		}
+	}
+
+	private static void TestFramelessCardWindow()
+	{
+		using DragFixture dragFixture = new DragFixture(null);
+		using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
+		settingsForm.StartPosition = FormStartPosition.Manual;
+		settingsForm.Location = new Point(40, 40);
+		settingsForm.Show();
+		Application.DoEvents();
+		Native.RECT rECT;
+		Native.GetWindowRect(settingsForm.Handle, out rECT);
+		int num = rECT.Bottom - rECT.Top - settingsForm.ClientSize.Height;
+		Line("    （窗口高=" + (rECT.Bottom - rECT.Top) + " 客户区高=" + settingsForm.ClientSize.Height + "）");
+		Check(num <= 6, "★ 系统标题栏已被去掉（客户区高度≈窗口高度，最上面那条是自己画的）", "差值 " + num + "px");
+		int windowIntAttribute = Native.GetWindowIntAttribute(settingsForm.Handle, 33);
+		if (Environment.OSVersion.Version.Build >= 22000)
+		{
+			Eq(windowIntAttribute, 2, "★ 整窗启用了 DWM 圆角（不再是一整块直角矩形）");
+		}
+		else
+		{
+			Line("    （系统低于 Win11，圆角由系统决定）corner=" + windowIntAttribute);
+		}
+		Eq(settingsForm.ProbeCaptionButtonCount(), 3, "★ 最小化/最大化/关闭三个按钮都在标题条上");
+		Color color = settingsForm.ProbeTitleStripColor();
+		Eq(color.ToArgb(), SettingsForm.ProbeTokenColor("Surface").ToArgb(), "★ 标题条颜色就是窗口外壳色（同一套颜色，不会出现最上面一条不一样）");
+		settingsForm.Close();
+	}
+
+	private static void TestSettingsThemeFollowsSystem()
+	{
+		bool flag = SettingsForm.ProbeThemeIsDark();
+		Line("    （系统主题）" + (flag ? "深色" : "浅色"));
+		bool registryDark = false;
+		try
+		{
+			using RegistryKey registryKey = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+			if (registryKey != null && registryKey.GetValue("AppsUseLightTheme") is int num4)
+			{
+				registryDark = num4 == 0;
+			}
+		}
+		catch
+		{
+		}
+		Check(SettingsForm.ProbeThemeIsDark() == registryDark, "主题探测和注册表里的 AppsUseLightTheme 一致（不是写死的）");
+		using DragFixture dragFixture = new DragFixture(null);
+		using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
+		settingsForm.CreateControl();
+		Application.DoEvents();
+		SettingsForm.RenderStats renderStats = SettingsForm.ProbeFormRender(settingsForm, "Teal");
+		Line("    （主题渲染）亮度=" + renderStats.MeanBrightness.ToString("0.0") + " 纯黑=" + renderStats.BlackPixels + " 颜色数=" + renderStats.DistinctColors);
+		if (flag)
+		{
+			Check(renderStats.MeanBrightness < 120.0, "★ 系统深色时设置页跟着变深色（不再固定成浅色）", "平均亮度 " + renderStats.MeanBrightness.ToString("0.0"));
+		}
+		else
+		{
+			Check(renderStats.MeanBrightness > 200.0, "系统浅色时设置页是浅色底", "平均亮度 " + renderStats.MeanBrightness.ToString("0.0"));
+		}
+		Check(renderStats.DistinctColors >= 24, "深浅色都是一整套层次（不是一块纯色刷到底）", "颜色数 " + renderStats.DistinctColors);
+		double num = ContrastRatio(SettingsForm.ProbeTokenColor("TextPrimary"), SettingsForm.ProbeTokenColor("Surface"));
+		Line("    （对比度）正文/卡片=" + num.ToString("0.0"));
+		Check(num >= 7.0, "★ 正文与卡片底的对比度达标（看得清才谈得上精致）", "对比度 " + num.ToString("0.0"));
+		double num2 = ContrastRatio(SettingsForm.ProbeTokenColor("TextSecondary"), SettingsForm.ProbeTokenColor("Surface"));
+		Check(num2 >= 3.5, "次要文字也够清楚（不是灰到看不清）", "对比度 " + num2.ToString("0.0"));
+		double num3 = ContrastRatio(SettingsForm.ProbeTokenColor("Accent"), SettingsForm.ProbeTokenColor("Surface"));
+		Check(num3 >= 2.2, "强调色在卡片底上够显眼", "对比度 " + num3.ToString("0.0"));
+		settingsForm.Close();
 	}
 
 	private static void TestSettingsDefaultSizeCompact()
@@ -12759,9 +13012,9 @@ internal static class SelfTest
 		Check(framePickerProbe.GridAccentInk > 10, "★ 色板里「选中的那一格」有可见的强调色标记", "强调色像素 " + framePickerProbe.GridAccentInk);
 		Check(framePickerProbe.GalleryAccentInk > 10, "★ 样式画廊里选中的那一格有可见的强调色标记", "强调色像素 " + framePickerProbe.GalleryAccentInk);
 		Check(framePickerProbe.GridSelectedCell.Width > 0 && framePickerProbe.GallerySelectedCell.Width > 0, "选中的色块格 / 样式格都能定位到（选中态不是空）");
-		settingsForm.ProbeSelectFrameStyle("Neon");
+		settingsForm.ProbeSelectFrameStyle("Focus");
 		SettingsForm.FrameSelection frameSelection = settingsForm.ProbeFrameSelection();
-		Eq(frameSelection.GridStyleId, "Neon", "★ 选了「霓虹」之后，画廊里高亮的就是霓虹");
+		Eq(frameSelection.GridStyleId, "Focus", "★ 选了「焦点环」之后，画廊里高亮的就是焦点环");
 		Eq(frameSelection.GridColorId, frameSelection.ColorId, "色板高亮与当前颜色一致");
 		settingsForm.ProbeSelectFrameColor("Gold");
 		SettingsForm.FrameSelection frameSelection2 = settingsForm.ProbeFrameSelection();
@@ -12811,8 +13064,16 @@ internal static class SelfTest
 		Line("    （色板诊断）" + settingsForm.ProbeGridDiagnostic());
 		Check(renderStats.Width > 400 && renderStats.Height > 300, "设置窗口渲染出了有效的画布尺寸", renderStats.Width + "x" + renderStats.Height);
 		Check(renderStats.DistinctColors > 400, "★ 画面颜色层次足够丰富（不是一块平色，说明圆角/描边/投影/文字都在画）", "不同颜色数 " + renderStats.DistinctColors);
-		Check(renderStats.BlackPixels < 400, "★ 画面里没有成片的近黑像素（自绘控件没铺底导致黑条的老问题没有复发）", "近黑像素 " + renderStats.BlackPixels);
-		Check(renderStats.MeanBrightness > 200.0, "整体是浅色 Win11 底（平均亮度够高，不是暗色或脏色）", "平均亮度 " + renderStats.MeanBrightness.ToString("0.0"));
+		Check(renderStats.BlackPixels < 400, "★ 画面里没有成片的纯黑像素（自绘控件没铺底导致黑条的老问题没有复发）", "纯黑像素 " + renderStats.BlackPixels);
+		if (SettingsForm.ProbeThemeIsDark())
+		{
+			Check(renderStats.MeanBrightness < 120.0, "★ 系统深色时设置页整体也是深色（不再固定浅色刺眼）", "平均亮度 " + renderStats.MeanBrightness.ToString("0.0"));
+			Check(renderStats.MeanBrightness > 15.0, "深色底不是死黑（有层次，不发灰发脏）", "平均亮度 " + renderStats.MeanBrightness.ToString("0.0"));
+		}
+		else
+		{
+			Check(renderStats.MeanBrightness > 200.0, "系统浅色时设置页整体是浅色 Win11 底（平均亮度够高）", "平均亮度 " + renderStats.MeanBrightness.ToString("0.0"));
+		}
 		Check(renderStats.AccentPixels > 300, "★ 强调色真的出现在画面上（主按钮 / 分组竖条 / 选中态）", "强调色像素 " + renderStats.AccentPixels);
 		Check(renderStats.FrameColorPixels > 150, "★ 外框色真的出现在画面上（色板 / 样式缩略图 / 实时预览）", "外框色像素 " + renderStats.FrameColorPixels);
 		settingsForm.Close();
@@ -13703,7 +13964,7 @@ internal static class SelfTest
 			{
 				c.ShowActivationFrame = true;
 				c.BringToFront = false;
-				c.FrameStyleId = "Solid";
+				c.FrameStyleId = "Focus";
 				c.FrameColorId = "Teal";
 				c.FrameThickness = 6;
 				c.FrameOpacity = 100;
@@ -13865,7 +14126,7 @@ internal static class SelfTest
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
 		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
-		Check(SettingsForm.AppVersionForTest == "1.4.1", "★ 版本号已升到 1.4.1", "实际=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == "1.5.0", "★ 版本号已升到 1.5.0", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
 
@@ -14541,7 +14802,7 @@ internal static class SelfTest
 		}
 		Line("    （样式 墨水像素）" + stringBuilder2);
 		Check(stringBuilder.Length == 0, "★ 每个外框样式都有中文名、且都能画出内容（括号里是实测墨水像素）", stringBuilder.ToString());
-		Check(FrameStyles.All.Length >= 12, "样式数量（太少不够用）", FrameStyles.All.Length + " 种");
+		Check(FrameStyles.All.Length >= 5, "样式数量（太少了不够选，但也不该堆垃圾）", FrameStyles.All.Length + " 种");
 		Check(FrameStyles.IsValid(FrameStyles.DefaultId), "默认样式必须在样式表里（否则配置归一化会打架）");
 		using DragFixture dragFixture = new DragFixture(null);
 		using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
@@ -15718,6 +15979,19 @@ internal static class SelfTest
 // ============================================================================
 internal sealed class SettingsForm : Form
 {
+	// NCCALCSIZE_PARAMS：只用到 rgrc[0]（新的客户区矩形，屏幕坐标）。
+	[StructLayout(LayoutKind.Sequential)]
+	private struct NCCALCSIZE_PARAMS
+	{
+		public Native.RECT rgrc0;
+
+		public Native.RECT rgrc1;
+
+		public Native.RECT rgrc2;
+
+		public IntPtr lppos;
+	}
+
 	// ======================= 值对象（自测探针序列化用） =======================
 
 	internal sealed class FrameSelection
@@ -15735,6 +16009,9 @@ internal sealed class SettingsForm : Form
 		public string GridColorId;
 		public string GridStyleId;
 		public string ColorNameText;
+		public bool FollowAccent;
+		public int CustomColorArgb;
+		public string EffectiveColorHex;
 	}
 
 	internal sealed class FramePickerProbe
@@ -15771,34 +16048,151 @@ internal sealed class SettingsForm : Form
 		public double MeanBrightness;
 	}
 
+	// ======================= 系统主题（浅色 / 深色） =======================
+
+	// 跟着 Windows 的「应用模式」走：读 HKCU\...\Themes\Personalize\AppsUseLightTheme。
+	// 设置页在 WM_SETTINGCHANGE / WM_THEMECHANGED 时重新读，真的变了才整体重建（和 DPI 变化同一条路），
+	// 这样切系统白夜间时不用重开窗口，颜色也不会停在上一次的样子。
+	private static class Theme
+	{
+		private static bool _dark;
+		private static bool _probed;
+		private static bool? _forced;
+
+		public static bool IsDark
+		{
+			get
+			{
+				if (!_probed)
+				{
+					Refresh();
+				}
+				return _dark;
+			}
+		}
+
+		/// <summary>重新探测系统主题；返回"和上次比是否变了"。</summary>
+		public static bool Refresh()
+		{
+			bool dark = DetectDark();
+			bool changed = _probed && dark != _dark;
+			_dark = dark;
+			_probed = true;
+			return changed;
+		}
+
+		/// <summary>截图/自检用：强制按某个主题渲染（null = 回到跟随系统）。</summary>
+		public static void SetForceDark(bool? dark)
+		{
+			_forced = dark;
+			_probed = false;
+		}
+
+		public static bool DetectDark()
+		{
+			if (_forced.HasValue)
+			{
+				return _forced.Value;
+			}
+			try
+			{
+				using RegistryKey registryKey = Registry.CurrentUser.OpenSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+				if (registryKey != null)
+				{
+					object value = registryKey.GetValue("AppsUseLightTheme");
+					if (value is int num)
+					{
+						return num == 0;
+					}
+				}
+			}
+			catch
+			{
+			}
+			return false;
+		}
+	}
+
 	// ======================= 设计令牌 =======================
 
+	// 一套亮色、一套暗色。颜色统一走属性而不是 const/readonly 字段，
+	// 这样控件在重绘时天然拿到当前主题的颜色（不需要挨个控件重新赋值）。
 	private static class Tokens
 	{
-		public static readonly Color Canvas = Color.FromArgb(243, 244, 246);
-		public static readonly Color Sidebar = Color.FromArgb(249, 250, 252);
-		public static readonly Color Surface = Color.White;
-		public static readonly Color Stroke = Color.FromArgb(228, 231, 236);
-		public static readonly Color Divider = Color.FromArgb(236, 238, 241);
+		private static Color P(Color light, Color dark)
+		{
+			return Theme.IsDark ? dark : light;
+		}
+
+		public static Color Canvas => P(Color.FromArgb(247, 247, 248), Color.FromArgb(25, 26, 28));
+
+		public static Color Sidebar => P(Color.FromArgb(252, 252, 253), Color.FromArgb(31, 32, 34));
+
+		public static Color Surface => P(Color.FromArgb(255, 255, 255), Color.FromArgb(36, 37, 39));
+
+		/// <summary>卡片里"再凹一层"的底色（预览框内衬、样式缩略图底色）。</summary>
+		public static Color SurfaceAlt => P(Color.FromArgb(250, 250, 251), Color.FromArgb(30, 31, 33));
+
+		public static Color Stroke => P(Color.FromArgb(234, 234, 237), Color.FromArgb(54, 55, 58));
+
+		public static Color Divider => P(Color.FromArgb(241, 241, 243), Color.FromArgb(47, 48, 51));
+
+		public static Color TextPrimary => P(Color.FromArgb(28, 29, 33), Color.FromArgb(242, 242, 243));
+
+		public static Color TextSecondary => P(Color.FromArgb(94, 96, 102), Color.FromArgb(174, 175, 179));
+
+		public static Color TextTertiary => P(Color.FromArgb(142, 144, 150), Color.FromArgb(130, 131, 136));
+
+		public static Color Accent => P(Color.FromArgb(15, 107, 189), Color.FromArgb(76, 155, 240));
+
+		public static Color AccentPressed => P(Color.FromArgb(11, 90, 158), Color.FromArgb(111, 178, 255));
+
+		public static Color AccentSoft => P(Color.FromArgb(235, 243, 251), Color.FromArgb(27, 44, 64));
+
+		public static Color AccentSoftStroke => P(Color.FromArgb(203, 222, 238), Color.FromArgb(46, 75, 107));
+
+		public static Color InputStroke => P(Color.FromArgb(220, 220, 224), Color.FromArgb(66, 67, 71));
+
+		public static Color InputStrokeHover => P(Color.FromArgb(203, 203, 208), Color.FromArgb(80, 81, 86));
+
+		public static Color FieldFill => P(Color.FromArgb(248, 248, 249), Color.FromArgb(31, 32, 34));
+
+		public static Color FieldStroke => P(Color.FromArgb(231, 231, 234), Color.FromArgb(56, 57, 61));
+
+		public static Color Hint => P(Color.FromArgb(146, 148, 154), Color.FromArgb(134, 135, 140));
+
+		public static Color WarnText => P(Color.FromArgb(138, 90, 11), Color.FromArgb(226, 180, 100));
+
+		public static Color Success => P(Color.FromArgb(15, 122, 70), Color.FromArgb(79, 206, 143));
+
+		public static Color Danger => P(Color.FromArgb(184, 36, 36), Color.FromArgb(242, 118, 118));
+
+		public static Color TrackOff => P(Color.FromArgb(219, 219, 223), Color.FromArgb(62, 63, 67));
+
+		public static Color TrackOffHover => P(Color.FromArgb(204, 204, 209), Color.FromArgb(73, 74, 78));
+
+		public static Color ButtonHover => P(Color.FromArgb(243, 243, 245), Color.FromArgb(46, 47, 50));
+
+		/// <summary>强调色底上的文字（暗色主题的强调色偏亮，用深色字更清楚）。</summary>
+		public static Color TextOnAccent => P(Color.FromArgb(255, 255, 255), Color.FromArgb(7, 19, 31));
+
+		/// <summary>开关滑块（暗色主题不用纯白，避免刺眼）。</summary>
+		public static Color SwitchKnob => P(Color.FromArgb(255, 255, 255), Color.FromArgb(244, 246, 249));
+
+		/// <summary>卡片外投影。</summary>
+		public static Color CardShadow => P(Color.FromArgb(12, 18, 18, 22), Color.FromArgb(90, 0, 0, 0));
+
+		/// <summary>大面（卡片、预览框）统一圆角。</summary>
 		public const int Radius = 12;
-		public static readonly Color TextPrimary = Color.FromArgb(25, 27, 31);
-		public static readonly Color TextSecondary = Color.FromArgb(96, 101, 110);
-		public static readonly Color TextTertiary = Color.FromArgb(141, 146, 155);
-		public static readonly Color Accent = Color.FromArgb(15, 107, 189);
-		public static readonly Color AccentPressed = Color.FromArgb(11, 90, 158);
-		public static readonly Color AccentSoft = Color.FromArgb(233, 243, 251);
-		public static readonly Color AccentSoftStroke = Color.FromArgb(187, 217, 238);
-		public static readonly Color InputStroke = Color.FromArgb(214, 218, 225);
-		public static readonly Color InputStrokeHover = Color.FromArgb(197, 202, 211);
-		public static readonly Color FieldFill = Color.FromArgb(247, 248, 250);
-		public static readonly Color FieldStroke = Color.FromArgb(223, 226, 231);
-		public static readonly Color Hint = Color.FromArgb(140, 145, 153);
-		public static readonly Color WarnText = Color.FromArgb(146, 88, 10);
-		public static readonly Color Success = Color.FromArgb(16, 124, 72);
-		public static readonly Color Danger = Color.FromArgb(187, 37, 37);
-		public static readonly Color TrackOff = Color.FromArgb(214, 217, 223);
-		public static readonly Color TrackOffHover = Color.FromArgb(202, 206, 213);
-		public static readonly Color ButtonHover = Color.FromArgb(246, 248, 251);
+
+		/// <summary>控件（输入框、按钮、色块、画廊格、侧栏胶囊）统一圆角。</summary>
+		public const int RadiusField = 8;
+
+		/// <summary>页面纸面（内容区那张大卡片）的圆角，比内层卡片更大一档。</summary>
+		public const int RadiusSheet = 16;
+
+		/// <summary>页面纸面离窗口边缘的间距。</summary>
+		public const int PageGap = 8;
 	}
 
 	private static class HQ
@@ -16000,7 +16394,7 @@ internal sealed class SettingsForm : Form
 	{
 		public List<Cell> Cells = new List<Cell>();
 		public int Height = 40;
-		public int Gap = 8;
+		public int Gap = 10;
 	}
 
 	private sealed class LinePlan
@@ -16018,9 +16412,9 @@ internal sealed class SettingsForm : Form
 	{
 		public readonly List<Row> Rows = new List<Row>();
 		public bool Wide;
-		public int PadX = 18;
-		public int TitleH = 40;
-		public int BottomPad = 12;
+		public int PadX = 22;
+		public int TitleH = 56;
+		public int BottomPad = 16;
 		private readonly List<Control> _fields = new List<Control>();
 
 		public Card(string title)
@@ -16074,7 +16468,7 @@ internal sealed class SettingsForm : Form
 			try
 			{
 				int num = Math.Max(1, Sc(1));
-				c.Region = new Region(RoundedPath(new Rectangle(num, num, Math.Max(4, c.Width - num * 2 - 1), Math.Max(4, c.Height - num * 2 - 1)), Sc(6)));
+				c.Region = new Region(RoundedPath(new Rectangle(num, num, Math.Max(4, c.Width - num * 2 - 1), Math.Max(4, c.Height - num * 2 - 1)), Sc(Tokens.RadiusField)));
 			}
 			catch
 			{
@@ -16099,85 +16493,86 @@ internal sealed class SettingsForm : Form
 			return num + Sc(BottomPad);
 		}
 
-		public void Layout(int width)
+	public void Layout(int width)
+	{
+		SuspendLayout();
+		List<LinePlan> list = Plan(width);
+		int inner = width - Sc(PadX) * 2;
+		// 一张卡片里所有"单标签"的行共用同一列标签宽：值全部从同一列起跳，读起来是一条竖线。
+		int labelCol = LabelColumn();
+		foreach (LinePlan item in list)
 		{
-			SuspendLayout();
-			List<LinePlan> list = Plan(width);
-			int inner = width - Sc(PadX) * 2;
-			foreach (LinePlan item in list)
+			int num = Sc(PadX);
+			int num2 = item.Cells.Count;
+			int numLabel = LabelWidthFor(item, inner, labelCol);
+			int num3 = 0;
+			int num4 = 0;
+			foreach (Cell cell in item.Cells)
 			{
-				int num = Sc(PadX);
-				int num2 = item.Cells.Count;
-				int num3 = 0;
-				int num4 = 0;
-				foreach (Cell cell in item.Cells)
+				if (cell.Wrap || cell.Auto)
 				{
-					if (cell.Wrap || cell.Auto)
-					{
-						continue;
-					}
-					if (!string.IsNullOrEmpty(cell.Label))
-					{
-						num3 += Sc(cell.LabelW);
-					}
-					if (cell.Ctl != null && cell.FixedW > 0)
-					{
-						num3 += Sc(cell.FixedW);
-					}
-					if (cell.Ctl != null && cell.FixedW <= 0)
-					{
-						num4++;
-					}
-					num3 += Sc(item.Row.Gap);
+					continue;
 				}
-				num3 = Math.Max(0, num3 - Sc(item.Row.Gap));
-				int num5 = inner - num3;
-				int num6 = ((num4 > 0) ? Math.Max(Sc(90), num5 / num4) : 0);
-				for (int i = 0; i < num2; i++)
+				if (!string.IsNullOrEmpty(cell.Label))
 				{
-					Cell cell2 = item.Cells[i];
-					if (!string.IsNullOrEmpty(cell2.Label))
+					num3 += ((numLabel > 0) ? numLabel : Sc(cell.LabelW));
+				}
+				if (cell.Ctl != null && cell.FixedW > 0)
+				{
+					num3 += Sc(cell.FixedW);
+				}
+				if (cell.Ctl != null && cell.FixedW <= 0)
+				{
+					num4++;
+				}
+				num3 += Sc(item.Row.Gap);
+			}
+			num3 = Math.Max(0, num3 - Sc(item.Row.Gap));
+			int num5 = inner - num3;
+			int num6 = ((num4 > 0) ? Math.Max(Sc(90), num5 / num4) : 0);
+			for (int i = 0; i < num2; i++)
+			{
+				Cell cell2 = item.Cells[i];
+				if (!string.IsNullOrEmpty(cell2.Label))
+				{
+					Control control = item.Labels[i];
+					if (control != null)
 					{
-						Control control = item.Labels[i];
-						if (control != null)
-						{
-							int num7 = Math.Min(Sc(cell2.LabelW), Math.Max(20, inner - (num - Sc(PadX)) - Sc(2)));
-							int num11 = Math.Min(item.H, Math.Max(control.Height, TextHeightFor(control) + Sc(4)));
-							control.SetBounds(num, item.Y + Math.Max(0, (item.H - num11) / 2), num7, num11);
-						}
-						num += Sc(cell2.LabelW) + Sc(item.Row.Gap);
+						int num7 = Math.Min((numLabel > 0) ? numLabel : Sc(cell2.LabelW), Math.Max(20, inner - (num - Sc(PadX)) - Sc(2)));
+						int num11 = Math.Min(item.H, Math.Max(control.Height, TextHeightFor(control) + Sc(4)));
+						control.SetBounds(num, item.Y + Math.Max(0, (item.H - num11) / 2), num7, num11);
 					}
-					if (cell2.Ctl == null)
-					{
-						continue;
-					}
-					int num8 = num6;
-					if (cell2.FixedW > 0)
-					{
-						num8 = Sc(cell2.FixedW);
-					}
-					else if (cell2.Wrap || cell2.Auto)
-					{
-						num8 = inner - (num - Sc(PadX));
-					}
-					int num9 = inner - (num - Sc(PadX));
-					if (num8 > num9)
-					{
-						num8 = num9;
-					}
-					if (num8 < 8)
-					{
-						num8 = 8;
-					}
+					num += ((numLabel > 0) ? numLabel : Sc(cell2.LabelW)) + Sc(item.Row.Gap);
+				}
+				if (cell2.Ctl == null)
+				{
+					continue;
+				}
+				int num8 = num6;
+				if (cell2.FixedW > 0)
+				{
+					num8 = Sc(cell2.FixedW);
+				}
+				else if (cell2.Wrap || cell2.Auto)
+				{
+					num8 = inner - (num - Sc(PadX));
+				}
+				int num9 = inner - (num - Sc(PadX));
+				if (num8 > num9)
+				{
+					num8 = num9;
+				}
+				if (num8 < 8)
+				{
+					num8 = 8;
+				}
 				int num10;
 				if (cell2.Wrap || cell2.Auto)
 				{
-					// 整行单元格的高度已由 RowHeight 按文字行数 / INeedHeight 算好
 					num10 = Math.Max(Sc(20), cell2.Ctl.Height);
 				}
-				else if (cell2.Ctl is FlatCombo || cell2.Ctl is TextBox || cell2.Ctl is FlatButton)
+				else if (cell2.Ctl is FlatCombo || cell2.Ctl is TextBox || cell2.Ctl is FlatButton || cell2.Ctl is FlatNum)
 				{
-					// 输入框 / 按钮统一设计高度，不沿用系统默认行高（否则和底栏按钮高度对不上）
 					num10 = Math.Min(item.H, Sc(32));
 				}
 				else
@@ -16186,11 +16581,63 @@ internal sealed class SettingsForm : Form
 				}
 				cell2.Ctl.SetBounds(num, item.Y + Math.Max(0, (item.H - num10) / 2), num8, num10);
 				num += num8 + Sc(item.Row.Gap);
+			}
+		}
+		SyncFieldRegions();
+		ResumeLayout(performLayout: false);
+	}
+
+	// 卡片里"只有一个标签"的那些行，取它们的最大标签宽，夹在 [52, 88] 逻辑像素内。
+	private int LabelColumn()
+	{
+		int num = 0;
+		foreach (Row row in Rows)
+		{
+			int num2 = 0;
+			int num3 = 0;
+			foreach (Cell cell in row.Cells)
+			{
+				if (!string.IsNullOrEmpty(cell.Label))
+				{
+					num2++;
+					num3 = Math.Max(num3, Sc(cell.LabelW));
 				}
 			}
-			SyncFieldRegions();
-			ResumeLayout(performLayout: false);
+			if (num2 == 1)
+			{
+				num = Math.Max(num, num3);
+			}
 		}
+		if (num < Sc(52))
+		{
+			num = Sc(52);
+		}
+		if (num > Sc(88))
+		{
+			num = Sc(88);
+		}
+		return num;
+	}
+
+	// 这一行套用统一列宽会不会挤爆？会的话返回 0（这一行退回自己的原始宽度）。
+	private static int LabelWidthFor(LinePlan line, int inner, int labelCol)
+	{
+		int num = 0;
+		foreach (Cell cell in line.Cells)
+		{
+			num += ((!string.IsNullOrEmpty(cell.Label)) ? labelCol : 0);
+			if (cell.Ctl != null)
+			{
+				num += ((cell.FixedW > 0) ? Sc(cell.FixedW) : Sc(90));
+			}
+			num += Sc(line.Row.Gap);
+		}
+		if (num > inner)
+		{
+			return 0;
+		}
+		return labelCol;
+	}
 
 		private List<LinePlan> Plan(int width)
 		{
@@ -16323,7 +16770,13 @@ internal sealed class SettingsForm : Form
 			{
 				return;
 			}
-			using (GraphicsPath path = RoundedPath(rectangle, Sc(12)))
+			// 极淡的外投影：卡片不再是"描了边的白块"，而是在画布上浮起一层（暗色主题下换成更重的黑）。
+			using (GraphicsPath shadowPath = RoundedPath(new Rectangle(rectangle.X + Sc(1), rectangle.Y + Sc(2), rectangle.Width, rectangle.Height), Sc(Tokens.Radius)))
+			{
+				using SolidBrush shadowBrush = new SolidBrush(Tokens.CardShadow);
+				graphics.FillPath(shadowBrush, shadowPath);
+			}
+			using (GraphicsPath path = RoundedPath(rectangle, Sc(Tokens.Radius)))
 			{
 				using (SolidBrush solidBrush2 = new SolidBrush(Tokens.Surface))
 				{
@@ -16337,7 +16790,10 @@ internal sealed class SettingsForm : Form
 			try
 			{
 				using Font font = new Font(Font.FontFamily, Sc(14), FontStyle.Bold, GraphicsUnit.Pixel);
-				TextRenderer.DrawText(graphics, Text, font, new Rectangle(Sc(PadX), Sc(10), Math.Max(20, clientRectangle.Width - Sc(PadX) * 2), Sc(26)), Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(graphics, Text, font, new Rectangle(Sc(PadX), Sc(20), Math.Max(20, clientRectangle.Width - Sc(PadX) * 2), Sc(26)), Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+				// 标题下一条极淡的分隔线：把"标题区"和"内容区"分开，层次更清楚也更像成品
+				using Pen pen3 = new Pen(Tokens.Divider);
+				graphics.DrawLine(pen3, Sc(PadX), Sc(TitleH) - 1, rectangle.Right - Sc(PadX), Sc(TitleH) - 1);
 			}
 			catch (Exception ex)
 			{
@@ -16351,7 +16807,7 @@ internal sealed class SettingsForm : Form
 				}
 				Rectangle rect = new Rectangle(field.Left, field.Top, field.Width, field.Height);
 				bool enabled = field.Enabled;
-				using (GraphicsPath path2 = RoundedPath(rect, Sc(6)))
+				using (GraphicsPath path2 = RoundedPath(rect, Sc(Tokens.RadiusField)))
 				{
 					using (SolidBrush solidBrush3 = new SolidBrush(enabled ? Tokens.FieldFill : Tokens.Canvas))
 					{
@@ -16380,7 +16836,8 @@ internal sealed class SettingsForm : Form
 		public SideNav()
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
-			BackColor = Tokens.Sidebar;
+			// 控件本身是外壳色，真正的侧栏是里面那张圆角面板
+			BackColor = Tokens.Surface;
 			_glow = new Tween[16];
 		}
 
@@ -16468,9 +16925,15 @@ internal sealed class SettingsForm : Form
 			{
 				graphics.FillRectangle(solidBrush, clientRectangle);
 			}
-			using (Pen pen = new Pen(Tokens.Stroke))
+			if (clientRectangle.Width > 8 && clientRectangle.Height > 8)
 			{
-				graphics.DrawLine(pen, clientRectangle.Width - 1, 0, clientRectangle.Width - 1, clientRectangle.Height);
+				using GraphicsPath panelPath = RoundedPath(new Rectangle(0, 0, clientRectangle.Width - 1, clientRectangle.Height - 1), Sc(Tokens.RadiusSheet));
+				using (SolidBrush panelBrush = new SolidBrush(Tokens.Canvas))
+				{
+					graphics.FillPath(panelBrush, panelPath);
+				}
+				using Pen panelPen = new Pen(Tokens.Stroke);
+				graphics.DrawPath(panelPen, panelPath);
 			}
 			try
 			{
@@ -16507,7 +16970,7 @@ internal sealed class SettingsForm : Form
 				if (num2 > 0.01f)
 				{
 					Color color = (flag ? Tokens.AccentSoft : Tokens.ButtonHover);
-					using GraphicsPath path = RoundedPath(r, Sc(10));
+					using GraphicsPath path = RoundedPath(r, Sc(Tokens.RadiusField));
 					using (SolidBrush brush = new SolidBrush(Mix(Color.FromArgb(0, color), color, Math.Min(1f, num2 * 1.35f))))
 					{
 						graphics.FillPath(brush, path);
@@ -16518,6 +16981,12 @@ internal sealed class SettingsForm : Form
 						{
 							graphics.DrawPath(pen4, path);
 						}
+						// 左侧一道 3px 的强调色短条：不靠底色深浅也能一眼看出停在哪一页
+						int num4 = Math.Max(Sc(14), r.Height / 2);
+						Rectangle rect2 = new Rectangle(Sc(2), r.Top + (r.Height - num4) / 2, Math.Max(2, Sc(3)), num4);
+						using GraphicsPath path5 = RoundedPath(rect2, Math.Max(1, rect2.Width / 2));
+						using SolidBrush brush4 = new SolidBrush(Mix(Color.FromArgb(0, Tokens.Accent), Tokens.Accent, Math.Min(1f, num2)));
+						graphics.FillPath(brush4, path5);
 					}
 				}
 				Color color2 = ((flag || flag2) ? Tokens.TextPrimary : Tokens.TextSecondary);
@@ -16658,7 +17127,7 @@ internal sealed class SettingsForm : Form
 				using Graphics graphics = Graphics.FromHwnd(Handle);
 				HQ.Apply(graphics);
 				int num = Sc(1);
-				GraphicsPath graphicsPath = RoundedPath(new Rectangle(num, num, Width - num * 2 - 1, Height - num * 2 - 1), Sc(6));
+				GraphicsPath graphicsPath = RoundedPath(new Rectangle(num, num, Width - num * 2 - 1, Height - num * 2 - 1), Sc(Tokens.RadiusField));
 				try
 				{
 					using (SolidBrush brush = new SolidBrush(Enabled ? BackColor : Tokens.Canvas))
@@ -16672,7 +17141,7 @@ internal sealed class SettingsForm : Form
 					}
 					else
 					{
-						color = Color.FromArgb(228, 231, 238);
+						color = Tokens.Divider;
 					}
 					using Pen pen = new Pen(color);
 					graphics.DrawPath(pen, graphicsPath);
@@ -16690,12 +17159,12 @@ internal sealed class SettingsForm : Form
 				}
 				else
 				{
-					TextRenderer.DrawText(graphics, (obj != null) ? obj.ToString() : "", Font, rectangle, Enabled ? Tokens.TextPrimary : Color.FromArgb(160, 165, 176), TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
+					TextRenderer.DrawText(graphics, (obj != null) ? obj.ToString() : "", Font, rectangle, Enabled ? Tokens.TextPrimary : Tokens.TextTertiary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
 				}
 				float num3 = (float)Width - (float)num2 / 2f;
 				float num4 = (float)Height / 2f;
 				float num5 = (float)Sc(2) * 1.15f;
-				using Pen pen2 = new Pen(Enabled ? Tokens.TextSecondary : Color.FromArgb(180, 185, 195), Math.Max(1.2f, (float)Sc(1) * 1.4f));
+				using Pen pen2 = new Pen(Enabled ? Tokens.TextSecondary : Tokens.TextTertiary, Math.Max(1.2f, (float)Sc(1) * 1.4f));
 				pen2.StartCap = LineCap.Round;
 				pen2.EndCap = LineCap.Round;
 				pen2.LineJoin = LineJoin.Round;
@@ -16719,6 +17188,9 @@ internal sealed class SettingsForm : Form
 	{
 		public FlatNum()
 		{
+			// 不开这个，高度会被系统按字体锁死（实测只有 18 逻辑像素），
+			// 和同一行的标签/按钮对不齐——看上去就是"字和框的高度乱七八糟"。
+			AutoSize = false;
 			BorderStyle = BorderStyle.None;
 			BackColor = Tokens.FieldFill;
 			ForeColor = Tokens.TextPrimary;
@@ -16849,7 +17321,7 @@ internal sealed class SettingsForm : Form
 			Color color;
 			if (!Enabled)
 			{
-				color = (flag ? Color.FromArgb(203, 206, 214) : Color.FromArgb(238, 240, 244));
+				color = (flag ? Tokens.TrackOff : Tokens.Divider);
 			}
 			else
 			{
@@ -16870,14 +17342,14 @@ internal sealed class SettingsForm : Form
 			{
 				graphics.FillEllipse(brush3, new Rectangle(rect.X, rect.Y + Math.Max(1, Sc(1)), rect.Width, rect.Height));
 			}
-			using (SolidBrush brush4 = new SolidBrush(Enabled ? Color.White : Color.FromArgb(246, 247, 250)))
+			using (SolidBrush brush4 = new SolidBrush(Enabled ? Tokens.SwitchKnob : Tokens.Surface))
 			{
 				graphics.FillEllipse(brush4, rect);
 			}
 			Rectangle bounds = new Rectangle(trackRect.Right + Sc(8), 0, Math.Max(10, Width - trackRect.Right - Sc(10)), Height);
 			if (bounds.Width > 0)
 			{
-				Color foreColor = (Enabled ? ForeColor : Color.FromArgb(160, 165, 176));
+				Color foreColor = (Enabled ? ForeColor : Tokens.TextTertiary);
 				TextRenderer.DrawText(graphics, Text, Font, bounds, foreColor, TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
 			}
 		}
@@ -16954,7 +17426,7 @@ internal sealed class SettingsForm : Form
 			{
 				back = Tokens.Canvas;
 			}
-			using (GraphicsPath path = RoundedPath(new Rectangle(0, 0, clientRectangle.Width, clientRectangle.Height), Sc(6)))
+			using (GraphicsPath path = RoundedPath(new Rectangle(0, 0, clientRectangle.Width, clientRectangle.Height), Sc(Tokens.RadiusField)))
 			{
 				using (SolidBrush brush = new SolidBrush(back))
 				{
@@ -16968,10 +17440,10 @@ internal sealed class SettingsForm : Form
 					}
 				}
 			}
-			Color foreColor = (_primary ? Color.White : Tokens.TextPrimary);
+			Color foreColor = (_primary ? Tokens.TextOnAccent : Tokens.TextPrimary);
 			if (!Enabled)
 			{
-				foreColor = Color.FromArgb(160, 165, 176);
+				foreColor = Tokens.TextTertiary;
 			}
 			TextRenderer.DrawText(graphics, Text, Font, new Rectangle(Sc(8), 0, Math.Max(10, clientRectangle.Width - Sc(16)), clientRectangle.Height), foreColor, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
 		}
@@ -16982,6 +17454,149 @@ internal sealed class SettingsForm : Form
 		}
 
 		internal float HoverValueForTest => _hoverT.Value;
+	}
+
+	// ======================= 标题条按钮 =======================
+
+	// 3 个窗口按钮：最小化 / 最大化(还原) / 关闭。
+	// 图标用线条自己画（不依赖图标字体），悬停/按下都有反馈，关闭按钮悬停变红。
+	private sealed class CaptionButton : Control
+	{
+		private bool _hot;
+		private bool _down;
+		private int _kind;
+		private bool _maximized;
+
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public int Kind
+		{
+			get
+			{
+				return _kind;
+			}
+			set
+			{
+				_kind = value;
+				Invalidate();
+			}
+		}
+
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public bool IsMaximized
+		{
+			get
+			{
+				return _maximized;
+			}
+			set
+			{
+				if (_maximized != value)
+				{
+					_maximized = value;
+					Invalidate();
+				}
+			}
+		}
+
+		public CaptionButton()
+		{
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
+			BackColor = Tokens.Canvas;
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+		}
+
+		protected override void OnMouseEnter(EventArgs e)
+		{
+			_hot = true;
+			Invalidate();
+			base.OnMouseEnter(e);
+		}
+
+		protected override void OnMouseLeave(EventArgs e)
+		{
+			_hot = false;
+			_down = false;
+			Invalidate();
+			base.OnMouseLeave(e);
+		}
+
+		protected override void OnMouseDown(MouseEventArgs e)
+		{
+			if (e.Button == MouseButtons.Left)
+			{
+				_down = true;
+				Invalidate();
+			}
+			base.OnMouseDown(e);
+		}
+
+		protected override void OnMouseUp(MouseEventArgs e)
+		{
+			_down = false;
+			Invalidate();
+			base.OnMouseUp(e);
+		}
+
+		protected override void OnPaint(PaintEventArgs e)
+		{
+			Graphics graphics = e.Graphics;
+			HQ.Apply(graphics);
+			Rectangle clientRectangle = ClientRectangle;
+			graphics.Clear(BackColor);
+			if (_hot || _down)
+			{
+				Color color = ((_kind == 2) ? Color.FromArgb(196, 43, 28) : Tokens.ButtonHover);
+				if (_down)
+				{
+					color = ControlPaint.Dark(color, 0.06f);
+				}
+				using SolidBrush brush = new SolidBrush(color);
+				graphics.FillRectangle(brush, clientRectangle);
+			}
+			Color color2 = ((_kind == 2 && _hot) ? Color.White : Tokens.TextSecondary);
+			float num = Math.Max(1.1f, (float)Sc(1) * 1.15f);
+			using Pen pen = new Pen(color2, num);
+			pen.StartCap = LineCap.Round;
+			pen.EndCap = LineCap.Round;
+			int num2 = clientRectangle.Width / 2;
+			int num3 = clientRectangle.Height / 2;
+			int num4 = Math.Max(4, Sc(5));
+			switch (_kind)
+			{
+			case 0:
+				graphics.DrawLine(pen, num2 - num4, num3, num2 + num4, num3);
+				break;
+			case 1:
+				if (_maximized)
+				{
+					graphics.DrawRectangle(pen, num2 - num4 + Sc(1), num3 - num4, num4 * 2 - Sc(2), num4 * 2 - Sc(2));
+					graphics.DrawRectangle(pen, num2 - num4, num3 - num4 + Sc(2), num4 * 2 - Sc(2), num4 * 2 - Sc(2));
+				}
+				else
+				{
+					graphics.DrawRectangle(pen, num2 - num4, num3 - num4, num4 * 2, num4 * 2);
+				}
+				break;
+			default:
+				graphics.DrawLine(pen, num2 - num4 + 1, num3 - num4 + 1, num2 + num4 - 1, num3 + num4 - 1);
+				graphics.DrawLine(pen, num2 + num4 - 1, num3 - num4 + 1, num2 - num4 + 1, num3 + num4 - 1);
+				break;
+			}
+		}
+	}
+
+	private void UpdateMaximizeGlyph()
+	{
+		try
+		{
+			if (_btnMax != null)
+			{
+				_btnMax.IsMaximized = (WindowState == FormWindowState.Maximized);
+			}
+		}
+		catch
+		{
+		}
 	}
 
 	// ======================= 色板 =======================
@@ -17141,7 +17756,7 @@ internal sealed class SettingsForm : Form
 				Rectangle rect = new Rectangle(num * (Cell + Gap), num2 * (Cell + Gap), Cell, Cell);
 				bool flag = i == _sel;
 				bool flag2 = i == _hot;
-				using (GraphicsPath path = RoundedPath(new Rectangle(rect.X + Sc(2), rect.Y + Sc(2), Cell - Sc(4), Cell - Sc(4)), Sc(6)))
+				using (GraphicsPath path = RoundedPath(new Rectangle(rect.X + Sc(2), rect.Y + Sc(2), Cell - Sc(4), Cell - Sc(4)), Sc(Tokens.RadiusField)))
 				{
 					using (SolidBrush brush = new SolidBrush(_items[i].Color))
 					{
@@ -17157,7 +17772,7 @@ internal sealed class SettingsForm : Form
 				{
 					using (GraphicsPath path2 = RoundedPath(new Rectangle(rect.X + Sc(7), rect.Y + Sc(7), Cell - Sc(14), Cell - Sc(14)), Sc(4)))
 					{
-						using (Pen pen2 = new Pen(Color.White, Math.Max(1.5f, Sc(2))))
+						using (Pen pen2 = new Pen(Tokens.Surface, Math.Max(1.5f, Sc(2))))
 						{
 							graphics.DrawPath(pen2, path2);
 						}
@@ -17175,12 +17790,28 @@ internal sealed class SettingsForm : Form
 		private int _sel;
 		private int _hot = -1;
 		private string _colorId;
+		private Color? _colorOverride;
 		private int _thickness = 3;
 		private int _radius = 12;
 		private bool _frameEnabled = true;
 		public event EventHandler Picked;
 
 		public List<string> ItemsForTest => _items;
+
+		/// <summary>非空时优先用它画（跟随强调色 / 自定义颜色都走这条路）。</summary>
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public Color? ColorOverride
+		{
+			get
+			{
+				return _colorOverride;
+			}
+			set
+			{
+				_colorOverride = value;
+				Invalidate();
+			}
+		}
 
 		public int Gap => Sc(8);
 
@@ -17372,7 +18003,7 @@ internal sealed class SettingsForm : Form
 			Color color = Color.Gray;
 			try
 			{
-				color = FrameColors.Resolve(_colorId ?? FrameColors.DefaultId);
+				color = _colorOverride ?? FrameColors.Resolve(_colorId ?? FrameColors.DefaultId);
 			}
 			catch
 			{
@@ -17387,9 +18018,9 @@ internal sealed class SettingsForm : Form
 				bool flag = i == _sel;
 				bool flag2 = i == _hot;
 				Rectangle rect = new Rectangle(num4, num5, num, CellH);
-				using (GraphicsPath path = RoundedPath(new Rectangle(rect.X, rect.Y, rect.Width, CellH - Sc(18)), Sc(6)))
+				using (GraphicsPath path = RoundedPath(new Rectangle(rect.X, rect.Y, rect.Width, CellH - Sc(18)), Sc(Tokens.RadiusField)))
 				{
-					using (SolidBrush brush = new SolidBrush(Color.White))
+					using (SolidBrush brush = new SolidBrush(Tokens.SurfaceAlt))
 					{
 						graphics.FillPath(brush, path);
 					}
@@ -17428,10 +18059,25 @@ internal sealed class SettingsForm : Form
 	{
 		private string _colorId;
 		private string _styleId;
+		private Color? _colorOverride;
 		private int _thickness = 3;
 		private int _radius = 12;
 		private bool _frameEnabled = true;
 		private int _opacity = 100;
+
+		/// <summary>非空时优先用它画（跟随强调色 / 自定义颜色都走这条路）。</summary>
+		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+		public Color? ColorOverride
+		{
+			get
+			{
+				return _colorOverride;
+			}
+			set
+			{
+				_colorOverride = value;
+			}
+		}
 
 		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
 		public string ColorId
@@ -17534,9 +18180,9 @@ internal sealed class SettingsForm : Form
 			{
 				return;
 			}
-			using (GraphicsPath path = RoundedPath(Rectangle.Ceiling(rectangleF), Sc(8)))
+			using (GraphicsPath path = RoundedPath(Rectangle.Ceiling(rectangleF), Sc(Tokens.RadiusField)))
 			{
-				using (SolidBrush brush = new SolidBrush(Color.FromArgb(252, 253, 254)))
+				using (SolidBrush brush = new SolidBrush(Tokens.SurfaceAlt))
 				{
 					graphics.FillPath(brush, path);
 				}
@@ -17554,7 +18200,7 @@ internal sealed class SettingsForm : Form
 			Color color = Color.Gray;
 			try
 			{
-				color = FrameColors.Resolve(_colorId ?? FrameColors.DefaultId);
+				color = _colorOverride ?? FrameColors.Resolve(_colorId ?? FrameColors.DefaultId);
 			}
 			catch
 			{
@@ -17810,6 +18456,18 @@ internal sealed class SettingsForm : Form
 			Controls.Add(Canvas);
 		}
 
+		protected override void OnResize(EventArgs e)
+		{
+			base.OnResize(e);
+			try
+			{
+				Region = new Region(RoundedPath(new Rectangle(0, 0, Math.Max(4, Width - 1), Math.Max(4, Height - 1)), Math.Max(4, Sc(Tokens.RadiusSheet) - Sc(2))));
+			}
+			catch
+			{
+			}
+		}
+
 		public void UpdateScroll()
 		{
 			int num = MaxScroll;
@@ -17873,6 +18531,12 @@ internal sealed class SettingsForm : Form
 	private int _activePage;
 	private int _cols = 1;
 
+	private Panel _titleStrip;
+	private CaptionButton _btnMin;
+	private CaptionButton _btnMax;
+	private CaptionButton _btnClose;
+	private Label _lblStripTitle;
+
 	private Label _lblStatus;
 	private FlatButton _btnDefaultsRef;
 	private FlatButton _btnSaveRef;
@@ -17890,10 +18554,15 @@ internal sealed class SettingsForm : Form
 
 	private FlatCheck _chkFrame;
 	private FlatCombo _cmbFrameColor;
+	private FlatCheck _chkFollowAccent;
+	private FlatButton _btnCustomColor;
+	private Label _lblCustomColor;
+	private int _customColorArgb;
 	private FlatCombo _cmbFrameStyle;
 	private SwatchGrid _gridColor;
 	private Label _lblColorName;
 	private Label _lblStyleHeader;
+	private Label _lblStyleHint;
 	private StyleGallery _galleryStyle;
 	private FlatNum _numFrameThick;
 	private FlatNum _numFrameRadius;
@@ -18066,6 +18735,8 @@ internal sealed class SettingsForm : Form
 		catch
 		{
 		}
+		// 先探一次系统主题，再建界面：控件构造时读到的就是当前该用的那套颜色。
+		Theme.Refresh();
 		BuildUi();
 		Populate();
 	}
@@ -18105,8 +18776,11 @@ internal sealed class SettingsForm : Form
 		Text = "长按拖窗 · 设置";
 		Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
 		AutoScaleMode = AutoScaleMode.None;
-		BackColor = Tokens.Canvas;
+		// 外壳色：标题条、内容容器、窗口边缘都用它，面板都是"浮"在这层上的圆角卡片
+		BackColor = Tokens.Surface;
 		ForeColor = Tokens.TextPrimary;
+		// 保留 Sizable（留着 WS_THICKFRAME：DWM 阴影、左右下三边原生缩放都靠它），
+		// 但用 WM_NCCALCSIZE 把系统标题栏整条吃掉 —— 标题条由我们自己画，颜色和页面 100% 一致。
 		FormBorderStyle = FormBorderStyle.Sizable;
 		MaximizeBox = true;
 		MinimizeBox = true;
@@ -18128,45 +18802,143 @@ internal sealed class SettingsForm : Form
 		}
 		_content = new Panel
 		{
-			Dock = DockStyle.Fill,
-			BackColor = Tokens.Canvas
+			// 外壳色打底，真正的内容是里面那张圆角纸面（PageHost 会被裁成圆角）
+			BackColor = Tokens.Surface,
+			// 让出纸面间距 + 1px 描边：PageHost 正好落在纸面内侧，四角由 Region 裁圆
+			Padding = new Padding(S(Tokens.PageGap + 1), S(Tokens.PageGap + 1), S(Tokens.PageGap + 1), S(Tokens.PageGap + 1))
+		};
+		_content.Paint += delegate(object s5, PaintEventArgs e5)
+		{
+			Graphics graphics = e5.Graphics;
+			HQ.Apply(graphics);
+			int num = S(Tokens.PageGap);
+			Rectangle rect = new Rectangle(num, num, _content.ClientSize.Width - num * 2, _content.ClientSize.Height - num * 2);
+			if (rect.Width <= 8 || rect.Height <= 8)
+			{
+				return;
+			}
+			// 一层很淡的投影 + 圆角纸面 + 1px 描边：纸面四角都是圆的，看起来才像一张卡片
+			using (GraphicsPath shadowPath = RoundedPath(new Rectangle(rect.X, rect.Y + S(2), rect.Width, rect.Height), S(Tokens.RadiusSheet)))
+			{
+				using SolidBrush shadowBrush = new SolidBrush(Tokens.CardShadow);
+				graphics.FillPath(shadowBrush, shadowPath);
+			}
+			using (GraphicsPath path = RoundedPath(rect, S(Tokens.RadiusSheet)))
+			{
+				using (SolidBrush brush = new SolidBrush(Tokens.Canvas))
+				{
+					graphics.FillPath(brush, path);
+				}
+				using (Pen pen = new Pen(Tokens.Stroke))
+				{
+					graphics.DrawPath(pen, path);
+				}
+			}
 		};
 		_content.Resize += delegate
 		{
+			if (_chromeBusy)
+			{
+				return;
+			}
 			LayoutWithContent(ContentWidth());
 		};
 		BuildControls();
 		BuildPages();
 		_nav = new SideNav();
-		_nav.Dock = DockStyle.Left;
+		// 和内容区那张纸面同一套：留 8px 外边距、16px 圆角，四角都是圆的
+		_nav.Dock = DockStyle.None;
 		_nav.Width = S(208);
 		_nav.Bind(NavTitles(), NavGlyphs(), delegate(int i)
 		{
 			SelectPage(i);
 		});
-		// 停靠顺序有讲究：WinForms 按「后加的先行占位」处理停靠，
-		// Fill 必须比 Left/Bottom 更早 Add，否则内容区会吃掉整扇客户区、把侧栏压在底下。
+		// 标题条：贴在内容区上方的一条，画法同页面底色；窗口按钮在它右端。
+		_titleStrip = new Panel
+		{
+			BackColor = Tokens.Surface
+		};
+		_titleStrip.Paint += delegate(object s2, PaintEventArgs e2)
+		{
+			Graphics graphics = e2.Graphics;
+			HQ.Apply(graphics);
+			// 和外壳同色、不画分隔线：标题条就是窗口顶上的留白，不存在"另一条颜色"
+			using SolidBrush brush = new SolidBrush(Tokens.Surface);
+			graphics.FillRectangle(brush, _titleStrip.ClientRectangle);
+		};
+		_lblStripTitle = new Label
+		{
+			AutoSize = false,
+			BackColor = Color.Transparent,
+			ForeColor = Tokens.TextPrimary,
+			Font = new Font(DesignFontFamily, 12f, FontStyle.Regular, GraphicsUnit.Point),
+			TextAlign = ContentAlignment.MiddleCenter,
+			Text = "设置"
+		};
+		_titleStrip.Controls.Add(_lblStripTitle);
+		_btnMin = new CaptionButton
+		{
+			Kind = 0
+		};
+		_btnMin.Click += delegate
+		{
+			WindowState = FormWindowState.Minimized;
+		};
+		_btnMax = new CaptionButton
+		{
+			Kind = 1
+		};
+		_btnMax.Click += delegate
+		{
+			ToggleMaximize();
+		};
+		_btnClose = new CaptionButton
+		{
+			Kind = 2
+		};
+		_btnClose.Click += delegate
+		{
+			Close();
+		};
+		_titleStrip.MouseDown += delegate(object s3, MouseEventArgs e3)
+		{
+			if (e3.Button == MouseButtons.Left)
+			{
+				Native.ReleaseCapture();
+				Native.SendMessageW(Handle, 161, new IntPtr(2), IntPtr.Zero);
+			}
+		};
+		_titleStrip.DoubleClick += delegate
+		{
+			ToggleMaximize();
+		};
+		_lblStripTitle.MouseDown += delegate(object s4, MouseEventArgs e4)
+		{
+			if (e4.Button == MouseButtons.Left)
+			{
+				Native.ReleaseCapture();
+				Native.SendMessageW(Handle, 161, new IntPtr(2), IntPtr.Zero);
+			}
+		};
+		_lblStripTitle.DoubleClick += delegate
+		{
+			ToggleMaximize();
+		};
+		_titleStrip.Controls.Add(_btnMin);
+		_titleStrip.Controls.Add(_btnMax);
+		_titleStrip.Controls.Add(_btnClose);
 		Controls.Add(_content);
 		Controls.Add(_nav);
+		Controls.Add(_titleStrip);
 		_pager = new Panel
 		{
-			Dock = DockStyle.Bottom,
 			Height = S(60),
 			BackColor = Tokens.Surface
 		};
 		_pager.Paint += delegate(object s, PaintEventArgs e)
 		{
-			Graphics graphics = e.Graphics;
-			HQ.Apply(graphics);
-			using (Pen pen = new Pen(Tokens.Stroke))
-			{
-				graphics.DrawLine(pen, 0, 0, _pager.Width, 0);
-			}
-			for (int i = 1; i <= 2; i++)
-			{
-				using Pen pen2 = new Pen(Color.FromArgb((i == 1) ? 16 : 7, Tokens.TextPrimary));
-				graphics.DrawLine(pen2, 0, i, _pager.Width, i);
-			}
+			// 三个按钮就直接放在窗口底色上，不再给它们单独套一层背景（多一块灰底反而脏）
+			e.Graphics.Clear(Tokens.Surface);
 		};
 		_lblStatus = new Label
 		{
@@ -18213,6 +18985,7 @@ internal sealed class SettingsForm : Form
 		_pager.Resize += delegate
 		{
 			LayoutPager();
+			LayoutChrome();
 		};
 		Controls.Add(_pager);
 		MinimumSize = new Size(S(640), S(480));
@@ -18232,10 +19005,72 @@ internal sealed class SettingsForm : Form
 			_defaultClientH = S(680);
 		}
 		LayoutPager();
+		LayoutChrome();
 		ApplySavedSize();
 		ResumeLayout(performLayout: false);
 		LayoutWithContent(ContentWidth());
 		SelectPage(0);
+	}
+
+	// 标题条高度（逻辑像素）
+	private int StripHeight => S(48);
+
+	private bool _chromeBusy;
+
+	private void LayoutChrome()
+	{
+		if (_chromeBusy)
+		{
+			return;
+		}
+		_chromeBusy = true;
+		try
+		{
+			if (_nav == null || _content == null || _titleStrip == null)
+			{
+				return;
+			}
+			int num = StripHeight;
+			int num2 = ClientSize.Height - ((_pager != null) ? _pager.Height : 0);
+			int num5x = S(Tokens.PageGap);
+			int pagerH = ((_pager != null) ? _pager.Height : 0);
+			int num6x = Math.Max(S(120), ClientSize.Height - num - pagerH - num5x * 2);
+			_nav.Bounds = new Rectangle(num5x, num + num5x, S(208), num6x);
+			int num3 = Math.Max(S(12), ClientSize.Width - _nav.Right);
+			if (_pager != null)
+			{
+				_pager.Bounds = new Rectangle(_nav.Right, ClientSize.Height - pagerH - num5x, Math.Max(S(120), ClientSize.Width - _nav.Right - num5x), pagerH);
+			}
+			int num4 = Math.Max(S(12), ClientSize.Height - num - pagerH);
+			_titleStrip.Bounds = new Rectangle(_nav.Right, 0, num3, num);
+			_content.Bounds = new Rectangle(_nav.Right, num, num3, num4);
+			int num5 = S(46);
+			int num6 = S(30);
+			int num7 = (num - num6) / 2;
+			int num8 = num3 - S(8);
+			_btnClose.Bounds = new Rectangle(num8 - num5, num7, num5, num6);
+			_btnMax.Bounds = new Rectangle(_btnClose.Left - num5, num7, num5, num6);
+			_btnMin.Bounds = new Rectangle(_btnMax.Left - num5, num7, num5, num6);
+			_lblStripTitle.Bounds = new Rectangle(0, 0, num3, num);
+		}
+		catch
+		{
+		}
+		finally
+		{
+			_chromeBusy = false;
+		}
+	}
+
+	private void ToggleMaximize()
+	{
+		try
+		{
+			WindowState = ((WindowState == FormWindowState.Maximized) ? FormWindowState.Normal : FormWindowState.Maximized);
+		}
+		catch
+		{
+		}
 	}
 
 	private void LayoutPager()
@@ -18309,7 +19144,7 @@ internal sealed class SettingsForm : Form
 	{
 		if (IsHandleCreated && _content != null && _content.ClientSize.Width > 10)
 		{
-			return _content.ClientSize.Width;
+			return Math.Max(10, _content.ClientSize.Width - _content.Padding.Horizontal);
 		}
 		return Math.Max(10, ClientSize.Width - S(208));
 	}
@@ -18371,6 +19206,26 @@ internal sealed class SettingsForm : Form
 			SyncPreview();
 		};
 		_cmbFrameColor.ClosedPainter = PaintColorEntry;
+		_chkFollowAccent = new FlatCheck
+		{
+			Text = "颜色跟随系统强调色（换 Windows 主题色时外框一起变）",
+			Cursor = Cursors.Hand
+		};
+		_chkFollowAccent.CheckedChanged += delegate
+		{
+			SyncFrameEnabled();
+			SyncPreview();
+		};
+		_btnCustomColor = new FlatButton
+		{
+			Text = "自定义颜色…"
+		};
+		_btnCustomColor.Click += delegate
+		{
+			PickCustomFrameColor();
+		};
+		_lblCustomColor = HintLabel();
+		_lblCustomColor.ForeColor = Tokens.TextPrimary;
 		_cmbFrameStyle = NewCombo();
 		_cmbFrameStyle.SelectedIndexChanged += delegate
 		{
@@ -18387,6 +19242,7 @@ internal sealed class SettingsForm : Form
 		_lblColorName = HintLabel();
 		_lblColorName.ForeColor = Tokens.TextPrimary;
 		_lblStyleHeader = HintLabel();
+		_lblStyleHint = HintLabel();
 		_galleryStyle = new StyleGallery
 		{
 			Cursor = Cursors.Hand
@@ -18664,8 +19520,11 @@ internal sealed class SettingsForm : Form
 		card4.Add(36, W(_chkFrame));
 		card4.Add(40, L("外框颜色", 84), F(_lblColorName));
 		card4.Add(0, A(_gridColor));
+		card4.Add(36, W(_chkFollowAccent));
+		card4.Add(36, C(_btnCustomColor, 120), F(_lblCustomColor));
 		card4.Add(36, L("样式", 60), F(_lblStyleHeader));
 		card4.Add(0, A(_galleryStyle));
+		card4.Add(26, W(_lblStyleHint));
 		card4.Add(40, L("粗细", 60), C(_numFrameThick, 70), L("圆角", 60), C(_numFrameRadius, 70), L("不透明度", 84), C(_numFrameOpacity, 70));
 		card4.Add(172, C(_pnlPreview, 240));
 		card4.Add(40, W(_lblFrameTip));
@@ -18792,6 +19651,10 @@ internal sealed class SettingsForm : Form
 
 	private void LayoutWithContent(int contentW)
 	{
+		LayoutChrome();
+		// 宽度一律以内容区实际客户宽为准：外面传进来的可能是"改尺寸之前"的旧值，
+		// 拿旧宽度排一次、再拿新宽度排一次，来回拉时看起来就是"控件位置在漂"。
+		contentW = ContentWidth();
 		if (contentW < 10)
 		{
 			contentW = 10;
@@ -18808,9 +19671,9 @@ internal sealed class SettingsForm : Form
 			try
 			{
 				SyncPageFonts(page);
-				page.LblTitle.SetBounds(num2, S(10), num, S(32));
-				page.LblSub.SetBounds(num2, S(44), num, S(22));
-				int num5 = S(72);
+				page.LblTitle.SetBounds(num2, S(18), num, S(32));
+				page.LblSub.SetBounds(num2, S(52), num, S(22));
+				int num5 = S(88);
 				int num6 = 0;
 				int num7 = 0;
 				foreach (Card card in page.Cards)
@@ -18870,7 +19733,7 @@ internal sealed class SettingsForm : Form
 	{
 		try
 		{
-			page.LblTitle.Font = new Font(DesignFontFamily, Sc(16), FontStyle.Bold, GraphicsUnit.Pixel);
+			page.LblTitle.Font = new Font(DesignFontFamily, Sc(18), FontStyle.Bold, GraphicsUnit.Pixel);
 			page.LblSub.Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel);
 		}
 		catch
@@ -18963,6 +19826,8 @@ internal sealed class SettingsForm : Form
 		_galleryStyle.SetItems(new List<string>(FrameStyles.All));
 		SelectId(_cmbFrameStyle, _edit.FrameStyleId);
 		SelectId(_cmbFrameColor, _edit.FrameColorId);
+		_chkFollowAccent.Checked = _edit.FrameColorFollowAccent;
+		_customColorArgb = _edit.FrameCustomColor;
 		_numFrameThick.Value = Clamp(_edit.FrameThickness, (int)_numFrameThick.Minimum, (int)_numFrameThick.Maximum);
 		_numFrameRadius.Value = Clamp(_edit.FrameRadius, (int)_numFrameRadius.Minimum, (int)_numFrameRadius.Maximum);
 		_numFrameOpacity.Value = Clamp(_edit.FrameOpacity, (int)_numFrameOpacity.Minimum, (int)_numFrameOpacity.Maximum);
@@ -19019,12 +19884,17 @@ internal sealed class SettingsForm : Form
 	private void SyncFrameEnabled()
 	{
 		bool flag = _chkFrame.Checked;
-		_cmbFrameColor.Enabled = flag;
+		// 跟随强调色时，色板与自定义颜色都不参与，直接置灰（避免"点了没反应"的错觉）
+		bool flag2 = flag && !_chkFollowAccent.Checked;
+		_cmbFrameColor.Enabled = flag2;
+		_chkFollowAccent.Enabled = flag;
+		_btnCustomColor.Enabled = flag2;
+		_lblCustomColor.Enabled = flag2;
 		_cmbFrameStyle.Enabled = flag;
 		_numFrameThick.Enabled = flag;
 		_numFrameRadius.Enabled = flag;
 		_numFrameOpacity.Enabled = flag;
-		_gridColor.Enabled = flag;
+		_gridColor.Enabled = flag2;
 		_galleryStyle.Enabled = flag;
 		_galleryStyle.FrameEnabled = flag;
 		_pnlPreview.FrameEnabled = flag;
@@ -19041,11 +19911,15 @@ internal sealed class SettingsForm : Form
 	{
 		string text = SelectedId(_cmbFrameColor, FrameColors.DefaultId);
 		string text2 = SelectedId(_cmbFrameStyle, FrameStyles.DefaultId);
+		bool followAccent = _chkFollowAccent.Checked;
 		int thickness = (int)_numFrameThick.Value;
 		int radius = (int)_numFrameRadius.Value;
 		int frameOpacity = (int)_numFrameOpacity.Value;
 		bool frameEnabled = _chkFrame.Checked;
+		// 预览、画廊缩略图、真正的外框共用同一个"最终颜色"，三处永远一致
+		Color color = FrameColors.ResolveEffective(text, followAccent, _customColorArgb);
 		_pnlPreview.ColorId = text;
+		_pnlPreview.ColorOverride = color;
 		_pnlPreview.StyleId = text2;
 		_pnlPreview.Thickness = thickness;
 		_pnlPreview.Radius = radius;
@@ -19053,10 +19927,13 @@ internal sealed class SettingsForm : Form
 		_pnlPreview.FrameEnabled = frameEnabled;
 		_pnlPreview.Refresh_();
 		_gridColor.SelectedId = text;
-		_lblColorName.Text = "当前颜色：" + ColorNameOf(text);
+		_lblColorName.Text = "当前颜色：" + FrameColors.NameOf(text, followAccent, _customColorArgb) + " " + FrameColors.HexOf(color);
+		_lblCustomColor.Text = ((_customColorArgb != 0) ? ("已设自定义色 " + FrameColors.HexOf(Color.FromArgb(_customColorArgb))) : "还没有设置自定义颜色");
 		_lblStyleHeader.Text = "样式（当前粗细 " + thickness + " px・圆角 " + radius + " px）";
+		_lblStyleHint.Text = FrameStyles.HintFor(text2);
 		_galleryStyle.SelectedId = text2;
 		_galleryStyle.ColorId = text;
+		_galleryStyle.ColorOverride = color;
 		_galleryStyle.Thickness = thickness;
 		_galleryStyle.Radius = radius;
 		_galleryStyle.FrameEnabled = frameEnabled;
@@ -19071,7 +19948,7 @@ internal sealed class SettingsForm : Form
 		}
 		string text = SelectedId(_cmbFrameColor, FrameColors.DefaultId);
 		string text2 = SelectedId(_cmbFrameStyle, FrameStyles.DefaultId);
-		bool flag = text != _edit.FrameColorId || text2 != _edit.FrameStyleId || (int)_numFrameThick.Value != _edit.FrameThickness || (int)_numFrameRadius.Value != _edit.FrameRadius || _chkFrame.Checked != _edit.ShowActivationFrame;
+		bool flag = text != _edit.FrameColorId || text2 != _edit.FrameStyleId || (int)_numFrameThick.Value != _edit.FrameThickness || (int)_numFrameRadius.Value != _edit.FrameRadius || _chkFrame.Checked != _edit.ShowActivationFrame || _chkFollowAccent.Checked != _edit.FrameColorFollowAccent || _customColorArgb != _edit.FrameCustomColor;
 		_lblFrameTip.ForeColor = (flag ? Tokens.WarnText : Tokens.Hint);
 		_lblFrameTip.Text = (flag ? "外观已改动，点「保存并生效」才会画到实际外框上。" : "颜色与样式即点即换，预览与外框同一段代码。");
 	}
@@ -19338,6 +20215,8 @@ internal sealed class SettingsForm : Form
 		target.ActionMiddle = SelectedAction(_cmbMiddle) ?? target.ActionMiddle;
 		target.ShowActivationFrame = _chkFrame.Checked;
 		target.FrameColorId = SelectedId(_cmbFrameColor, target.FrameColorId);
+		target.FrameColorFollowAccent = _chkFollowAccent.Checked;
+		target.FrameCustomColor = _customColorArgb;
 		target.FrameStyleId = SelectedId(_cmbFrameStyle, target.FrameStyleId);
 		target.FrameThickness = (int)_numFrameThick.Value;
 		target.FrameRadius = (int)_numFrameRadius.Value;
@@ -19390,6 +20269,40 @@ internal sealed class SettingsForm : Form
 		{
 			Log.Error(ex);
 			Status("打开文件对话框失败：" + ex.Message, error: true);
+		}
+	}
+
+	// 自定义外框颜色：系统取色器（可展开调色盘、可直接吸屏幕颜色）。
+	// 选完自动关掉"跟随强调色"，否则自定义色会被强调色盖住，点了跟没点一样。
+	private void PickCustomFrameColor()
+	{
+		try
+		{
+			using ColorDialog colorDialog = new ColorDialog();
+			colorDialog.AllowFullOpen = true;
+			colorDialog.FullOpen = true;
+			colorDialog.AnyColor = true;
+			colorDialog.SolidColorOnly = false;
+			colorDialog.Color = FrameColors.ResolveEffective(SelectedId(_cmbFrameColor, FrameColors.DefaultId), _chkFollowAccent.Checked, _customColorArgb);
+			if (_customColorArgb != 0)
+			{
+				colorDialog.CustomColors = new int[1] { _customColorArgb };
+			}
+			if (colorDialog.ShowDialog(this) == DialogResult.OK)
+			{
+				_customColorArgb = colorDialog.Color.ToArgb();
+				if (_chkFollowAccent.Checked)
+				{
+					_chkFollowAccent.Checked = false;
+				}
+				SyncFrameEnabled();
+				SyncPreview();
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			Status("打开取色器失败：" + ex.Message, error: true);
 		}
 	}
 
@@ -19796,6 +20709,14 @@ internal sealed class SettingsForm : Form
 		base.OnFormClosed(e);
 	}
 
+	protected override void OnResize(EventArgs e)
+	{
+		base.OnResize(e);
+		LayoutChrome();
+		LayoutWithContent(ContentWidth());
+		UpdateMaximizeGlyph();
+	}
+
 	protected override void OnHandleCreated(EventArgs e)
 	{
 		base.OnHandleCreated(e);
@@ -19807,10 +20728,63 @@ internal sealed class SettingsForm : Form
 		{
 			Log.Error(ex);
 		}
+		// 无边框窗要自己跟 DWM 要圆角，否则就是一整块直角矩形（"都是直角，很丑"的成因）
+		try
+		{
+			Native.SetWindowRoundedCorners(Handle);
+		}
+		catch (Exception ex2)
+		{
+			Log.Error(ex2);
+		}
 	}
 
 	protected override void WndProc(ref Message m)
 	{
+		if (m.Msg == 131)
+		{
+			// WM_NCCALCSIZE：把系统标题栏整条还给客户区（边框留着，左右下三边照样能拖拽缩放）。
+			// 这样"最上面那条"就是我们自己画的画布色，和页面严丝合缝，不存在两套颜色。
+			try
+			{
+				if (m.WParam != IntPtr.Zero)
+				{
+					NCCALCSIZE_PARAMS nCCALCSIZE_PARAMS = (NCCALCSIZE_PARAMS)Marshal.PtrToStructure(m.LParam, typeof(NCCALCSIZE_PARAMS));
+					Native.RECT rECT;
+					bool windowRect = Native.GetWindowRect(Handle, out rECT);
+					if (windowRect && nCCALCSIZE_PARAMS.rgrc0.Top > rECT.Top)
+					{
+						nCCALCSIZE_PARAMS.rgrc0.Top = rECT.Top;
+						Marshal.StructureToPtr(nCCALCSIZE_PARAMS, m.LParam, fDeleteOld: false);
+					}
+					m.Result = IntPtr.Zero;
+					return;
+				}
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+		}
+		else if (m.Msg == 132)
+		{
+			// WM_NCHITTEST：标题条上按"按住标题栏"处理 → 原生拖动 / 双击最大化 / 贴边分屏都能用。
+			try
+			{
+				int x = (short)(m.LParam.ToInt64() & 0xFFFF);
+				int y = (short)((m.LParam.ToInt64() >> 16) & 0xFFFF);
+				Point pt = PointToClient(new Point(x, y));
+				if (_titleStrip != null && WindowState != FormWindowState.Maximized && pt.X >= _titleStrip.Left && pt.X < _titleStrip.Right && pt.Y >= 0 && pt.Y < _titleStrip.Height)
+				{
+					m.Result = new IntPtr(2);
+					return;
+				}
+			}
+			catch (Exception ex2)
+			{
+				Log.Error(ex2);
+			}
+		}
 		if (m.Msg == 736)
 		{
 			int dpi = (int)(short)((m.WParam.ToInt64() >> 16) & 0xFFFF);
@@ -19823,7 +20797,48 @@ internal sealed class SettingsForm : Form
 				Log.Error(ex);
 			}
 		}
+		else if (m.Msg == 26 || m.Msg == 794)
+		{
+			// WM_SETTINGCHANGE / WM_THEMECHANGED：系统切了白夜间（或换了主题色）时重读一次
+			try
+			{
+				ReloadSystemTheme();
+			}
+			catch (Exception ex2)
+			{
+				Log.Error(ex2);
+			}
+		}
 		base.WndProc(ref m);
+	}
+
+	// 系统主题真的变了才重建（重建会把没保存的改动先收回 _edit，不会丢）。
+	private void ReloadSystemTheme()
+	{
+		bool dark = Theme.IsDark;
+		Theme.Refresh();
+		ApplyTitleBarTheme();
+		if (Theme.IsDark != dark)
+		{
+			RebuildUi();
+			return;
+		}
+		Invalidate(invalidateChildren: true);
+	}
+
+	private void ApplyTitleBarTheme()
+	{
+		try
+		{
+			if (IsHandleCreated)
+			{
+				// 用画布色当标题栏：和侧栏只差 2% 的明度，接缝看不出来
+				Native.SetTitleBarTheme(Handle, Theme.IsDark, Tokens.Canvas, Tokens.TextPrimary, Tokens.Stroke);
+			}
+		}
+		catch
+		{
+		}
 	}
 
 	private void RescaleForDpi(int dpi)
@@ -19847,6 +20862,17 @@ internal sealed class SettingsForm : Form
 		if (_recording)
 		{
 			StopRecording(applied: false);
+		}
+		// 重建（换 DPI / 切系统主题）之前先把界面上的当前值收回 _edit，否则没保存的改动会被旧值覆盖。
+		try
+		{
+			if (!_populating)
+			{
+				CaptureInto(_edit);
+			}
+		}
+		catch
+		{
 		}
 		int num = ((_activePage >= 0 && _activePage < _pages.Count) ? _activePage : 0);
 		List<Control> list = new List<Control>();
@@ -19940,7 +20966,10 @@ internal sealed class SettingsForm : Form
 			PreviewFrameEnabled = _pnlPreview.FrameEnabled,
 			GridColorId = _gridColor.SelectedId,
 			GridStyleId = _galleryStyle.SelectedId,
-			ColorNameText = _lblColorName.Text
+			ColorNameText = _lblColorName.Text,
+			FollowAccent = _chkFollowAccent.Checked,
+			CustomColorArgb = _customColorArgb,
+			EffectiveColorHex = (_pnlPreview.ColorOverride.HasValue ? FrameColors.HexOf(_pnlPreview.ColorOverride.Value) : "")
 		};
 	}
 
@@ -19948,6 +20977,23 @@ internal sealed class SettingsForm : Form
 	{
 		SelectPage(2);
 		SelectId(_cmbFrameColor, id);
+		SyncPreview();
+	}
+
+	internal void ProbeSetFollowAccent(bool on)
+	{
+		SelectPage(2);
+		_chkFollowAccent.Checked = on;
+		SyncFrameEnabled();
+		SyncPreview();
+	}
+
+	internal void ProbeSetCustomColor(int argb)
+	{
+		SelectPage(2);
+		_customColorArgb = argb;
+		_chkFollowAccent.Checked = false;
+		SyncFrameEnabled();
 		SyncPreview();
 	}
 
@@ -20869,13 +21915,66 @@ internal sealed class SettingsForm : Form
 		}
 		try
 		{
-			settingsForm.LayoutWithContent(available);
-			return settingsForm._cols;
+			// 只问决策函数：整页重排现在一律以内容区真实宽度为准，
+			// 借道重排会测到"宽度被最小尺寸夹住"的假象，测不准滞回带。
+			return settingsForm.DecideColumns(available);
 		}
 		catch
 		{
 			return -1;
 		}
+	}
+
+		internal static Color ProbeTokenColor(string name)
+	{
+		switch (name)
+		{
+		case "Surface":
+			return Tokens.Surface;
+		case "TextPrimary":
+			return Tokens.TextPrimary;
+		case "TextSecondary":
+			return Tokens.TextSecondary;
+		case "Accent":
+			return Tokens.Accent;
+		case "Canvas":
+			return Tokens.Canvas;
+		default:
+			return Color.Empty;
+		}
+	}
+
+	internal static void ProbeForceDarkTheme(bool? dark)
+	{
+		Theme.SetForceDark(dark);
+	}
+
+	internal Rectangle ProbePagerBounds()
+	{
+		return (_pager == null) ? Rectangle.Empty : _pager.Bounds;
+	}
+
+	internal int ProbeCaptionButtonCount()
+	{
+		int num = 0;
+		for (int i = 0; i < _titleStrip.Controls.Count; i++)
+		{
+			if (_titleStrip.Controls[i] is CaptionButton captionButton && captionButton.Visible && captionButton.Width > 0 && captionButton.Height > 0)
+			{
+				num++;
+			}
+		}
+		return num;
+	}
+
+	internal Color ProbeTitleStripColor()
+	{
+		return _titleStrip.BackColor;
+	}
+
+	internal static bool ProbeThemeIsDark()
+	{
+		return Theme.IsDark;
 	}
 
 	internal static RenderStats ProbeFormRender(Form f, string frameColorId)
@@ -20918,7 +22017,9 @@ internal sealed class SettingsForm : Form
 				hashSet.Add(pixel.ToArgb());
 				num += (pixel.R + pixel.G + pixel.B) / 3;
 				num4++;
-				if (pixel.R < 24 && pixel.G < 24 && pixel.B < 24)
+				// 只把"纯黑"当成没铺底：深色主题的底色（#17191C）和卡片投影都是有意的颜色，
+				// 用 <24 的老阈值会把它们一并算成黑条，深色主题下必假红。
+				if (pixel.R < 8 && pixel.G < 8 && pixel.B < 8)
 				{
 					renderStats.BlackPixels++;
 				}
@@ -22683,6 +23784,14 @@ internal sealed class TrayContext : ApplicationContext
 				_settings.Activate();
 			}
 			_settings.BringToFront();
+			// 托盘双击时进程不在前台，Activate() 常常被前台锁挡掉 → 窗口开在别人后面，看着像"没反应"。
+			try
+			{
+				Native.SetForegroundWindow(_settings.Handle);
+			}
+			catch
+			{
+			}
 		}
 		catch (Exception ex)
 		{
@@ -24487,6 +25596,22 @@ internal static class VisualCheck
 		Shoot(configStore, coord, new Size(num, num5), Path.Combine(outDir, "settings-narrow.png"));
 		Shoot(configStore, coord, new Size(num2, num7), Path.Combine(outDir, "settings-mid.png"));
 		Shoot(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "settings-wide.png"));
+		// 同一页在亮 / 暗两套主题下各来一张：切主题是这次的重点，必须能肉眼对照
+		SettingsForm.ProbeForceDarkTheme(false);
+		Shoot(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "settings-wide-light.png"));
+		SettingsForm.ProbeForceDarkTheme(true);
+		Shoot(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "settings-wide-dark.png"));
+		SettingsForm.ProbeForceDarkTheme(false);
+		Shoot(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "visual-page-light.png"), 2);
+		ShootLive(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "live-light.png"), 2);
+		SettingsForm.ProbeForceDarkTheme(true);
+		Shoot(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "visual-page-dark.png"), 2);
+		ShootLive(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "live-dark.png"), 2);
+		SettingsForm.ProbeForceDarkTheme(false);
+		ShootWindow(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "window-light.png"), 2);
+		SettingsForm.ProbeForceDarkTheme(true);
+		ShootWindow(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "window-dark.png"), 2);
+		SettingsForm.ProbeForceDarkTheme(null);
 		Dump(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "layout-wide.txt"), 3);
 		Dump(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "layout-g1.txt"), 0);
 		Dump(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "layout-g5.txt"), 4);
@@ -24520,7 +25645,7 @@ internal static class VisualCheck
 					using Font font2 = new Font("Microsoft YaHei UI", 9f, FontStyle.Regular);
 					using SolidBrush brush = new SolidBrush(Color.FromArgb(24, 26, 33));
 					using SolidBrush brush2 = new SolidBrush(Color.FromArgb(120, 126, 140));
-					graphics.DrawString("外框颜色 × 样式 对照表（#37 重做）", font, brush, new PointF(num3, 10f));
+					graphics.DrawString("外框颜色 × 样式 对照表（v1.5 精简重做）", font, brush, new PointF(num3, 10f));
 					for (int i = 0; i < num6; i++)
 					{
 						graphics.DrawString(layoutRectangle: new RectangleF(num3 + i * (num + num3), num5, num, num4), s: FrameStyles.DisplayName(FrameStyles.All[i]), font: font2, brush: brush);
@@ -24550,6 +25675,88 @@ internal static class VisualCheck
 				bitmap.Save(path, ImageFormat.Png);
 			}
 			File.WriteAllText(path + ".txt", "颜色 " + FrameColors.All.Length + " 种 × 样式 " + FrameStyles.All.Length + " 种\n", Encoding.UTF8);
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	// DrawToBitmap 拍到的是 WinForms 自己画的假边框，DWM 的真实标题栏只能从屏幕抓。
+	private static void ShootLive(ConfigStore store, Coordinator coord, Size size, string path, int page)
+	{
+		try
+		{
+			using SettingsForm settingsForm = new SettingsForm(store, coord);
+			settingsForm.StartPosition = FormStartPosition.Manual;
+			settingsForm.Location = new Point(40, 40);
+			settingsForm.ClientSize = size;
+			settingsForm.TopMost = true;
+			settingsForm.Show();
+			SettingsForm.ProbeSelectPage(settingsForm, page);
+			settingsForm.Activate();
+			settingsForm.BringToFront();
+			Application.DoEvents();
+			for (int i = 0; i < 10; i++)
+			{
+				Application.DoEvents();
+				Thread.Sleep(80);
+			}
+			Rectangle bounds = settingsForm.Bounds;
+			using (Bitmap bitmap = new Bitmap(bounds.Width, bounds.Height))
+			{
+				using (Graphics graphics = Graphics.FromImage(bitmap))
+				{
+					graphics.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size, CopyPixelOperation.SourceCopy);
+				}
+				bitmap.Save(path, ImageFormat.Png);
+			}
+			settingsForm.Close();
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	// PrintWindow(PW_RENDERFULLCONTENT)：连 DWM 画的标题栏一起抓，用来核对"最上面那条和页面是否同色"。
+	private static void ShootWindow(ConfigStore store, Coordinator coord, Size size, string path, int page)
+	{
+		try
+		{
+			using SettingsForm settingsForm = new SettingsForm(store, coord);
+			settingsForm.StartPosition = FormStartPosition.Manual;
+			settingsForm.Location = new Point(60, 60);
+			settingsForm.ClientSize = size;
+			settingsForm.Show();
+			SettingsForm.ProbeSelectPage(settingsForm, page);
+			Application.DoEvents();
+			for (int i = 0; i < 8; i++)
+			{
+				Application.DoEvents();
+				Thread.Sleep(80);
+			}
+			Native.RECT rECT;
+			Native.GetWindowRect(settingsForm.Handle, out rECT);
+			int width = rECT.Width;
+			int height = rECT.Height;
+			using (Bitmap bitmap = new Bitmap(width, height))
+			{
+				using (Graphics graphics = Graphics.FromImage(bitmap))
+				{
+					nint hdc = graphics.GetHdc();
+					try
+					{
+						Native.PrintWindow(settingsForm.Handle, hdc, 2u);
+					}
+					finally
+					{
+						graphics.ReleaseHdc(hdc);
+					}
+				}
+				bitmap.Save(path, ImageFormat.Png);
+			}
+			settingsForm.Close();
 		}
 		catch (Exception ex)
 		{
@@ -24631,6 +25838,11 @@ internal static class VisualCheck
 
 	private static void Shoot(ConfigStore store, Coordinator coord, Size size, string path)
 	{
+		Shoot(store, coord, size, path, 0);
+	}
+
+	private static void Shoot(ConfigStore store, Coordinator coord, Size size, string path, int page)
+	{
 		try
 		{
 			using SettingsForm settingsForm = new SettingsForm(store, coord);
@@ -24639,6 +25851,7 @@ internal static class VisualCheck
 			settingsForm.ClientSize = size;
 			settingsForm.TopMost = true;
 			settingsForm.Show();
+			SettingsForm.ProbeSelectPage(settingsForm, page);
 			settingsForm.Activate();
 			settingsForm.BringToFront();
 			Application.DoEvents();
