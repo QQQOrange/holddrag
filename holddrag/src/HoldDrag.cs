@@ -58,8 +58,14 @@ internal static class AppInfo
 
 	public const string ReleasesApiUrl = "https://api.github.com/repos/QQQOrange/holddrag/releases/latest";
 
+	/// <summary>
+	/// GitHub 个人访问令牌（PAT）的官方中文文档。界面上的「?」帮助图标统一从这里取地址，
+	/// 以后换文档地址只改这一处（便于维护）。
+	/// </summary>
+	public const string PatDocsUrl = "https://docs.github.com/zh/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens";
+
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.6.1";
+	public const string FallbackVersion = "1.7.0";
 
 	public static string Version
 	{
@@ -462,6 +468,162 @@ internal static class Updater
 		}
 	}
 
+	/// <summary>
+	/// 当前生效的 GitHub 个人访问令牌（空 = 匿名请求）。由配置加载/保存时写入，后台线程只读。
+	/// v1.7.0：填了就带 Authorization 头请求 api.github.com，限额 60 → 5000 次/小时。
+	/// </summary>
+	internal static volatile string Token;
+
+	/// <summary>是否配了令牌（空串 = 没配）。界面与提示据此决定"自动下载"还是"只给下载链接"。</summary>
+	public static bool HasToken => !string.IsNullOrEmpty(Token);
+
+	/// <summary>
+	/// 把用户粘进来的东西整理成纯令牌：
+	/// 去首尾空白 → 去 "Bearer " / "token " 前缀 → 去历史「用户名:令牌」前缀（Obtainium 老格式）→
+	/// 去掉换行/零宽字符 → 限制 255 字符。真实 GitHub 令牌里不含冒号，所以按第一个冒号切是安全的。
+	/// </summary>
+	public static string NormalizeToken(string raw)
+	{
+		if (string.IsNullOrEmpty(raw))
+		{
+			return string.Empty;
+		}
+		string text = raw.Trim();
+		if (text.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+		{
+			text = text.Substring(7).Trim();
+		}
+		else if (text.StartsWith("token ", StringComparison.OrdinalIgnoreCase))
+		{
+			text = text.Substring(6).Trim();
+		}
+		int num = text.IndexOf(':');
+		if (num > 0)
+		{
+			text = text.Substring(num + 1).Trim();
+		}
+		StringBuilder stringBuilder = new StringBuilder(text.Length);
+		foreach (char c in text)
+		{
+			if (!char.IsWhiteSpace(c) && c != '\u200b' && c != '\ufeff' && c != '\u00a0')
+			{
+				stringBuilder.Append(c);
+			}
+		}
+		text = stringBuilder.ToString();
+		if (text.Length > 255)
+		{
+			text = text.Substring(0, 255);
+		}
+		return text;
+	}
+
+	/// <summary>界面/日志里显示的脱敏令牌：只留前 4 位与末 4 位。</summary>
+	public static string MaskToken(string token)
+	{
+		string text = NormalizeToken(token);
+		if (text.Length == 0)
+		{
+			return "（未填写）";
+		}
+		if (text.Length <= 8)
+		{
+			return "****";
+		}
+		return text.Substring(0, 4) + "…" + text.Substring(text.Length - 4);
+	}
+
+	/// <summary>Authorization 头的值；空令牌返回 null（= 不带头，走匿名请求）。</summary>
+	public static string AuthHeaderValue(string token)
+	{
+		string text = NormalizeToken(token);
+		return string.IsNullOrEmpty(text) ? null : ("token " + text);
+	}
+
+	/// <summary>给一次请求带上 GitHub 接口需要的头（令牌可选）。</summary>
+	private static void ApplyAuth(HttpRequestMessage request, string token)
+	{
+		request.Headers.TryAddWithoutValidation("Accept", "application/vnd.github+json");
+		request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
+		string text = AuthHeaderValue(token);
+		if (text != null)
+		{
+			request.Headers.TryAddWithoutValidation("Authorization", text);
+		}
+	}
+
+	/// <summary>
+	/// 401/403 且正文说令牌有问题（判据同 Obtainium：message 含 bad credentials / access token）。
+	/// 注意限额 403 的正文是 "API rate limit exceeded"，不含这两个词，所以不会被误判。
+	/// </summary>
+	public static bool IsAuthRejection(int status, string body)
+	{
+		if (status != 401 && status != 403)
+		{
+			return false;
+		}
+		if (string.IsNullOrEmpty(body))
+		{
+			return false;
+		}
+		string text = body.ToLowerInvariant();
+		return text.Contains("bad credentials") || text.Contains("access token") || text.Contains("requires authentication");
+	}
+
+	/// <summary>限额用尽时给用户看的说明（含重置时间与"已改用网页方式"这个事实）。</summary>
+	public static string FormatRateLimitMessage(int waitMinutes, bool withToken)
+	{
+		int num = Math.Max(1, waitMinutes);
+		return "GitHub 接口限额已用尽（" + (withToken ? "令牌 5000 次/小时" : "匿名 60 次/小时") + "），约 " + num + " 分钟后重置；已自动改用网页方式检查";
+	}
+
+	private static string HeaderValue(HttpResponseMessage response, string name)
+	{
+		IEnumerable<string> values;
+		if (!response.Headers.TryGetValues(name, out values))
+		{
+			return null;
+		}
+		foreach (string value in values)
+		{
+			return value.Trim();
+		}
+		return null;
+	}
+
+	/// <summary>响应是否就是"限额用尽"（x-ratelimit-remaining=0 或带 retry-after）。</summary>
+	private static bool TryGetRateLimitWaitMinutes(HttpResponseMessage response, bool withToken, out string note)
+	{
+		note = null;
+		if (response.IsSuccessStatusCode)
+		{
+			return false;
+		}
+		string text = HeaderValue(response, "x-ratelimit-remaining");
+		string text2 = HeaderValue(response, "retry-after");
+		if (!string.Equals(text, "0", StringComparison.Ordinal) && string.IsNullOrEmpty(text2))
+		{
+			return false;
+		}
+		long num = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+		int waitMinutes = 1;
+		long result;
+		if (long.TryParse(HeaderValue(response, "x-ratelimit-reset"), out result) && result > num)
+		{
+			waitMinutes = (int)Math.Ceiling((double)(result - num) / 60.0);
+		}
+		else
+		{
+			int result2;
+			if (int.TryParse(text2, out result2))
+			{
+				waitMinutes = (int)Math.Ceiling((double)result2 / 60.0);
+			}
+		}
+		note = FormatRateLimitMessage(waitMinutes, withToken);
+		return true;
+	}
+
 	/// <summary>把 "v1.2.3" / "1.2.3" / "1.2.3.4" 解析成可比较的四段版本号；解析不出来返回 null。</summary>
 	public static Version ParseVersion(string tag)
 	{
@@ -511,8 +673,18 @@ internal static class Updater
 	/// </summary>
 	public static UpdateInfo CheckLatest(out string error, out bool upToDate)
 	{
+		return CheckLatest(out error, out upToDate, out _);
+	}
+
+	/// <summary>
+	/// 查最新发布。<paramref name="note"/> 回传"这次是怎么查的"的补充说明（令牌无效 / 限额用尽后改走网页），
+	/// 供界面在状态后面如实标注——不静默吞掉降级原因。
+	/// </summary>
+	public static UpdateInfo CheckLatest(out string error, out bool upToDate, out string note)
+	{
 		error = string.Empty;
 		upToDate = false;
+		note = string.Empty;
 		if (ForceOfflineForTest)
 		{
 			error = "（测试）模拟网络不可达：无法连接 github.com";
@@ -520,10 +692,10 @@ internal static class Updater
 		}
 		try
 		{
-			string tag = ResolveLatestTag();
+			string tag = ResolveLatestTag(out note);
 			if (string.IsNullOrEmpty(tag))
 			{
-				error = "没能从发布页解析出最新版本号（可能没有已发布的 Release，或网络被拦截）。";
+				error = "没能从发布页解析出最新版本号（可能没有已发布的 Release，或网络被拦截）。" + (string.IsNullOrEmpty(note) ? "" : ("（" + note + "）"));
 				return null;
 			}
 			Version version = ParseVersion(tag);
@@ -553,7 +725,80 @@ internal static class Updater
 		}
 	}
 
-	private static string ResolveLatestTag()
+	/// <summary>
+	/// 解析最新版本号。v1.7.0 起的顺序：
+	///   1) 配了令牌 → 先问 api.github.com（带 Authorization，返回精确 tag，限额 5000 次/小时）；
+	///   2) 接口这一路失败（限额用尽 / 令牌无效 / 网络不通）→ 退回网页 releases/latest。
+	/// 网页这条本来就不消耗接口限额，所以"接口被限流"也不会让检查更新直接失败——这就是绕过限额的兜底。
+	/// </summary>
+	private static string ResolveLatestTag(out string note)
+	{
+		note = string.Empty;
+		string token = Token;
+		if (!string.IsNullOrEmpty(token))
+		{
+			string text;
+			string text2 = ResolveLatestTagViaApi(token, out text);
+			if (!string.IsNullOrEmpty(text2))
+			{
+				return text2;
+			}
+			note = text ?? string.Empty;
+			Log.Info("接口路径没取到版本号，改用网页路径：" + note);
+		}
+		return ResolveLatestTagViaHtml();
+	}
+
+	/// <summary>带令牌问接口；任何失败都只回传 note，由调用方决定是否改走网页（不在这里抛）。</summary>
+	private static string ResolveLatestTagViaApi(string token, out string note)
+	{
+		note = string.Empty;
+		try
+		{
+			using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, AppInfo.ReleasesApiUrl);
+			ApplyAuth(request, token);
+			using HttpResponseMessage response = Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+			string text = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+			if (response.IsSuccessStatusCode)
+			{
+				using JsonDocument jsonDocument = JsonDocument.Parse(text);
+				JsonElement value;
+				if (jsonDocument.RootElement.TryGetProperty("tag_name", out value))
+				{
+					string text2 = value.GetString();
+					if (!string.IsNullOrWhiteSpace(text2))
+					{
+						return text2.Trim();
+					}
+				}
+				note = "接口返回里没有 tag_name";
+				return null;
+			}
+			string text3;
+			if (TryGetRateLimitWaitMinutes(response, !string.IsNullOrEmpty(token), out text3))
+			{
+				note = text3;
+				return null;
+			}
+			int num = (int)response.StatusCode;
+			if (IsAuthRejection(num, text))
+			{
+				note = "令牌无效或没有该仓库的读取权限（HTTP " + num + "），已自动改用匿名方式检查";
+				return null;
+			}
+			note = "接口返回 HTTP " + num;
+			return null;
+		}
+		catch (Exception ex)
+		{
+			note = "接口请求失败：" + Describe(ex);
+			Log.Info("api.github.com 请求失败（会改走网页路径）：" + ex.Message);
+			return null;
+		}
+	}
+
+	/// <summary>网页兜底：跟随 releases/latest 的 302 拿 tag；拿不到再从正文里找。</summary>
+	private static string ResolveLatestTagViaHtml()
 	{
 		string text = AppInfo.ReleasesUrl + "/latest";
 		using HttpResponseMessage httpResponseMessage = Http.GetAsync(text, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
@@ -842,6 +1087,13 @@ internal sealed class AppConfig
 	/// <summary>上一次已提示过的版本号，用于"每个新版只提示一次"。</summary>
 	public string LastUpdateNotified { get; set; }
 
+	/// <summary>
+	/// GitHub 个人访问令牌（可选，v1.7.0 新增）。
+	/// 填了就带 Authorization 头请求 api.github.com：限额从匿名 60 次/小时提到令牌的 5000 次/小时。
+	/// 只用于读公开仓库的发布信息，不需要任何写权限。
+	/// </summary>
+	public string GitHubToken { get; set; }
+
 	public AppConfig()
 	{
 		TriggerKeyId = "K:0x0D";
@@ -881,6 +1133,7 @@ internal sealed class AppConfig
 		SettingsHeight = 0;
 		AutoCheckUpdate = true;
 		LastUpdateNotified = string.Empty;
+		GitHubToken = string.Empty;
 	}
 
 	public AppConfig Clone()
@@ -1037,6 +1290,8 @@ internal sealed class AppConfig
 				SettingsHeight = num2;
 			}
 		}
+		// 令牌：去掉粘贴带进来的空白与前缀，只留令牌本体（历史配置里可能是 "用户名:令牌" 形态）
+		GitHubToken = Updater.NormalizeToken(GitHubToken);
 	}
 
 	private static int MaxUsableWindowWidth()
@@ -8712,6 +8967,18 @@ internal static class Program
 	{
 		Console.WriteLine("当前版本：" + AppInfo.Version);
 		Log.Info("--checkupdate：当前版本 " + AppInfo.Version);
+		// 诊断路径也要认配置里的令牌，否则用户反馈"填了令牌还是被限流"时没法复现真实链路
+		try
+		{
+			ConfigStore configStore = new ConfigStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HoldDrag"));
+			configStore.Load();
+			Updater.Token = Updater.NormalizeToken(configStore.Current?.GitHubToken);
+			Console.WriteLine("令牌　　：" + (Updater.HasToken ? ("已配置 " + Updater.MaskToken(Updater.Token)) : "未配置（匿名请求 60 次/小时）"));
+		}
+		catch (Exception ex)
+		{
+			Log.Info("--checkupdate 读配置失败（按匿名继续）：" + ex.Message);
+		}
 		string text = null;
 		try
 		{
@@ -8725,13 +8992,11 @@ internal static class Program
 		{
 			string error;
 			bool upToDate;
-			UpdateInfo updateInfo = Updater.CheckLatest(out error, out upToDate);
-			if (updateInfo != null)
+			string note;
+			UpdateInfo updateInfo = Updater.CheckLatest(out error, out upToDate, out note);
+			if (!string.IsNullOrEmpty(note))
 			{
-				text = "发现新版本 " + updateInfo.Tag + "（当前 v" + AppInfo.Version + "）";
-				Console.WriteLine(text);
-				Console.WriteLine("下载地址：" + updateInfo.AssetUrl);
-				Console.WriteLine("发布页　：" + updateInfo.PageUrl);
+				Console.WriteLine("说明　　：" + note);
 			}
 			else if (upToDate)
 			{
@@ -9147,6 +9412,7 @@ internal static class SelfTest
 		Safe("T95 圆角参数必须真的改变渲染结果（圆角设置失效回归）", TestFrameRadiusTakesEffect);
 		Safe("T98 录制守卫与配置不变量：\"K:0x00\" 必被 Normalize 兜底、鼠标侧键/Shift 不被误伤、QuoteArg 按需包引号", TestRecordedKeyAndConfigInvariants);
 		Safe("T99 保存失败不再静默：Save/Apply 返回 false 并带回错误信息（设置页据此红字早退）", TestConfigSaveFailureIsVisible);
+		Safe("T100 GitHub 令牌：整理/鉴权头/失效与限额判定/配置往返/无令牌只提示不下载", TestGitHubTokenHandling);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();
@@ -12216,6 +12482,79 @@ internal static class SelfTest
 		}
 	}
 
+	/// <summary>
+	/// v1.7.0 的回归：GitHub 令牌的整理、鉴权头、令牌失效/限额判定、配置往返，
+	/// 以及"没填令牌只提示、不自动下载"的决策（UI 分支没法在自检里点，所以把决策抽成纯函数）。
+	/// </summary>
+	private static void TestGitHubTokenHandling()
+	{
+		Eq(Updater.NormalizeToken(null), string.Empty, "令牌：null 归一成空串");
+		Eq(Updater.NormalizeToken("   "), string.Empty, "令牌：纯空白归一成空串");
+		Eq(Updater.NormalizeToken("  ghp_abc123  "), "ghp_abc123", "令牌：去掉首尾空白");
+		Eq(Updater.NormalizeToken("Bearer ghp_x"), "ghp_x", "令牌：去掉 Bearer 前缀");
+		Eq(Updater.NormalizeToken("token ghp_x"), "ghp_x", "令牌：去掉 token 前缀");
+		Eq(Updater.NormalizeToken("QQQOrange:ghp_x"), "ghp_x", "令牌：去掉历史「用户名:」前缀（Obtainium 老格式）");
+		Eq(Updater.NormalizeToken("ghp_a\r\nb\tc"), "ghp_abc", "令牌：粘贴带入的换行/制表符被清掉");
+		Check(Updater.AuthHeaderValue(string.Empty) == null, "空令牌不产生 Authorization 头（走匿名请求）");
+		Eq(Updater.AuthHeaderValue("ghp_x"), "token ghp_x", "有令牌时 Authorization 头是 token 前缀");
+		Eq(Updater.MaskToken("ghp_1234567890"), "ghp_…7890", "脱敏只留前 4 后 4");
+		Eq(Updater.MaskToken(string.Empty), "（未填写）", "空令牌的脱敏文案");
+		Check(Updater.IsAuthRejection(401, "{\"message\":\"Bad credentials\"}"), "401 + Bad credentials 判为令牌问题（改走匿名）");
+		Check(Updater.IsAuthRejection(403, "{\"message\":\"Resource not accessible by personal access token\"}"), "403 + access token 判为令牌问题");
+		Check(!Updater.IsAuthRejection(403, "{\"message\":\"API rate limit exceeded\"}"), "★ 限额 403 不能被误判成令牌问题（否则会白折腾用户去改令牌）");
+		Check(!Updater.IsAuthRejection(404, "{\"message\":\"Not Found\"}"), "404 不是令牌问题");
+		Check(Updater.FormatRateLimitMessage(3, withToken: true).Contains("5000") && Updater.FormatRateLimitMessage(3, withToken: true).Contains("3 分钟"), "限额说明：带令牌时提到 5000 次/小时与重置分钟数");
+		Check(Updater.FormatRateLimitMessage(3, withToken: false).Contains("60"), "限额说明：匿名时提到 60 次/小时");
+		AppConfig appConfig = new AppConfig();
+		appConfig.GitHubToken = "  QQQOrange:ghp_legacy  ";
+		appConfig.Normalize();
+		Eq(appConfig.GitHubToken, "ghp_legacy", "Normalize 会把历史格式的令牌整理干净");
+		Eq(new AppConfig().GitHubToken, string.Empty, "默认配置没有令牌");
+		// 配置往返：令牌必须存得进、读得回（重启后仍生效）
+		string text = Path.Combine(Path.GetTempPath(), "holddrag-token-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(text);
+		try
+		{
+			ConfigStore configStore = new ConfigStore(text);
+			configStore.Load();
+			AppConfig appConfig2 = configStore.Current;
+			appConfig2.GitHubToken = "ghp_roundtrip123";
+			configStore.Save(out _);
+			ConfigStore configStore2 = new ConfigStore(text);
+			configStore2.Load();
+			Eq(configStore2.Current.GitHubToken, "ghp_roundtrip123", "★ 令牌存进配置后读得回来（重启仍生效）");
+		}
+		finally
+		{
+			try
+			{
+				Directory.Delete(text, recursive: true);
+			}
+			catch
+			{
+			}
+		}
+		// 决策：没令牌只提示（给下载链接），有令牌才自动下载
+		Eq(SettingsForm.DecideUpdateAction(hasToken: false), SettingsForm.UpdateAction.PromptOnly, "★ 没有令牌：只提示新版本（弹下载地址），程序内不下载");
+		Eq(SettingsForm.DecideUpdateAction(hasToken: true), SettingsForm.UpdateAction.AutoDownload, "有令牌：照旧自动下载并替换");
+		string text3 = SettingsForm.BuildNoTokenNotice();
+		Check(text3.Contains("不会下载到本机"), "★ 没令牌的提示正文明确写「不会下载到本机」（用户一眼看懂程序内不下载）", text3);
+		Check(text3.Contains("浏览器"), "★ 没令牌的提示正文指明去浏览器下载", text3);
+		Check(text3.Contains("令牌"), "提示正文说明了补令牌后可自动下载");
+		string text2 = Updater.Token;
+		try
+		{
+			Updater.Token = string.Empty;
+			Check(!Updater.HasToken, "Updater.HasToken 在令牌为空时为 false");
+			Updater.Token = "ghp_probe";
+			Check(Updater.HasToken, "Updater.HasToken 在令牌非空时为 true");
+		}
+		finally
+		{
+			Updater.Token = text2;
+		}
+	}
+
 	private static void TestTriggerStaysActive()
 	{
 		using DragFixture dragFixture = new DragFixture(null);
@@ -14190,7 +14529,7 @@ internal static class SelfTest
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
 		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
-		Check(SettingsForm.AppVersionForTest == "1.6.1", "★ 版本号已升到 1.6.1", "实际=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == "1.7.0", "★ 版本号已升到 1.7.0", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
 
@@ -14251,6 +14590,31 @@ internal static class SelfTest
 				Check(!settingsForm.ProbeAutoUpdateCheck.Checked, "★ 取消勾选后控件状态跟着变");
 				checkBox.Checked = true;
 				Application.DoEvents();
+			}
+			// 3.5) v1.7.0：令牌输入框 + 「?」帮助图标（对齐、无障碍、链接集中配置）
+			TextBox textBox = settingsForm.ProbeTokenBox;
+			Button button3 = settingsForm.ProbeTokenHelpButton;
+			Button button4 = settingsForm.ProbeSaveTokenButton;
+			Label label2 = settingsForm.ProbeTokenStateLabel;
+			Check(textBox != null && button3 != null && button4 != null && label2 != null, "★ 令牌输入框 / 「?」图标 / 保存按钮 / 状态文字四个控件都建出来了");
+			Check(textBox != null && textBox.UseSystemPasswordChar, "★ 令牌输入框是密码样式（不明文显示）");
+			Check(button3 != null && button3.Text == "?" && button3.TabStop, "★ 「?」图标存在且可 Tab 聚焦（键盘可达）");
+			Check(button3 != null && !string.IsNullOrEmpty(button3.AccessibleName) && !string.IsNullOrEmpty(button3.AccessibleDescription), "★ 「?」图标带无障碍名称与说明（读屏可读）", "name=" + (button3?.AccessibleName ?? "(null)"));
+			Eq(AppInfo.PatDocsUrl, "https://docs.github.com/zh/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens", "★ 「?」打开的是指定的 GitHub 官方中文文档（地址集中配置在 AppInfo.PatDocsUrl）");
+			Check(label2 != null && label2.Text != null && label2.Text.Contains("未填写"), "★ 未填令牌时状态文字说明「只提示、不自动下载」", "实际=" + (label2?.Text ?? "(null)"));
+			// 对齐要用真实布局后的坐标：先把所有页排一遍（否则隐藏页里的控件还是初始坐标）
+			SettingsForm.RelayoutForTest(settingsForm);
+			Application.DoEvents();
+			if (textBox != null && button3 != null && textBox.Width > 40 && button3.Width > 8)
+			{
+				int num = textBox.Top + textBox.Height / 2;
+				int num2 = button3.Top + button3.Height / 2;
+				Check(Math.Abs(num - num2) <= 3, "★ 「?」图标与令牌输入框垂直居中对齐", "输入框中线=" + num + " 图标中线=" + num2);
+				Check(button3.Left >= textBox.Right - Fields_Sc(2), "「?」图标在输入框右侧", "input.right=" + textBox.Right + " icon.left=" + button3.Left);
+			}
+			else
+			{
+				Bad("★ 「?」图标与令牌输入框对齐", "控件尚未布局出尺寸，无法测量");
 			}
 			settingsForm.Close();
 		}
@@ -18959,6 +19323,12 @@ internal sealed class SettingsForm : Form
 	private FlatCheck _chkAutoUpdate;
 	private FlatButton _btnCheckUpdate;
 	private Label _lblUpdateStatus;
+	// v1.7.0：GitHub 个人访问令牌
+	private TextBox _txtToken;
+	private FlatButton _btnSaveToken;
+	private FlatButton _btnTokenHelp;
+	private Label _lblTokenState;
+	private ToolTip _tipToken;
 
 	private int _defaultClientH = 680;
 
@@ -19732,6 +20102,49 @@ internal sealed class SettingsForm : Form
 			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
 			Text = "尚未检查"
 		};
+		// ---------- v1.7.0：GitHub 个人访问令牌 ----------
+		_txtToken = new TextBox
+		{
+			BorderStyle = BorderStyle.None,
+			ForeColor = Tokens.TextPrimary,
+			BackColor = Tokens.FieldFill,
+			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
+			// 令牌是敏感信息：输入即遮住，屏幕录制/旁人路过都看不到明文
+			UseSystemPasswordChar = true,
+			MaxLength = 255,
+			AccessibleName = "GitHub 个人访问令牌",
+			AccessibleDescription = "可选。填写后检查更新会带上该令牌请求 GitHub 接口，接口限额从匿名 60 次/小时提升到 5000 次/小时"
+		};
+		_txtToken.TextChanged += delegate
+		{
+			RefreshTokenState();
+		};
+		_lblTokenState = HintLabelWith("未填写：只提示、不自动下载");
+		_lblTokenState.AutoEllipsis = true;
+		_btnSaveToken = new FlatButton
+		{
+			Text = "保存令牌"
+		};
+		_btnSaveToken.Click += delegate
+		{
+			SaveToken();
+		};
+		// 小「?」图标：位置在输入框右侧、与输入框垂直居中（由卡片行布局保证）；
+		// 无障碍：有 AccessibleName/Description，Tab 可聚焦，空格/回车即触发（Button 的默认键盘行为）。
+		_btnTokenHelp = new FlatButton
+		{
+			Text = "?",
+			AccessibleName = "什么是 GitHub 个人访问令牌",
+			AccessibleDescription = "打开 GitHub 官方中文文档，了解个人访问令牌的定义、创建与权限设置方法",
+			AccessibleRole = AccessibleRole.HelpBalloon,
+			TabStop = true
+		};
+		_btnTokenHelp.Click += delegate
+		{
+			OpenUrl(AppInfo.PatDocsUrl);
+		};
+		_tipToken = new ToolTip();
+		_tipToken.SetToolTip(_btnTokenHelp, "什么是 GitHub 个人访问令牌？\r\n点击用浏览器打开 GitHub 官方中文文档");
 	}
 
 	private static FlatCombo NewCombo()
@@ -19927,6 +20340,13 @@ internal sealed class SettingsForm : Form
 		card14.Setting(_btnGitHub, "项目主页", "github.com/QQQOrange/holddrag", 250);
 		card14.Toggle(_chkAutoUpdate, "自动更新", "启动时检查一次，有新版本会提示");
 		card14.Setting(_btnCheckUpdate, 104, _lblUpdateStatus, 240, "检查更新");
+
+		// v1.7.0：GitHub 个人访问令牌。它同时是「自动下载」的开关：
+		// 填了 → 带令牌请求接口（5000 次/小时）并自动下载；没填 → 只提示新版本 + 给出可点击的下载地址。
+		Card card15 = NewCard(page8, "GitHub 访问令牌", "可选。填了就带令牌请求 GitHub 接口（限额 60 → 5000 次/小时）并自动下载新版本；没填时只提示、不自动下载");
+		card15.RegisterField(_txtToken);
+		card15.Setting(_txtToken, 240, _btnTokenHelp, 32, "个人访问令牌", "只需要公开仓库的读取权限，不需要写权限；令牌明文保存在本机 config.json 里");
+		card15.Setting(_btnSaveToken, 104, _lblTokenState, 250, "保存令牌", "点一下立即生效，不必再点底部的「保存并生效」");
 	}
 
 	private static List<HelpPanel.Entry> BuildHelpEntries()
@@ -20309,6 +20729,8 @@ internal sealed class SettingsForm : Form
 		_chkRunAsAdmin.Checked = _edit.RunAsAdmin;
 		_chkWarnNonAdmin.Checked = _edit.WarnNonAdmin;
 		_chkAutoUpdate.Checked = _edit.AutoCheckUpdate;
+		_txtToken.Text = _edit.GitHubToken;
+		RefreshTokenState();
 		UpdateAdminLabel();
 	}
 
@@ -20682,6 +21104,7 @@ internal sealed class SettingsForm : Form
 		target.RunAsAdmin = _chkRunAsAdmin.Checked;
 		target.WarnNonAdmin = _chkWarnNonAdmin.Checked;
 		target.AutoCheckUpdate = _chkAutoUpdate.Checked;
+		target.GitHubToken = Updater.NormalizeToken(_txtToken.Text);
 		CaptureSizeInto(target);
 	}
 
@@ -20928,6 +21351,8 @@ internal sealed class SettingsForm : Form
 		appConfig.SettingsHeight = _edit.SettingsHeight;
 		appConfig.AutoCheckUpdate = _edit.AutoCheckUpdate;
 		appConfig.LastUpdateNotified = _edit.LastUpdateNotified;
+		// 令牌属「环境类」设置：恢复默认值不该把用户的令牌抹掉
+		appConfig.GitHubToken = _edit.GitHubToken;
 		_edit = appConfig;
 		if (_recording)
 		{
@@ -21007,6 +21432,70 @@ internal sealed class SettingsForm : Form
 		CheckForUpdates(userInitiated: true);
 	}
 
+	// ---------- v1.7.0：GitHub 令牌的保存与状态回显 ----------
+
+	/// <summary>
+	/// 只保存令牌：克隆当前已落盘的配置、只改这一项再写盘，
+	/// 避免把界面上其它还没点「保存并生效」的半成品改动一起提交。
+	/// </summary>
+	private void SaveToken()
+	{
+		try
+		{
+			string token = Updater.NormalizeToken(_txtToken.Text);
+			_txtToken.Text = token;
+			AppConfig appConfig = _store.Current?.Clone() ?? new AppConfig();
+			appConfig.GitHubToken = token;
+			if (!_store.Apply(appConfig, out string error))
+			{
+				_lblTokenState.ForeColor = Tokens.Danger;
+				_lblTokenState.Text = "保存失败：" + error;
+				return;
+			}
+			if (_edit != null)
+			{
+				_edit.GitHubToken = token;
+			}
+			// 立刻生效，不等下一次启动：后台检查更新读的就是这个静态值
+			Updater.Token = token;
+			RefreshTokenState();
+			Log.Info("GitHub 令牌已" + (string.IsNullOrEmpty(token) ? "清除" : "保存") + "（" + Updater.MaskToken(token) + "）");
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			_lblTokenState.ForeColor = Tokens.Danger;
+			_lblTokenState.Text = "保存令牌失败：" + ex.Message;
+		}
+	}
+
+	/// <summary>把输入框里的值与已保存的值对比，回显「已生效 / 待保存 / 未填写」——用户一眼能看出到底生效了没有。</summary>
+	private void RefreshTokenState()
+	{
+		try
+		{
+			if (_lblTokenState == null || _lblTokenState.IsDisposed)
+			{
+				return;
+			}
+			string text = Updater.NormalizeToken(_txtToken.Text);
+			string text2 = Updater.NormalizeToken(_store.Current?.GitHubToken);
+			bool flag = string.Equals(text, text2, StringComparison.Ordinal);
+			if (string.IsNullOrEmpty(text))
+			{
+				_lblTokenState.ForeColor = flag ? Tokens.WarnText : Tokens.Hint;
+				_lblTokenState.Text = (flag ? "未填写：只提示、不自动下载" : "已清空，点「保存令牌」生效");
+				return;
+			}
+			_lblTokenState.ForeColor = flag ? Tokens.Success : Tokens.Hint;
+			_lblTokenState.Text = (flag ? "已生效：" : "待保存：") + Updater.MaskToken(text) + "（5000 次/小时）";
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
 	private void CheckForUpdates(bool userInitiated)
 	{
 		if (_updateBusy)
@@ -21023,21 +21512,22 @@ internal sealed class SettingsForm : Form
 		{
 			string error;
 			bool upToDate;
-			UpdateInfo updateInfo = Updater.CheckLatest(out error, out upToDate);
+			string note;
+			UpdateInfo updateInfo = Updater.CheckLatest(out error, out upToDate, out note);
 			PostUpdateAction(delegate
 			{
 				_updateBusy = false;
 				if (updateInfo != null)
 				{
-					OnUpdateFound(updateInfo);
+					OnUpdateFound(updateInfo, note);
 					return;
 				}
 				if (upToDate)
 				{
-					SetUpdateStatus("已是最新版本（v" + AppInfo.Version + "）", Tokens.Success);
+					SetUpdateStatus("已是最新版本（v" + AppInfo.Version + "）" + NoteSuffix(note), Tokens.Success);
 					if (userInitiated)
 					{
-						MessageBox.Show(this, "当前已是最新版本 v" + AppInfo.Version + "。", "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+						MessageBox.Show(this, "当前已是最新版本 v" + AppInfo.Version + "。" + NoteSuffix(note), "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 					}
 					return;
 				}
@@ -21066,9 +21556,46 @@ internal sealed class SettingsForm : Form
 		}
 	}
 
+	/// <summary>v1.7.0：发现新版本后的动作。</summary>
+	internal enum UpdateAction
+	{
+		/// <summary>只提示（并给出可点击的下载地址），不自动下载。</summary>
+		PromptOnly,
+		/// <summary>自动下载并替换。</summary>
+		AutoDownload
+	}
+
+	/// <summary>
+	/// v1.7.0：没填令牌 → 只提示，不自动下载；填了令牌 → 自动下载。
+	/// 抽成纯函数是为了让自检能断言这条业务规则（真正的 UI 分支没法在自检里点击）。
+	/// </summary>
+	internal static UpdateAction DecideUpdateAction(bool hasToken)
+	{
+		return hasToken ? UpdateAction.AutoDownload : UpdateAction.PromptOnly;
+	}
+
+	/// <summary>把「这次是怎么查的」的补充说明拼进状态文字（没有就返回空串）。</summary>
+	internal static string NoteSuffix(string note)
+	{
+		return string.IsNullOrEmpty(note) ? string.Empty : ("（" + note + "）");
+	}
+
 	private void OnUpdateFound(UpdateInfo info)
 	{
-		SetUpdateStatus("发现新版本 " + info.Tag + "（当前 v" + AppInfo.Version + "）", Tokens.WarnText);
+		OnUpdateFound(info, null);
+	}
+
+	private void OnUpdateFound(UpdateInfo info, string note)
+	{
+		// v1.7.0：没填令牌 → 只提示、不自动下载。匿名下载容易被限流/中断，
+		// 与其让用户在设置页里看着进度条失败，不如直接给出可点击的 GitHub 下载地址。
+		if (DecideUpdateAction(Updater.HasToken) == UpdateAction.PromptOnly)
+		{
+			SetUpdateStatus("发现新版本 " + info.Tag + "（未填令牌：只提示，不自动下载）", Tokens.WarnText);
+			ShowUpdateLinkDialog(info);
+			return;
+		}
+		SetUpdateStatus("发现新版本 " + info.Tag + "（当前 v" + AppInfo.Version + "）" + NoteSuffix(note), Tokens.WarnText);
 		DialogResult dialogResult = MessageBox.Show(this, "发现新版本！\r\n\r\n当前版本：v" + AppInfo.Version + "\r\n最新版本：" + info.Tag + "\r\n\r\n现在下载并更新吗？\r\n（下载完成后会自动替换并重启程序）", "发现新版本", MessageBoxButtons.OKCancel, MessageBoxIcon.Asterisk);
 		if (dialogResult == DialogResult.OK)
 		{
@@ -21076,8 +21603,153 @@ internal sealed class SettingsForm : Form
 		}
 	}
 
+	/// <summary>
+	/// v1.7.0：没填令牌时的提示正文。抽成静态方法是为了让自检能断言"只提示、程序内不下载"这条规则
+	/// （对话框本身没法在自检里点）。
+	/// </summary>
+	internal static string BuildNoTokenNotice()
+	{
+		return "还没有填写 GitHub 个人访问令牌，所以这次只是在程序里提示，不会下载到本机。\r\n点下面的链接用浏览器下载；想以后自动下载并替换，就到「关于 → GitHub 访问令牌」填好令牌再点「检查更新」。";
+	}
+
+	/// <summary>
+	/// v1.7.0：没填令牌时的更新提示——只展示版本与 GitHub 下载地址，程序内绝不下载。
+	/// 下载地址用 LinkLabel（可点击、可 Tab 聚焦、回车即打开），另有「用浏览器打开」「复制链接」兜底，
+	/// 浏览器打不开时也能把地址拷走。
+	/// </summary>
+	internal void ShowUpdateLinkDialog(UpdateInfo info)
+	{
+		using Form form = new Form();
+		form.Text = "发现新版本";
+		form.FormBorderStyle = FormBorderStyle.FixedDialog;
+		form.StartPosition = FormStartPosition.CenterParent;
+		form.MinimizeBox = false;
+		form.MaximizeBox = false;
+		form.ShowInTaskbar = false;
+		form.BackColor = Tokens.Surface;
+		form.ForeColor = Tokens.TextPrimary;
+		form.Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+		form.AutoScaleMode = AutoScaleMode.Dpi;
+		int num = Sc(20);
+		int num2 = Sc(520);
+		Label label = new Label
+		{
+			AutoSize = false,
+			BackColor = Color.Transparent,
+			ForeColor = Tokens.TextPrimary,
+			Font = new Font(DesignFontFamily, 11f, FontStyle.Bold, GraphicsUnit.Point),
+			Text = "发现新版本 " + info.Tag + "（当前 v" + AppInfo.Version + "）"
+		};
+		Label label2 = new Label
+		{
+			AutoSize = false,
+			BackColor = Color.Transparent,
+			ForeColor = Tokens.TextSecondary,
+			Text = BuildNoTokenNotice()
+		};
+		Label label3 = new Label
+		{
+			AutoSize = false,
+			BackColor = Color.Transparent,
+			ForeColor = Tokens.Hint,
+			Text = "下载地址（点击或按回车打开）"
+		};
+		LinkLabel linkLabel = new LinkLabel
+		{
+			AutoSize = false,
+			BackColor = Color.Transparent,
+			ForeColor = Tokens.Accent,
+			LinkColor = Tokens.Accent,
+			ActiveLinkColor = Tokens.AccentPressed,
+			VisitedLinkColor = Tokens.Accent,
+			Text = info.AssetUrl,
+			AccessibleName = "GitHub 下载地址",
+			AccessibleDescription = "在浏览器中打开该链接，下载新版本 " + info.Tag
+		};
+		linkLabel.LinkClicked += delegate
+		{
+			OpenUrl(info.AssetUrl);
+		};
+		LinkLabel linkLabel2 = new LinkLabel
+		{
+			AutoSize = false,
+			BackColor = Color.Transparent,
+			ForeColor = Tokens.TextTertiary,
+			LinkColor = Tokens.TextTertiary,
+			ActiveLinkColor = Tokens.Accent,
+			VisitedLinkColor = Tokens.TextTertiary,
+			Text = "发布页：" + info.PageUrl,
+			AccessibleName = "GitHub 发布页地址"
+		};
+		linkLabel2.LinkClicked += delegate
+		{
+			OpenUrl(info.PageUrl);
+		};
+		FlatButton flatButton = new FlatButton
+		{
+			Text = "复制链接"
+		};
+		flatButton.Click += delegate
+		{
+			try
+			{
+				Clipboard.SetText(info.AssetUrl);
+				flatButton.Text = "已复制";
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+		};
+		FlatButton flatButton2 = new FlatButton
+		{
+			Text = "用浏览器打开",
+			Primary = true
+		};
+		flatButton2.Click += delegate
+		{
+			OpenUrl(info.AssetUrl);
+		};
+		FlatButton flatButton3 = new FlatButton
+		{
+			Text = "关闭"
+		};
+		flatButton3.Click += delegate
+		{
+			form.Close();
+		};
+		form.AcceptButton = flatButton2;
+		form.CancelButton = flatButton3;
+		int num3 = num;
+		label.SetBounds(num, num3, num2, Sc(26));
+		num3 += Sc(32);
+		label2.SetBounds(num, num3, num2, Sc(46));
+		num3 += Sc(56);
+		label3.SetBounds(num, num3, num2, Sc(20));
+		num3 += Sc(24);
+		linkLabel.SetBounds(num, num3, num2, Sc(24));
+		num3 += Sc(30);
+		linkLabel2.SetBounds(num, num3, num2, Sc(22));
+		num3 += Sc(36);
+		flatButton.SetBounds(num, num3, Sc(88), Sc(32));
+		flatButton3.SetBounds(num + num2 - Sc(88), num3, Sc(88), Sc(32));
+		flatButton2.SetBounds(num + num2 - Sc(88) - Sc(8) - Sc(104), num3, Sc(104), Sc(32));
+		num3 += Sc(32) + num;
+		form.ClientSize = new Size(num2 + num * 2, num3);
+		form.Controls.AddRange(new Control[8] { label, label2, label3, linkLabel, linkLabel2, flatButton, flatButton2, flatButton3 });
+		form.ShowDialog(this);
+	}
+
 	private void DownloadAndApply(UpdateInfo info)
 	{
+		// 硬护栏（v1.7.0）：没填令牌就绝不下载——不管是从哪个入口走到这里，
+		// 一律退回"只提示 + 浏览器下载链接"，避免将来新加的调用路径绕过 OnUpdateFound 的判断。
+		if (DecideUpdateAction(Updater.HasToken) == UpdateAction.PromptOnly)
+		{
+			SetUpdateStatus("未填令牌：不会在程序内下载，请用浏览器下载 " + info.Tag, Tokens.WarnText);
+			ShowUpdateLinkDialog(info);
+			return;
+		}
 		_updateBusy = true;
 		SetUpdateStatus("正在下载 " + info.Tag + "…", Tokens.Hint);
 		_btnCheckUpdate.Enabled = false;
@@ -22027,6 +22699,15 @@ internal sealed class SettingsForm : Form
 	internal CheckBox ProbeAutoUpdateCheck => _chkAutoUpdate;
 
 	internal Label ProbeUpdateStatusLabel => _lblUpdateStatus;
+
+	// v1.7.0：令牌相关的探针（自检用来断言对齐与无障碍，不需要真的弹对话框）
+	internal TextBox ProbeTokenBox => _txtToken;
+
+	internal Button ProbeTokenHelpButton => _btnTokenHelp;
+
+	internal Button ProbeSaveTokenButton => _btnSaveToken;
+
+	internal Label ProbeTokenStateLabel => _lblTokenState;
 
 	internal static bool ProbeForceOfflineForTest
 	{
@@ -23899,6 +24580,9 @@ internal sealed class TrayContext : ApplicationContext
 
 	private readonly NotifyIcon _tray;
 
+	/// <summary>v1.7.0：气泡里要打开的下载地址（没填令牌时点气泡即打开）。</summary>
+	private string _balloonUpdateUrl;
+
 	private readonly ContextMenuStrip _menu;
 
 	private readonly Control _marshal;
@@ -24098,8 +24782,9 @@ internal sealed class TrayContext : ApplicationContext
 						appConfig.LastUpdateNotified = info.Tag;
 						_store.Save(out _);
 					}
+					_balloonUpdateUrl = info.AssetUrl;
 					_tray.BalloonTipTitle = "长按拖窗：发现新版本 " + info.Tag;
-					_tray.BalloonTipText = "当前 v" + AppInfo.Version + "。双击托盘图标打开设置，点「检查更新」即可下载并自动替换。";
+					_tray.BalloonTipText = Updater.HasToken ? ("当前 v" + AppInfo.Version + "。双击托盘图标打开设置，点「检查更新」即可下载并自动替换。") : ("当前 v" + AppInfo.Version + "。点这个气泡用浏览器打开下载页（未填令牌，不会自动下载）。");
 					_tray.BalloonTipIcon = ToolTipIcon.Info;
 					_tray.ShowBalloonTip(6000);
 					Log.Info("已提示新版本 " + info.Tag + "（当前 " + AppInfo.Version + "）");
@@ -24160,6 +24845,26 @@ internal sealed class TrayContext : ApplicationContext
 		_tray.DoubleClick += (object? s, EventArgs e) =>
 		{
 			ShowSettings();
+		};
+		// v1.7.0：没填令牌时的"发现新版本"气泡点一下就打开 GitHub 下载页
+		// （气泡本身显示不了可点的网址，所以整条气泡当成一个下载入口）。
+		_tray.BalloonTipClicked += (object? s, EventArgs e) =>
+		{
+			try
+			{
+				string text = _balloonUpdateUrl;
+				if (!string.IsNullOrEmpty(text))
+				{
+					Process.Start(new ProcessStartInfo(text)
+					{
+						UseShellExecute = true
+					});
+				}
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
 		};
 		_menu.Items.Add(new ToolStripMenuItem("设置…", null, (object? s, EventArgs e) =>
 		{
@@ -24315,6 +25020,8 @@ internal sealed class TrayContext : ApplicationContext
 	private void ApplyConfig(bool initial)
 	{
 		UpdateMenuState();
+		// 令牌是给后台线程读的：配置每次加载/保存都同步一次，保证「填完立刻生效」且不读到旧值
+		Updater.Token = Updater.NormalizeToken(_store.Current?.GitHubToken);
 		if (initial)
 		{
 			_store.Changed += OnConfigChanged;
@@ -24325,6 +25032,7 @@ internal sealed class TrayContext : ApplicationContext
 	{
 		try
 		{
+			Updater.Token = Updater.NormalizeToken(_store.Current?.GitHubToken);
 			_coord.OnConfigChanged();
 			UpdateMenuState();
 		}
