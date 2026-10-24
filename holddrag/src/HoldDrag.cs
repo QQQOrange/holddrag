@@ -65,7 +65,7 @@ internal static class AppInfo
 	public const string PatDocsUrl = "https://docs.github.com/zh/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens";
 
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.7.1";
+	public const string FallbackVersion = "1.8.0";
 
 	public static string Version
 	{
@@ -575,6 +575,125 @@ internal static class Updater
 	{
 		int num = Math.Max(1, waitMinutes);
 		return "GitHub 接口限额已用尽（" + (withToken ? "令牌 5000 次/小时" : "匿名 60 次/小时") + "），约 " + num + " 分钟后重置；已自动改用网页方式检查";
+	}
+
+	/// <summary>「验证令牌」的结果分类（用于配色与自测断言）。</summary>
+	public enum TokenCheckResult
+	{
+		/// <summary>令牌有效，接口能读到发布信息。</summary>
+		Valid,
+		/// <summary>没填令牌，无从验证。</summary>
+		NotConfigured,
+		/// <summary>401：令牌无效或已过期。</summary>
+		Invalid,
+		/// <summary>403/404：令牌有效但读不到本仓库（fine-grained 没勾这个仓库）。</summary>
+		NoAccess,
+		/// <summary>令牌有效但额度已用尽（等重置即可）。</summary>
+		RateLimited,
+		/// <summary>网络不通 / 服务端异常，无法判断令牌好坏。</summary>
+		Network
+	}
+
+	/// <summary>
+	/// 把验证请求的响应归类。纯函数，自测直接打表断言（真实网络没法在自检里跑）。
+	/// 顺序很重要：先看限额（403 也可能是限额），再看 401/正文，最后才是 403/404 无权限。
+	/// </summary>
+	public static TokenCheckResult ClassifyVerifyResponse(int status, string body, bool rateLimited)
+	{
+		if (status >= 200 && status < 300)
+		{
+			return TokenCheckResult.Valid;
+		}
+		if (rateLimited)
+		{
+			return TokenCheckResult.RateLimited;
+		}
+		if (status == 401)
+		{
+			return TokenCheckResult.Invalid;
+		}
+		if (IsAuthRejection(status, body))
+		{
+			return TokenCheckResult.Invalid;
+		}
+		if (status == 403 || status == 404)
+		{
+			return TokenCheckResult.NoAccess;
+		}
+		return TokenCheckResult.Network;
+	}
+
+	/// <summary>
+	/// 真的向 GitHub 问一次：用这个令牌请求「检查更新」实际使用的那条接口（releases/latest）。
+	/// 成功时顺带回报读到的最新 tag 与剩余额度；失败按 401 / 403 / 404 / 限额 / 网络分类给出可读原因。
+	/// </summary>
+	public static TokenCheckResult VerifyToken(string rawToken, out string message)
+	{
+		message = string.Empty;
+		string text = NormalizeToken(rawToken);
+		if (string.IsNullOrEmpty(text))
+		{
+			message = "还没填令牌，没什么可验证的";
+			return TokenCheckResult.NotConfigured;
+		}
+		try
+		{
+			using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, AppInfo.ReleasesApiUrl);
+			ApplyAuth(request, text);
+			using HttpResponseMessage response = Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+			string body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+			int status = (int)response.StatusCode;
+			string rateLimitNote;
+			bool rateLimited = TryGetRateLimitWaitMinutes(response, withToken: true, out rateLimitNote);
+			TokenCheckResult result = ClassifyVerifyResponse(status, body, rateLimited);
+			switch (result)
+			{
+			case TokenCheckResult.Valid:
+			{
+				string text2 = null;
+				try
+				{
+					using JsonDocument jsonDocument = JsonDocument.Parse(body);
+					JsonElement value;
+					if (jsonDocument.RootElement.TryGetProperty("tag_name", out value))
+					{
+						text2 = value.GetString();
+					}
+				}
+				catch
+				{
+				}
+				string remaining = HeaderValue(response, "x-ratelimit-remaining");
+				string limit = HeaderValue(response, "x-ratelimit-limit");
+				message = "令牌有效" + (string.IsNullOrEmpty(text2) ? "（接口有响应）" : ("，读到最新版本 " + text2));
+				if (!string.IsNullOrEmpty(remaining) && !string.IsNullOrEmpty(limit))
+				{
+					message += "；接口额度剩余 " + remaining + "/" + limit;
+				}
+				break;
+			}
+			case TokenCheckResult.Invalid:
+				message = "令牌无效或已过期（HTTP 401）——请重新复制一个令牌；若刚改过权限，重新生成一个再试";
+				break;
+			case TokenCheckResult.NoAccess:
+				message = "令牌有效，但读不到本仓库（HTTP " + status + "）——fine-grained 令牌请在 Resource owner → Repositories 里勾选 QQQOrange/holddrag";
+				break;
+			case TokenCheckResult.RateLimited:
+				message = rateLimitNote + "（令牌本身没问题，等重置即可）";
+				break;
+			default:
+				message = "没法验证：HTTP " + status + "（服务端异常或网络中间设备拦截）";
+				break;
+			}
+			Log.Info("验证令牌：" + result + " | " + message);
+			return result;
+		}
+		catch (Exception ex)
+		{
+			message = "网络不通，没法验证：" + Describe(ex);
+			Log.Info("验证令牌失败：" + ex.Message);
+			return TokenCheckResult.Network;
+		}
 	}
 
 	private static string HeaderValue(HttpResponseMessage response, string name)
@@ -12588,6 +12707,17 @@ internal static class SelfTest
 		Check(text5.Contains("说明") && text5.Contains("已是最新版本"), "★ --checkupdate：有说明时仍要报「已是最新版本」", text5);
 		string text6 = Program.DescribeCheckUpdate(null, upToDate: false, error: "网络不可达", note: "令牌无效", hasToken: false);
 		Check(text6.Contains("说明") && text6.Contains("检查失败") && text6.Contains("网络不可达"), "★ --checkupdate：有说明时仍要报「检查失败」（否则退出码会误报成功）", text6);
+		// 「验证令牌」：结果分类（真实网络没法在自检里跑，所以打表断言分类函数）
+		Eq(Updater.ClassifyVerifyResponse(200, "{\"tag_name\":\"v1.0.0\"}", rateLimited: false), Updater.TokenCheckResult.Valid, "验证：200 → 令牌有效");
+		Eq(Updater.ClassifyVerifyResponse(401, "{\"message\":\"Bad credentials\"}", rateLimited: false), Updater.TokenCheckResult.Invalid, "验证：401 → 令牌无效/过期");
+		Eq(Updater.ClassifyVerifyResponse(403, "{\"message\":\"Resource not accessible by personal access token\"}", rateLimited: false), Updater.TokenCheckResult.Invalid, "验证：403 + access token 正文 → 令牌问题");
+		Eq(Updater.ClassifyVerifyResponse(403, "{\"message\":\"API rate limit exceeded\"}", rateLimited: true), Updater.TokenCheckResult.RateLimited, "★ 验证：限额 403（remaining=0）→ 判为限额而不是令牌无效");
+		Eq(Updater.ClassifyVerifyResponse(403, "{\"message\":\"Forbidden\"}", rateLimited: false), Updater.TokenCheckResult.NoAccess, "验证：403 无权限 → 令牌有效但读不到仓库");
+		Eq(Updater.ClassifyVerifyResponse(404, "{\"message\":\"Not Found\"}", rateLimited: false), Updater.TokenCheckResult.NoAccess, "验证：404 → 令牌有效但仓库不可见（fine-grained 没勾仓库）");
+		Eq(Updater.ClassifyVerifyResponse(500, "", rateLimited: false), Updater.TokenCheckResult.Network, "验证：5xx → 服务端异常，判不了令牌好坏");
+		string text7;
+		Eq(Updater.VerifyToken("   ", out text7), Updater.TokenCheckResult.NotConfigured, "验证：空令牌直接判「没填」，不发请求");
+		Check(text7.Contains("令牌"), "验证：空令牌的理由可读", text7);
 		string text2 = Updater.Token;
 		try
 		{
@@ -14576,7 +14706,7 @@ internal static class SelfTest
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
 		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
-		Check(SettingsForm.AppVersionForTest == "1.7.1", "★ 版本号已升到 1.7.1", "实际=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == "1.8.0", "★ 版本号已升到 1.8.0", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
 
@@ -14649,6 +14779,12 @@ internal static class SelfTest
 			Check(button3 != null && !string.IsNullOrEmpty(button3.AccessibleName) && !string.IsNullOrEmpty(button3.AccessibleDescription), "★ 「?」图标带无障碍名称与说明（读屏可读）", "name=" + (button3?.AccessibleName ?? "(null)"));
 			Eq(AppInfo.PatDocsUrl, "https://docs.github.com/zh/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens", "★ 「?」打开的是指定的 GitHub 官方中文文档（地址集中配置在 AppInfo.PatDocsUrl）");
 			Check(label2 != null && label2.Text != null && label2.Text.Contains("未填写"), "★ 未填令牌时状态文字说明「只提示、不自动下载」", "实际=" + (label2?.Text ?? "(null)"));
+			// v1.8.0：验证按钮（真的发一次请求，不改配置）
+			Button button5 = settingsForm.ProbeVerifyTokenButton;
+			Label label3 = settingsForm.ProbeTokenVerifyLabel;
+			Check(button5 != null && button5.Text == "验证令牌", "★ 令牌卡片里有独立的「验证令牌」按钮", "实际=" + (button5?.Text ?? "(null)"));
+			Check(button5 != null && button5.TabStop && !string.IsNullOrEmpty(button5.AccessibleName), "★ 「验证令牌」按钮可 Tab 聚焦且带无障碍名称", "name=" + (button5?.AccessibleName ?? "(null)"));
+			Check(label3 != null && label3.Text.Contains("尚未验证"), "★ 验证结果有初始文案（尚未验证）", "实际=" + (label3?.Text ?? "(null)"));
 			// 对齐要用真实布局后的坐标：先把所有页排一遍（否则隐藏页里的控件还是初始坐标）
 			SettingsForm.RelayoutForTest(settingsForm);
 			Application.DoEvents();
@@ -19373,8 +19509,10 @@ internal sealed class SettingsForm : Form
 	// v1.7.0：GitHub 个人访问令牌
 	private TextBox _txtToken;
 	private FlatButton _btnSaveToken;
+	private FlatButton _btnVerifyToken;
 	private FlatButton _btnTokenHelp;
 	private Label _lblTokenState;
+	private Label _lblTokenVerify;
 	private ToolTip _tipToken;
 
 	private int _defaultClientH = 680;
@@ -20176,6 +20314,20 @@ internal sealed class SettingsForm : Form
 		{
 			SaveToken();
 		};
+		// 「验证令牌」：真的向 api.github.com 发一次请求（用的是检查更新那条接口），
+		// 把"令牌到底有没有用"从猜测变成结论——保存前就能确认，不用等下次检查更新才发现是坏的。
+		_btnVerifyToken = new FlatButton
+		{
+			Text = "验证令牌",
+			AccessibleName = "验证 GitHub 个人访问令牌",
+			AccessibleDescription = "用当前输入框里的令牌向 GitHub 发一次请求，确认令牌有效且能读到本仓库的发布信息"
+		};
+		_btnVerifyToken.Click += delegate
+		{
+			VerifyTokenNow();
+		};
+		_lblTokenVerify = HintLabelWith("尚未验证");
+		_lblTokenVerify.AutoEllipsis = true;
 		// 小「?」图标：位置在输入框右侧、与输入框垂直居中（由卡片行布局保证）；
 		// 无障碍：有 AccessibleName/Description，Tab 可聚焦，空格/回车即触发（Button 的默认键盘行为）。
 		_btnTokenHelp = new FlatButton
@@ -20394,6 +20546,7 @@ internal sealed class SettingsForm : Form
 		card15.RegisterField(_txtToken);
 		card15.Setting(_txtToken, 240, _btnTokenHelp, 32, "个人访问令牌", "只需要公开仓库的读取权限，不需要写权限；令牌明文保存在本机 config.json 里");
 		card15.Setting(_btnSaveToken, 104, _lblTokenState, 250, "保存令牌", "点一下立即生效，不必再点底部的「保存并生效」");
+		card15.Setting(_btnVerifyToken, 104, _lblTokenVerify, 250, "验证令牌", "真的向 GitHub 发一次请求：确认令牌有效、能读到本仓库的发布信息（不改配置）");
 	}
 
 	private static List<HelpPanel.Entry> BuildHelpEntries()
@@ -21481,6 +21634,76 @@ internal sealed class SettingsForm : Form
 
 	// ---------- v1.7.0：GitHub 令牌的保存与状态回显 ----------
 
+	/// <summary>上一次"验证通过"的令牌，用来在输入框改动后提示需要重新验证。</summary>
+	private string _verifiedToken;
+
+	/// <summary>
+	/// 「验证令牌」：后台线程真的向 GitHub 请求一次（就是检查更新用的那条接口），
+	/// 结果写进单独的验证标签——不覆盖「已生效 / 待保存」那行，也不改动配置。
+	/// </summary>
+	private void VerifyTokenNow()
+	{
+		string token = Updater.NormalizeToken(_txtToken.Text);
+		if (string.IsNullOrEmpty(token))
+		{
+			_lblTokenVerify.ForeColor = Tokens.WarnText;
+			_lblTokenVerify.Text = "先填令牌再验证";
+			return;
+		}
+		_btnVerifyToken.Enabled = false;
+		_lblTokenVerify.ForeColor = Tokens.Hint;
+		_lblTokenVerify.Text = "正在向 GitHub 验证…";
+		ThreadPool.QueueUserWorkItem(delegate
+		{
+			string message;
+			Updater.TokenCheckResult result = Updater.VerifyToken(token, out message);
+			PostUpdateAction(delegate
+			{
+				try
+				{
+					if (_btnVerifyToken != null && !_btnVerifyToken.IsDisposed)
+					{
+						_btnVerifyToken.Enabled = true;
+					}
+					if (_lblTokenVerify == null || _lblTokenVerify.IsDisposed)
+					{
+						return;
+					}
+					if (result == Updater.TokenCheckResult.Valid)
+					{
+						_verifiedToken = token;
+					}
+					string text = message;
+					// 验证通过但还没落盘：明说一句，免得用户以为已经生效
+					if (result == Updater.TokenCheckResult.Valid && !string.Equals(token, Updater.NormalizeToken(_store.Current?.GitHubToken), StringComparison.Ordinal))
+					{
+						text += "（还没保存：点「保存令牌」才会生效）";
+					}
+					_lblTokenVerify.ForeColor = TokenCheckColor(result);
+					_lblTokenVerify.Text = text;
+				}
+				catch (Exception ex)
+				{
+					Log.Error(ex);
+				}
+			});
+		});
+	}
+
+	private static Color TokenCheckColor(Updater.TokenCheckResult result)
+	{
+		switch (result)
+		{
+		case Updater.TokenCheckResult.Valid:
+			return Tokens.Success;
+		case Updater.TokenCheckResult.NotConfigured:
+		case Updater.TokenCheckResult.RateLimited:
+			return Tokens.WarnText;
+		default:
+			return Tokens.Danger;
+		}
+	}
+
 	/// <summary>
 	/// 只保存令牌：克隆当前已落盘的配置、只改这一项再写盘，
 	/// 避免把界面上其它还没点「保存并生效」的半成品改动一起提交。
@@ -21527,6 +21750,12 @@ internal sealed class SettingsForm : Form
 			}
 			string text = Updater.NormalizeToken(_txtToken.Text);
 			string text2 = Updater.NormalizeToken(_store.Current?.GitHubToken);
+			// 令牌改动过 → 之前的验证结论作废（否则会出现"看着已验证、其实验的是旧令牌"）
+			if (_lblTokenVerify != null && !_lblTokenVerify.IsDisposed && !string.Equals(text, _verifiedToken, StringComparison.Ordinal))
+			{
+				_lblTokenVerify.ForeColor = Tokens.Hint;
+				_lblTokenVerify.Text = (_verifiedToken == null) ? "尚未验证" : "令牌已改动，请重新验证";
+			}
 			bool flag = string.Equals(text, text2, StringComparison.Ordinal);
 			if (string.IsNullOrEmpty(text))
 			{
@@ -22753,6 +22982,10 @@ internal sealed class SettingsForm : Form
 	internal Button ProbeTokenHelpButton => _btnTokenHelp;
 
 	internal Button ProbeSaveTokenButton => _btnSaveToken;
+
+	internal Button ProbeVerifyTokenButton => _btnVerifyToken;
+
+	internal Label ProbeTokenVerifyLabel => _lblTokenVerify;
 
 	internal Label ProbeTokenStateLabel => _lblTokenState;
 
