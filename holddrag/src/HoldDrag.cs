@@ -59,7 +59,7 @@ internal static class AppInfo
 	public const string ReleasesApiUrl = "https://api.github.com/repos/QQQOrange/holddrag/releases/latest";
 
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.5.0";
+	public const string FallbackVersion = "1.6.0";
 
 	public static string Version
 	{
@@ -9237,6 +9237,9 @@ internal static class SelfTest
 		Safe("T92 外框颜色：跟随系统强调色 / 自定义颜色都要真的生效且存得进配置", TestFrameColorAccentAndCustom);
 		Safe("T93 设置页跟随系统深浅色：深浅两套都要够清楚（对比度/层次）", TestSettingsThemeFollowsSystem);
 		Safe("T94 设置窗口是无边框圆角卡片窗：无系统标题栏、标题条与页面同色、三个窗口按钮在位", TestFramelessCardWindow);
+		Safe("T96 设置页重排性能：换宽度一次 < 60ms、同宽度重复调用被去重", TestSettingsRelayoutPerformance);
+		Safe("T97 侧栏高亮只跟着当前页（点过就留胶囊的回归）", TestNavHighlightFollowsSelection);
+		Safe("T95 圆角参数必须真的改变渲染结果（圆角设置失效回归）", TestFrameRadiusTakesEffect);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();
@@ -9834,19 +9837,43 @@ internal static class SelfTest
 	{
 		using DragFixture dragFixture = new DragFixture(null);
 		using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
-		List<GroupBox> groups = new List<GroupBox>();
-		Walk(settingsForm, (Control c) =>
+		int num = SettingsForm.ProbeGroupCount(settingsForm);
+		for (int i = 0; i < num; i++)
 		{
-			if (c is GroupBox item)
-			{
-				groups.Add(item);
-			}
-		});
-		for (int num = 0; num < groups.Count; num++)
-		{
-			Check(groups[num].Controls.Count > 0, "分组「" + groups[num].Text + "」里有控件（不是空的）");
+			Control control = SettingsForm.ProbeGroupAt(settingsForm, i);
+			Check(control != null && control.Controls.Count > 0, "卡片「" + (control?.Text ?? "(null)") + "」里有控件（不是空卡）");
 		}
-		Check(groups.Count >= 6 && SettingsForm.VerifyLayout(settingsForm), "设置窗体上分组数 >= 6，实际 " + groups.Count);
+		Check(num >= 6 && SettingsForm.VerifyLayout(settingsForm), "设置窗体上卡片数 >= 6，实际 " + num);
+
+		// 卡里的文字必须放得下：Label 高度按"实际宽度折行后需要的高度"来比，
+		// 半行被裁（比如"流畅度 → 固定值"下面那段说明）就是这里会报红。
+		StringBuilder clipped = new StringBuilder();
+		int numLabel = 0;
+		for (int j = 0; j < num; j++)
+		{
+			Control card = SettingsForm.ProbeGroupAt(settingsForm, j);
+			if (card == null)
+			{
+				continue;
+			}
+			for (int k = 0; k < card.Controls.Count; k++)
+			{
+				Label label = card.Controls[k] as Label;
+				if (label == null || string.IsNullOrEmpty(label.Text) || label.Width <= 0)
+				{
+					continue;
+				}
+				numLabel++;
+				int num8x = SettingsForm.TextLinesForTest(label.Text, label, label.Width);
+					// 行高按设计稿的 18 逻辑像素算（Font.Height 是设备像素，跨 DPI 不可比）
+					int num9x = num8x * (int)Math.Round(18f * SettingsForm.UiScaleForTest);
+				if (num9x > label.Height + (int)Math.Round(4f * SettingsForm.UiScaleForTest))
+				{
+					clipped.Append("「").Append(HoldDragText(label.Text, 10)).Append("」需要 ").Append(num8x).Append(" 行(").Append(num9x).Append(") 实际 ").Append(label.Height).Append("；");
+				}
+			}
+		}
+		Check(clipped.Length == 0, "★ 卡片里每条文字都放得下（不会被裁成半行）", "检查 " + numLabel + " 个标签：" + clipped);
 	}
 
 	private static void TestActivationFrameOverlay()
@@ -10032,7 +10059,7 @@ internal static class SelfTest
 		using DragFixture dragFixture = new DragFixture(null);
 		using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
 		Check(SettingsForm.VerifyResizable(settingsForm), "设置窗口可缩放（边框 Sizable、最大化按钮可用、最小尺寸有意义）", "BorderStyle=" + settingsForm.FormBorderStyle.ToString() + " Max=" + settingsForm.MaximizeBox + " Min=" + settingsForm.MinimumSize);
-		Check(SettingsForm.VerifyAnchors(settingsForm), "拉宽后分组能重排（1 列 <-> 2 列自适应）");
+		Check(SettingsForm.VerifyAnchors(settingsForm), "拉宽后卡片跟着变宽（单列、最宽 880 左对齐）");
 		AppConfig appConfig = new AppConfig();
 		Eq(appConfig.SettingsWidth, 0, "默认不记住窗口宽度（0 = 用内置默认）");
 		Eq(appConfig.SettingsHeight, 0, "默认不记住窗口高度");
@@ -10174,8 +10201,8 @@ internal static class SelfTest
 		settingsForm.CreateControl();
 		settingsForm.Show();
 		Application.DoEvents();
-		Check(SettingsForm.VerifyAnchors(settingsForm), "★ 宽度够时分组从 1 列变 2 列，回窄能退回 1 列（拉宽真的多装东西）", SettingsForm.LastStretchDetail);
-		Check(SettingsForm.VerifyInnerStretch(settingsForm), "★ 拉宽后分组内的下拉框/文本框跟着变宽（不是只把分组撑大）", SettingsForm.LastStretchDetail + " || " + SettingsForm.DumpLayoutItem(settingsForm, settingsForm.ProbeComboLeft));
+		Check(SettingsForm.VerifyAnchors(settingsForm), "★ 拉宽窗口卡片跟着变宽、回窄能恢复，且不超过 880（内容列限宽、左对齐）", SettingsForm.LastStretchDetail);
+		Check(SettingsForm.VerifyInnerStretch(settingsForm), "★ 拉宽后卡内整宽块跟着变宽、固定宽控件保持宽度并右对齐（不是只把卡片撑大）", SettingsForm.LastStretchDetail + " || " + SettingsForm.DumpLayoutItem(settingsForm, settingsForm.ProbeComboLeft));
 		Check(SettingsForm.VerifyStretchIdempotent(settingsForm), "★ 来回拉多次，控件位置稳定不漂移（伸缩是幂等的）");
 		// 底栏现在是"浮在底部的圆角卡片"，不再靠 Dock=Bottom：改查它的实际位置是否贴在窗口下沿
 		Rectangle pagerBounds = settingsForm.ProbePagerBounds();
@@ -12770,6 +12797,24 @@ internal static class SelfTest
 		}
 	}
 
+	private static void TestFrameRadiusTakesEffect()
+	{
+		using DragFixture dragFixture = new DragFixture(null);
+		using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
+		settingsForm.CreateControl();
+		settingsForm.Show();
+		Application.DoEvents();
+		settingsForm.ProbeSetFrameShape(3, 4, enabled: true);
+		int num = SettingsForm.ProbePreviewRadiusDiff(settingsForm, 2, 26);
+		Line("    （预览像素差异）圆角 2 vs 26 = " + num + " 像素");
+		Check(num > 40, "★ 改「圆角」之后预览真的跟着变（不是只改了个数字）", "差异 " + num + " 像素");
+		SettingsForm.FrameSelection frameSelection = settingsForm.ProbeFrameSelection();
+		Eq(frameSelection.PreviewRadius, 26, "预览框拿到的是新圆角值 26");
+		settingsForm.ProbeSetFrameShape(3, 12, enabled: true);
+		Eq(settingsForm.ProbeFrameSelection().Radius, 12, "设置页读回的圆角是 12");
+		settingsForm.Close();
+	}
+
 	private static void TestFramelessCardWindow()
 	{
 		using DragFixture dragFixture = new DragFixture(null);
@@ -12794,7 +12839,95 @@ internal static class SelfTest
 		}
 		Eq(settingsForm.ProbeCaptionButtonCount(), 3, "★ 最小化/最大化/关闭三个按钮都在标题条上");
 		Color color = settingsForm.ProbeTitleStripColor();
-		Eq(color.ToArgb(), SettingsForm.ProbeTokenColor("Surface").ToArgb(), "★ 标题条颜色就是窗口外壳色（同一套颜色，不会出现最上面一条不一样）");
+		Eq(color.ToArgb(), settingsForm.BackColor.ToArgb(), "★ 标题条颜色就是窗口底色（同一套颜色，不会出现最上面一条不一样）");
+		settingsForm.Close();
+	}
+
+	/// <summary>
+	/// 重排性能：拖窗口时每一档宽度都要重排一次，所以"一次重排要多久"直接决定卡不卡。
+	/// 同时验证"同宽度重复调用不会重复干活"（去重生效）。
+	/// </summary>
+	private static void TestSettingsRelayoutPerformance()
+	{
+		using DragFixture dragFixture = new DragFixture(null);
+		using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
+		settingsForm.StartPosition = FormStartPosition.Manual;
+		settingsForm.Location = new Point(20, 20);
+		settingsForm.Show();
+		Application.DoEvents();
+		float num = SettingsForm.ProbeUiScaleOf(settingsForm);
+		int height = (int)Math.Round(760f * num);
+		// 预热（首次会建字体、算折行缓存，不算进成绩）
+		for (int i = 0; i < 3; i++)
+		{
+			settingsForm.ClientSize = new Size((int)Math.Round((980f + i * 40f) * num), height);
+			SettingsForm.RelayoutActiveForTest(settingsForm);
+		}
+		Stopwatch stopwatch = Stopwatch.StartNew();
+		int num2 = 20;
+		for (int j = 0; j < num2; j++)
+		{
+			// 每档宽度都不一样，确保每次都真的重排（模拟拖动边框）
+			settingsForm.ClientSize = new Size((int)Math.Round((980f + j * 17f) * num), height);
+			SettingsForm.RelayoutActiveForTest(settingsForm);
+		}
+		stopwatch.Stop();
+		double num3 = stopwatch.Elapsed.TotalMilliseconds / (double)num2;
+		// 同一尺寸重复调用应当直接被去重挡住
+		settingsForm.ClientSize = new Size((int)Math.Round(1100f * num), height);
+		SettingsForm.RelayoutActiveForTest(settingsForm);
+		Stopwatch stopwatch2 = Stopwatch.StartNew();
+		for (int k = 0; k < 20; k++)
+		{
+			SettingsForm.RelayoutActiveForTest(settingsForm);
+		}
+		stopwatch2.Stop();
+		double num4 = stopwatch2.Elapsed.TotalMilliseconds / 20.0;
+		Line("    （重排耗时）换宽度 " + num3.ToString("0.00") + " ms/次，同宽度重复 " + num4.ToString("0.00") + " ms/次");
+		Check(num3 < 60.0, "★ 换一档宽度重排一次 < 60ms（拖窗口/最大化不会一顿一顿）", num3.ToString("0.00") + " ms");
+		Check(num4 < 3.0, "★ 同尺寸重复重排会被去重（不重复干活）", num4.ToString("0.00") + " ms");
+		settingsForm.Close();
+	}
+
+	/// <summary>
+	/// 导航胶囊回归：只有"当前页"配底色。
+	/// 之前 glow 动画值打到 1 就不回落，paint 又拿它当"要画底色"的依据，
+	/// 结果点过的每一项都留一个灰胶囊（看起来像没选中却高亮）。
+	/// </summary>
+	// 侧栏胶囊是 170ms 淡入动画，量颜色前要让它跑完
+	private static void SettleNavAnimation()
+	{
+		for (int i = 0; i < 30; i++)
+		{
+			Application.DoEvents();
+			Thread.Sleep(10);
+		}
+	}
+
+	private static void TestNavHighlightFollowsSelection()
+	{
+		using DragFixture dragFixture = new DragFixture(null);
+		using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
+		settingsForm.StartPosition = FormStartPosition.Manual;
+		settingsForm.Location = new Point(20, 20);
+		settingsForm.Show();
+		Application.DoEvents();
+		SettleNavAnimation();
+		Color color = SettingsForm.ProbeNavRowColor(settingsForm, 2);
+		Color color2 = SettingsForm.ProbeNavRowColor(settingsForm, 1);
+		Color color3 = SettingsForm.ProbeTokenColor("Sidebar");
+		Color color4 = SettingsForm.ProbeTokenColor("AccentSoft");
+		Line("    （侧栏底色）第1项=" + color2.R + "," + color2.G + "," + color2.B + " 第3项=" + color.R + "," + color.G + "," + color.B);
+		Check(color3.ToArgb() == color2.ToArgb(), "未选中的导航项没有底色（就是侧栏底色）", color2.ToString());
+		// 点一下第 3 项，再切回第 1 项：第 3 项必须恢复成"无底色"
+		SettingsForm.ProbeSelectPage(settingsForm, 2);
+		SettleNavAnimation();
+		SettingsForm.ProbeSelectPage(settingsForm, 0);
+		SettleNavAnimation();
+		Color color5 = SettingsForm.ProbeNavRowColor(settingsForm, 2);
+		Color color6 = SettingsForm.ProbeNavRowColor(settingsForm, 0);
+		Check(color5.ToArgb() == color3.ToArgb(), "★ 点过又切走的导航项不残留胶囊底色（回归）", "第3项=" + color5.ToString() + " 侧栏底=" + color3.ToString());
+		Check(color6.ToArgb() == color4.ToArgb(), "当前页那项是强调色胶囊", "第1项=" + color6.ToString());
 		settingsForm.Close();
 	}
 
@@ -13189,11 +13322,13 @@ internal static class SelfTest
 			}
 		}
 		Check(num2 == 0, "★ 连续改变尺寸的每一步都没有控件越界（拖动过程不溢出）", text3);
-		int num6 = SettingsForm.ProbeTwoColumnThresholdPx(settingsForm);
-		int num7 = SettingsForm.ProbeRelayoutColumns(settingsForm, num6 + (int)Math.Round(20f * num));
-		int num8 = SettingsForm.ProbeRelayoutColumns(settingsForm, num6 - (int)Math.Round(40f * num));
-		int num9 = SettingsForm.ProbeRelayoutColumns(settingsForm, num6 - (int)Math.Round(300f * num));
-		Check(num7 == 2 && num8 == 2 && num9 == 1, "★ 列数切换带回滞：阈值下方一小段仍保持两列，不会来回翻（抖动回归）", "阈值=" + num6 + " → " + num7 + " / " + num8 + " / " + num9);
+		settingsForm.ClientSize = new Size((int)Math.Round(2400f * num), height);
+		SettingsForm.RelayoutForTest(settingsForm);
+		Application.DoEvents();
+		Rectangle cardBox = SettingsForm.CardBoxOf(settingsForm);
+		int num6 = SettingsForm.ProbeCardMaxWidthPx(settingsForm);
+		int num8x = Math.Max(num6, settingsForm.ClientSize.Width / 2);
+		Check(cardBox.Width <= num8x + (int)Math.Round(4f * num), "★ 窗口拉到超宽时改用两列或仍限宽 " + (num6 / num) + "px，不会把卡片拉成一条细长条", cardBox.ToString() + " 客户区宽=" + settingsForm.ClientSize.Width);
 		settingsForm.Close();
 	}
 
@@ -14108,6 +14243,16 @@ internal static class SelfTest
 		}
 	}
 
+	private static string HoldDragText(string text, int max)
+	{
+		if (string.IsNullOrEmpty(text))
+		{
+			return "";
+		}
+		string text2 = text.Replace("\r", " ").Replace("\n", " ");
+		return (text2.Length <= max) ? text2 : (text2.Substring(0, max) + "…");
+	}
+
 	private static int Fields_Sc(int design)
 	{
 		return (int)Math.Round((float)design * ((SettingsForm.UiScaleForTest <= 0f) ? 1f : SettingsForm.UiScaleForTest));
@@ -14126,7 +14271,7 @@ internal static class SelfTest
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
 		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
-		Check(SettingsForm.AppVersionForTest == "1.5.0", "★ 版本号已升到 1.5.0", "实际=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == "1.6.0", "★ 版本号已升到 1.6.0", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
 
@@ -14154,17 +14299,17 @@ internal static class SelfTest
 			bool flag = false;
 			bool flag2 = false;
 			bool flag3 = false;
-			GroupBox groupBox = null;
+			Control groupBox = null;
 			for (int i = 0; i < SettingsForm.ProbeGroupCount(settingsForm); i++)
 			{
-				GroupBox groupBox2 = SettingsForm.ProbeGroupAt(settingsForm, i) as GroupBox;
-				if (groupBox2 != null && groupBox2.Text != null && groupBox2.Text.Contains("关于"))
+				Control control2 = SettingsForm.ProbeGroupAt(settingsForm, i);
+				if (control2 != null && control2.Text != null && control2.Text.Contains("关于"))
 				{
-					groupBox = groupBox2;
+					groupBox = control2;
 					break;
 				}
 			}
-			Check(groupBox != null, "取到『关于』分组");
+			Check(groupBox != null, "取到『关于』那张卡片");
 			if (groupBox != null)
 			{
 				for (int j = 0; j < groupBox.Controls.Count; j++)
@@ -16117,6 +16262,9 @@ internal sealed class SettingsForm : Form
 
 	// 一套亮色、一套暗色。颜色统一走属性而不是 const/readonly 字段，
 	// 这样控件在重绘时天然拿到当前主题的颜色（不需要挨个控件重新赋值）。
+	// 调色板与圆角照「按键增强」那套来：
+	// 底色是极浅的冷灰蓝，卡片纯白 + 1px 描边分层；不用投影堆层次 ——
+	// WinForms 里阴影又慢又让文字发虚，浅描边反而更干净、更"产品"。
 	private static class Tokens
 	{
 		private static Color P(Color light, Color dark)
@@ -16124,75 +16272,85 @@ internal sealed class SettingsForm : Form
 			return Theme.IsDark ? dark : light;
 		}
 
-		public static Color Canvas => P(Color.FromArgb(247, 247, 248), Color.FromArgb(25, 26, 28));
+		public static Color Canvas => P(Color.FromArgb(242, 245, 250), Color.FromArgb(22, 24, 29));
 
-		public static Color Sidebar => P(Color.FromArgb(252, 252, 253), Color.FromArgb(31, 32, 34));
+		public static Color Sidebar => P(Color.FromArgb(251, 252, 254), Color.FromArgb(27, 30, 36));
 
-		public static Color Surface => P(Color.FromArgb(255, 255, 255), Color.FromArgb(36, 37, 39));
+		public static Color Surface => P(Color.FromArgb(255, 255, 255), Color.FromArgb(33, 36, 41));
 
-		/// <summary>卡片里"再凹一层"的底色（预览框内衬、样式缩略图底色）。</summary>
-		public static Color SurfaceAlt => P(Color.FromArgb(250, 250, 251), Color.FromArgb(30, 31, 33));
+		/// <summary>再凹一层的底色（预览框内衬、样式缩略图、侧栏状态卡）。</summary>
+		public static Color SurfaceAlt => P(Color.FromArgb(245, 248, 252), Color.FromArgb(26, 29, 34));
 
-		public static Color Stroke => P(Color.FromArgb(234, 234, 237), Color.FromArgb(54, 55, 58));
+		public static Color Stroke => P(Color.FromArgb(228, 232, 240), Color.FromArgb(46, 50, 58));
 
-		public static Color Divider => P(Color.FromArgb(241, 241, 243), Color.FromArgb(47, 48, 51));
+		public static Color StrokeStrong => P(Color.FromArgb(211, 217, 230), Color.FromArgb(58, 63, 73));
 
-		public static Color TextPrimary => P(Color.FromArgb(28, 29, 33), Color.FromArgb(242, 242, 243));
+		public static Color Divider => P(Color.FromArgb(237, 241, 247), Color.FromArgb(42, 46, 53));
 
-		public static Color TextSecondary => P(Color.FromArgb(94, 96, 102), Color.FromArgb(174, 175, 179));
+		/// <summary>悬停底色（导航项、列表行、次要按钮）。</summary>
+		public static Color Hover => P(Color.FromArgb(240, 243, 249), Color.FromArgb(38, 42, 49));
 
-		public static Color TextTertiary => P(Color.FromArgb(142, 144, 150), Color.FromArgb(130, 131, 136));
+		public static Color TextPrimary => P(Color.FromArgb(22, 26, 35), Color.FromArgb(237, 239, 244));
 
-		public static Color Accent => P(Color.FromArgb(15, 107, 189), Color.FromArgb(76, 155, 240));
+		public static Color TextSecondary => P(Color.FromArgb(91, 100, 120), Color.FromArgb(168, 176, 191));
 
-		public static Color AccentPressed => P(Color.FromArgb(11, 90, 158), Color.FromArgb(111, 178, 255));
+		public static Color TextTertiary => P(Color.FromArgb(138, 147, 166), Color.FromArgb(120, 128, 143));
 
-		public static Color AccentSoft => P(Color.FromArgb(235, 243, 251), Color.FromArgb(27, 44, 64));
+		public static Color Accent => P(Color.FromArgb(43, 108, 246), Color.FromArgb(91, 141, 249));
 
-		public static Color AccentSoftStroke => P(Color.FromArgb(203, 222, 238), Color.FromArgb(46, 75, 107));
+		public static Color AccentPressed => P(Color.FromArgb(31, 91, 224), Color.FromArgb(127, 167, 255));
 
-		public static Color InputStroke => P(Color.FromArgb(220, 220, 224), Color.FromArgb(66, 67, 71));
+		public static Color AccentSoft => P(Color.FromArgb(232, 240, 255), Color.FromArgb(27, 41, 66));
 
-		public static Color InputStrokeHover => P(Color.FromArgb(203, 203, 208), Color.FromArgb(80, 81, 86));
+		public static Color AccentSoftStroke => P(Color.FromArgb(199, 218, 255), Color.FromArgb(44, 68, 112));
 
-		public static Color FieldFill => P(Color.FromArgb(248, 248, 249), Color.FromArgb(31, 32, 34));
+		public static Color InputStroke => P(Color.FromArgb(220, 226, 238), Color.FromArgb(52, 58, 68));
 
-		public static Color FieldStroke => P(Color.FromArgb(231, 231, 234), Color.FromArgb(56, 57, 61));
+		public static Color InputStrokeHover => P(Color.FromArgb(201, 210, 227), Color.FromArgb(65, 72, 84));
 
-		public static Color Hint => P(Color.FromArgb(146, 148, 154), Color.FromArgb(134, 135, 140));
+		public static Color FieldFill => P(Color.FromArgb(255, 255, 255), Color.FromArgb(28, 31, 36));
+
+		public static Color FieldStroke => P(Color.FromArgb(220, 226, 238), Color.FromArgb(52, 58, 68));
+
+		public static Color Hint => TextTertiary;
 
 		public static Color WarnText => P(Color.FromArgb(138, 90, 11), Color.FromArgb(226, 180, 100));
 
-		public static Color Success => P(Color.FromArgb(15, 122, 70), Color.FromArgb(79, 206, 143));
+		public static Color Success => P(Color.FromArgb(31, 157, 98), Color.FromArgb(79, 206, 143));
 
-		public static Color Danger => P(Color.FromArgb(184, 36, 36), Color.FromArgb(242, 118, 118));
+		public static Color Danger => P(Color.FromArgb(229, 72, 77), Color.FromArgb(242, 118, 118));
 
-		public static Color TrackOff => P(Color.FromArgb(219, 219, 223), Color.FromArgb(62, 63, 67));
+		public static Color TrackOff => P(Color.FromArgb(219, 226, 238), Color.FromArgb(62, 68, 78));
 
-		public static Color TrackOffHover => P(Color.FromArgb(204, 204, 209), Color.FromArgb(73, 74, 78));
+		public static Color TrackOffHover => P(Color.FromArgb(203, 212, 227), Color.FromArgb(76, 83, 95));
 
-		public static Color ButtonHover => P(Color.FromArgb(243, 243, 245), Color.FromArgb(46, 47, 50));
+		public static Color ButtonHover => P(Color.FromArgb(240, 243, 249), Color.FromArgb(42, 46, 53));
 
 		/// <summary>强调色底上的文字（暗色主题的强调色偏亮，用深色字更清楚）。</summary>
-		public static Color TextOnAccent => P(Color.FromArgb(255, 255, 255), Color.FromArgb(7, 19, 31));
+		public static Color TextOnAccent => P(Color.FromArgb(255, 255, 255), Color.FromArgb(9, 14, 22));
 
 		/// <summary>开关滑块（暗色主题不用纯白，避免刺眼）。</summary>
 		public static Color SwitchKnob => P(Color.FromArgb(255, 255, 255), Color.FromArgb(244, 246, 249));
 
-		/// <summary>卡片外投影。</summary>
-		public static Color CardShadow => P(Color.FromArgb(12, 18, 18, 22), Color.FromArgb(90, 0, 0, 0));
+		public static Color CardShadow => P(Color.FromArgb(10, 16, 32, 64), Color.FromArgb(80, 0, 0, 0));
 
-		/// <summary>大面（卡片、预览框）统一圆角。</summary>
-		public const int Radius = 12;
+		/// <summary>卡片圆角（参照里是 14）。</summary>
+		public const int Radius = 14;
 
-		/// <summary>控件（输入框、按钮、色块、画廊格、侧栏胶囊）统一圆角。</summary>
-		public const int RadiusField = 8;
+		/// <summary>控件圆角（输入框、按钮、色块、导航胶囊，参照里是 9）。</summary>
+		public const int RadiusField = 9;
 
-		/// <summary>页面纸面（内容区那张大卡片）的圆角，比内层卡片更大一档。</summary>
-		public const int RadiusSheet = 16;
+		/// <summary>侧栏宽度（参照 1240 宽窗口用 228）。</summary>
+		public const int SidebarW = 228;
 
-		/// <summary>页面纸面离窗口边缘的间距。</summary>
-		public const int PageGap = 8;
+		/// <summary>标题栏高度（参照里是 56）。</summary>
+		public const int TitleBarH = 56;
+
+		/// <summary>内容列最大宽度（参照里是 880，左对齐）。</summary>
+		public const int CardMaxW = 880;
+
+		/// <summary>卡片之间的垂直间距。</summary>
+		public const int CardGap = 14;
 	}
 
 	private static class HQ
@@ -16372,83 +16530,206 @@ internal sealed class SettingsForm : Form
 		}
 	}
 
-	// ======================= 布局单元 =======================
+	// ======================= 卡片 =======================
+	//
+	// 布局照「按键增强」的设置页做：
+	// 一张白卡（圆角 14 + 1px 描边）里是一串"设置行"，
+	// 每行左边是标题 + 一行灰色说明，右边是控件（开关/下拉框/数字/按钮，右对齐）；
+	// 行与行之间一条极淡的分隔线。这种结构比"标签和控件挤在一行"更好读，
+	// 也天然对齐 —— 所有控件都贴在右侧同一列上。
 
 	private interface INeedHeight
 	{
 		int HeightFor(int width);
 	}
 
-	private sealed class Cell
+	private enum RowKind
 	{
+		Row,
+		Block,
+		Note
+	}
+
+	private sealed class RowSpec
+	{
+		public RowKind Kind;
 		public Control Ctl;
-		public Control LabelCtl;
+		public Control Tail;
+		public Label TitleCtl;
+		public Label NoteCtl;
 		public string Label;
-		public int LabelW;
-		public int FixedW;
-		public bool Wrap;
-		public bool Auto;
+		public string Note;
+		public int CtlW;
+		public int TailW;
+		public int BlockH;
 	}
 
-	private sealed class Row
+	private sealed class Card : Panel
 	{
-		public List<Cell> Cells = new List<Cell>();
-		public int Height = 40;
-		public int Gap = 10;
-	}
+		public readonly string Title;
+		public readonly string Subtitle;
 
-	private sealed class LinePlan
-	{
-		public Row Row;
-		public List<Cell> Cells = new List<Cell>();
-		public List<Control> Labels = new List<Control>();
-		public int Y;
-		public int H;
-	}
-
-	// ======================= 卡片 =======================
-
-	private sealed class Card : GroupBox
-	{
-		public readonly List<Row> Rows = new List<Row>();
-		public bool Wide;
-		public int PadX = 22;
-		public int TitleH = 56;
-		public int BottomPad = 16;
+		private readonly List<RowSpec> _rows = new List<RowSpec>();
 		private readonly List<Control> _fields = new List<Control>();
+		private readonly List<int> _dividers = new List<int>();
+		private Rectangle _titleRect;
+		private Rectangle _subRect;
+		// 字体在构造时建一次：原来每次 OnPaint 都 new Font，滚动时一秒钟上千次分配 + GDI 句柄
+		private readonly Font _fontTitle;
+		private readonly Font _fontSub;
 
-		public Card(string title)
+		/// <summary>卡片内边距（参照里 Padding=18，这里给 20 更透气）。</summary>
+		public const int PadX = 20;
+		private const int PadTop = 18;
+		private const int PadBottom = 20;
+
+		public Card(string title, string subtitle)
 		{
+			Title = title;
+			Subtitle = subtitle;
 			Text = title;
 			BackColor = Tokens.Canvas;
 			ForeColor = Tokens.TextPrimary;
 			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+			_fontTitle = new Font(DesignFontFamily, 12.75f, FontStyle.Bold, GraphicsUnit.Point);
+			_fontSub = new Font(DesignFontFamily, 9f, FontStyle.Regular, GraphicsUnit.Point);
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 		}
 
-		public Row Add(int height, params Cell[] cells)
+		protected override void Dispose(bool disposing)
 		{
-			Row row = new Row();
-			row.Height = height;
-			row.Cells.AddRange(cells);
-			Rows.Add(row);
-			foreach (Cell cell in cells)
+			if (disposing)
 			{
-				if (cell.Ctl != null && !Controls.Contains(cell.Ctl))
+				_fontTitle.Dispose();
+				_fontSub.Dispose();
+			}
+			base.Dispose(disposing);
+		}
+
+		// ---------- 行定义 ----------
+
+		/// <summary>标准设置行：左标题 + 说明，右控件（固定宽）。ctlW &lt;= 0 表示按控件自然宽。</summary>
+		public void Setting(Control ctl, string label, string note = null, int ctlW = 180)
+		{
+			Add(new RowSpec
+			{
+				Kind = RowKind.Row,
+				Ctl = ctl,
+				Label = label,
+				Note = note,
+				CtlW = ctlW
+			});
+		}
+
+		/// <summary>同一行两个控件（触发键 + 重新录制、数值 + 单位）：主控件 + 尾巴控件依次右对齐。</summary>
+		public void Setting(Control ctl, int ctlW, Control tail, int tailW, string label, string note = null)
+		{
+			Add(new RowSpec
+			{
+				Kind = RowKind.Row,
+				Ctl = ctl,
+				CtlW = ctlW,
+				Tail = tail,
+				TailW = tailW,
+				Label = label,
+				Note = note
+			});
+		}
+
+		/// <summary>开关行：左标题 + 说明，右边只放一个开关（宽度按开关自身算）。</summary>
+		public void Toggle(Control ctl, string label, string note = null)
+		{
+			Add(new RowSpec
+			{
+				Kind = RowKind.Row,
+				Ctl = ctl,
+				Label = label,
+				Note = note,
+				CtlW = -1
+			});
+		}
+
+		/// <summary>整行说明文字（不是设置项，只是解释）。</summary>
+		public void Note(string text)
+		{
+			Label label = NewLabel(text, 12, Tokens.TextTertiary, bold: false);
+			Add(new RowSpec
+			{
+				Kind = RowKind.Note,
+				Ctl = label
+			});
+		}
+
+		/// <summary>整宽块：色板 / 样式画廊 / 预览框 / 帮助列表，可以带一个小节标题。</summary>
+		public void Block(Control ctl, string label = null, int blockH = 0)
+		{
+			Label label2 = null;
+			if (!string.IsNullOrEmpty(label))
+			{
+				label2 = NewLabel(label, 12, Tokens.TextSecondary, bold: false);
+			}
+			Add(new RowSpec
+			{
+				Kind = RowKind.Block,
+				Ctl = ctl,
+				TitleCtl = label2,
+				Label = label,
+				BlockH = blockH
+			});
+		}
+
+		private void Add(RowSpec spec)
+		{
+			_rows.Add(spec);
+			if (spec.Ctl != null && !Controls.Contains(spec.Ctl))
+			{
+				Controls.Add(spec.Ctl);
+			}
+			if (spec.Tail != null && !Controls.Contains(spec.Tail))
+			{
+				Controls.Add(spec.Tail);
+			}
+			if (spec.TitleCtl != null && !Controls.Contains(spec.TitleCtl))
+			{
+				Controls.Add(spec.TitleCtl);
+			}
+			if (spec.Kind == RowKind.Row)
+			{
+				if (spec.TitleCtl == null && !string.IsNullOrEmpty(spec.Label))
 				{
-					Controls.Add(cell.Ctl);
+					spec.TitleCtl = NewLabel(spec.Label, 13.5f, Tokens.TextPrimary, bold: false);
 				}
-				if (cell.LabelCtl != null && !Controls.Contains(cell.LabelCtl))
+				if (spec.NoteCtl == null && !string.IsNullOrEmpty(spec.Note))
 				{
-					Controls.Add(cell.LabelCtl);
+					spec.NoteCtl = NewLabel(spec.Note, 12, Tokens.TextTertiary, bold: false);
 				}
 			}
-			return row;
+		}
+
+		private Label NewLabel(string text, float px, Color color, bool bold)
+		{
+			Label label = new Label
+			{
+				Text = text ?? "",
+				AutoSize = false,
+				AutoEllipsis = true,
+				UseMnemonic = false,
+				// 必须是实色而不是 Transparent：WinForms 里 Transparent 的 Label 每次重绘
+				// 都要先让父控件把自己那块重画一遍，一页几十个标签就是几十次卡片重绘 ——
+				// 这是"滚动/切页发闷"的主要来源。卡片底就是纯色，用同一个颜色零成本。
+				BackColor = Tokens.Surface,
+				ForeColor = color,
+				// Font 的单位是"磅"，设计稿给的是像素：1px = 0.75pt
+				Font = new Font(DesignFontFamily, px * 0.75f, bold ? FontStyle.Bold : FontStyle.Regular, GraphicsUnit.Point),
+				TextAlign = ContentAlignment.MiddleLeft
+			};
+			Controls.Add(label);
+			return label;
 		}
 
 		public void RegisterField(Control c)
 		{
-			if (c == null)
+			if (c == null || _fields.Contains(c))
 			{
 				return;
 			}
@@ -16460,369 +16741,409 @@ internal sealed class SettingsForm : Form
 			catch
 			{
 			}
-			ApplyFieldRegion(c);
 		}
 
-		private void ApplyFieldRegion(Control c)
+		// ---------- 度量与排版 ----------
+
+		public int Measure(int width)
+		{
+			return Arrange(width, apply: false);
+		}
+
+		public void Layout(int width)
+		{
+			SuspendLayout();
+			Arrange(width, apply: true);
+			ResumeLayout(performLayout: false);
+		}
+
+		private int Arrange(int width, bool apply)
+		{
+			int padX = Sc(PadX);
+			int inner = Math.Max(Sc(120), width - padX * 2);
+			int y = Sc(PadTop);
+			bool header = false;
+
+			if (!string.IsNullOrEmpty(Title))
+			{
+				_titleRect = new Rectangle(padX, y, inner, Sc(24));
+				y += Sc(24);
+				header = true;
+			}
+			else
+			{
+				_titleRect = Rectangle.Empty;
+			}
+			if (!string.IsNullOrEmpty(Subtitle))
+			{
+				_subRect = new Rectangle(padX, y + Sc(2), inner, Sc(18));
+				y += Sc(20);
+				header = true;
+			}
+			else
+			{
+				_subRect = Rectangle.Empty;
+			}
+			if (header)
+			{
+				y += Sc(14);
+			}
+			if (apply)
+			{
+				_dividers.Clear();
+			}
+
+			bool first = true;
+			foreach (RowSpec row in _rows)
+			{
+				if (row.Kind == RowKind.Note)
+				{
+					int lines = MeasureLines(row.Ctl.Text, row.Ctl, inner);
+					int noteH = Sc(21) * Math.Max(1, lines);
+					if (apply)
+					{
+						Place(row.Ctl, new Rectangle(padX, y, inner, noteH));
+					}
+					y += noteH + Sc(8);
+					continue;
+				}
+
+				if (row.Kind == RowKind.Block)
+				{
+					if (!string.IsNullOrEmpty(row.Label))
+					{
+						if (apply && row.TitleCtl != null)
+						{
+							Place(row.TitleCtl, new Rectangle(padX, y, inner, Sc(18)));
+						}
+						y += Sc(22);
+					}
+					int blockH = ResolveBlockHeight(row, inner);
+					if (apply)
+					{
+						Place(row.Ctl, new Rectangle(padX, y, inner, blockH));
+					}
+					y += blockH + Sc(6);
+					continue;
+				}
+
+				// ---- 标准设置行 ----
+				int ctlW = ((row.CtlW > 0) ? Sc(row.CtlW) : ((row.CtlW < 0) ? NaturalWidth(row.Ctl) : Sc(180)));
+				int tailW = ((row.Tail == null) ? 0 : ((row.TailW > 0) ? Sc(row.TailW) : NaturalWidth(row.Tail)));
+				int gap = ((row.Tail == null) ? 0 : Sc(8));
+				// 窄窗口兜底：先保证左侧文字还有 90，控件列按剩余空间收缩（尾巴先收、再收主控件），
+				// 宁可控件变小，也绝不允许控件叠到文字上。
+				int avail = Math.Max(Sc(60), inner - Sc(16));
+				int room = Math.Max(Sc(40), avail - Sc(90));
+				if (ctlW + gap + tailW > room)
+				{
+					if (tailW > 0)
+					{
+						tailW = Math.Min(tailW, Math.Max(Sc(28), room / 2));
+					}
+					ctlW = Math.Max(Sc(36), room - gap - tailW);
+					if (ctlW + gap + tailW > room && tailW > 0)
+					{
+						tailW = Math.Max(0, room - gap - ctlW);
+						gap = ((tailW > 0) ? gap : 0);
+					}
+				}
+				int ctlTotal = ctlW + gap + tailW;
+				int labelW = Math.Max(Sc(40), avail - ctlTotal);
+
+				int titleH = Sc(24);
+				// 说明文字也要按「折几行」给高度：一行放不下时它真的会折成两行，
+				// 只给一行的高度就会把第二行裁掉（这就是「文字显示不全」的根因）。
+				int noteH2 = ((row.NoteCtl == null) ? 0 : (Math.Max(1, MeasureLines(row.NoteCtl.Text, row.NoteCtl, labelW)) * Sc(20) + Sc(2)));
+				int coreH = titleH + noteH2;
+				int ctlH = Math.Max(Sc(24), ControlHeight(row.Ctl, ctlW));
+				int contentH = Math.Max(Math.Max(coreH, ctlH), Sc(24));
+				int rowH = contentH + Sc(24);
+
+				if (!first && apply)
+				{
+					_dividers.Add(y);
+				}
+				first = false;
+
+				int top = y + Sc(12);
+				int textY = top + Math.Max(0, (contentH - coreH) / 2);
+				if (apply)
+				{
+					if (row.TitleCtl != null)
+					{
+						Place(row.TitleCtl, new Rectangle(padX, textY, labelW, titleH));
+					}
+					if (row.NoteCtl != null)
+					{
+						Place(row.NoteCtl, new Rectangle(padX, textY + titleH, labelW, noteH2));
+					}
+					int ctlY = top + Math.Max(0, (contentH - ctlH) / 2);
+					Place(row.Ctl, new Rectangle(padX + inner - ctlTotal, ctlY, ctlW, ctlH));
+					// ComboBox 之类的高度由系统锁定，SetBounds 改不动 —— 按真实高度重算一次垂直居中
+					if (row.Ctl.Height != ctlH)
+					{
+						row.Ctl.Top = ctlY + Math.Max(0, (ctlH - row.Ctl.Height) / 2);
+					}
+					if (row.Tail != null)
+					{
+						int tailH = Math.Max(Sc(24), ControlHeight(row.Tail, tailW));
+						int tailY = top + Math.Max(0, (contentH - tailH) / 2);
+						Place(row.Tail, new Rectangle(padX + inner - tailW, tailY, tailW, tailH));
+						if (row.Tail.Height != tailH)
+						{
+							row.Tail.Top = tailY + Math.Max(0, (tailH - row.Tail.Height) / 2);
+						}
+					}
+				}
+				y += rowH;
+			}
+
+			int total = y + Sc(PadBottom) - Sc(6);
+			if (apply)
+			{
+				ApplyFieldRegions();
+			}
+			return Math.Max(total, Sc(60));
+		}
+
+		// 折行数缓存：文字和可用宽度没变就直接复用，避免每次重排都建 Font + 两次 MeasureText
+		private readonly Dictionary<string, int> _lineCache = new Dictionary<string, int>();
+		private readonly Dictionary<string, int> _lineCacheWidth = new Dictionary<string, int>();
+
+		private int _lineH;
+
+		// 行数 = 折行后的总高 / 单行高。
+		// 不能用 TextLines（折行高 / 不折行高）：文案里自带 \r\n 时两边行数相同，会被算成 1 行，
+		// 于是长提示只分到一行的高度、第二段被裁掉。
+		private int MeasureLinesExact(string text, Control ctl, int width)
 		{
 			try
 			{
-				int num = Math.Max(1, Sc(1));
-				c.Region = new Region(RoundedPath(new Rectangle(num, num, Math.Max(4, c.Width - num * 2 - 1), Math.Max(4, c.Height - num * 2 - 1)), Sc(Tokens.RadiusField)));
+				if (_lineH <= 0)
+				{
+					_lineH = Math.Max(1, TextRenderer.MeasureText("字", ctl.Font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding).Height);
+				}
+				int num = TextRenderer.MeasureText(text, ctl.Font, new Size(Math.Max(20, width), int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height;
+				return Math.Max(1, (int)Math.Round((double)num / (double)_lineH));
 			}
 			catch
 			{
+				return 1;
+			}
+		}
+
+		private int MeasureLines(string text, Control ctl, int width)
+		{
+			if (string.IsNullOrEmpty(text))
+			{
+				return 1;
+			}
+			string key = text;
+			int num;
+			if (_lineCache.TryGetValue(key, out num) && _lineCacheWidth.TryGetValue(key, out num) && num == width)
+			{
+				return _lineCache[key];
+			}
+			int num2 = MeasureLinesExact(text, ctl, width);
+			_lineCache[key] = num2;
+			_lineCacheWidth[key] = width;
+			return num2;
+		}
+
+		private int ResolveBlockHeight(RowSpec row, int inner)
+		{
+			// Label 型的整宽块（提示文字）：高度按实际折行数算，不能吃写死的 BlockH，
+			// 否则长文案（比如"流畅度 → 固定值"下面那段实测说明）第二行就会被裁掉。
+			if (row.Ctl is Label)
+			{
+				return Math.Max(Sc(20), MeasureLines(row.Ctl.Text, row.Ctl, inner) * Sc(20));
+			}
+			if (row.Ctl is INeedHeight needHeight)
+			{
+				int num = needHeight.HeightFor(inner);
+				if (num > 0)
+				{
+					return num;
+				}
+			}
+			if (row.BlockH > 0)
+			{
+				return Sc(row.BlockH);
+			}
+			return Math.Max(Sc(32), row.Ctl.Height);
+		}
+
+		// 控件的设计高度：开关 24、输入类 32、其它各自 HeightFor。
+		private static int ControlHeight(Control ctl, int width)
+		{
+			if (ctl == null)
+			{
+				return 0;
+			}
+			if (ctl is FlatCheck)
+			{
+				return Sc(24);
+			}
+			if (ctl is INeedHeight needHeight)
+			{
+				int num = needHeight.HeightFor(width);
+				if (num > 0)
+				{
+					return num;
+				}
+			}
+			return Sc(32);
+		}
+
+		private static int NaturalWidth(Control ctl)
+		{
+			if (ctl is FlatCheck)
+			{
+				return Sc(38);
+			}
+			if (ctl != null && ctl.Width > 0)
+			{
+				return ctl.Width;
+			}
+			return Sc(96);
+		}
+
+		// Region 是 GDI 对象：每次重排都新建一个、旧的不释放，拖着窗口改尺寸几分钟就能把
+		// GDI 句柄堆到上限（之后整机都开始卡）。这里按尺寸缓存 + 换新时释放旧的。
+		private readonly Dictionary<Control, Size> _fieldSizes = new Dictionary<Control, Size>();
+
+		private void ApplyFieldRegions()
+		{
+			foreach (Control field in _fields)
+			{
+				try
+				{
+					if (field.Width <= 4 || field.Height <= 4)
+					{
+						continue;
+					}
+					Size size = new Size(field.Width, field.Height);
+					Size size2;
+					if (_fieldSizes.TryGetValue(field, out size2) && size2 == size)
+					{
+						continue;
+					}
+					Region region = field.Region;
+					field.Region = new Region(RoundedPath(new Rectangle(0, 0, size.Width, size.Height), Sc(Tokens.RadiusField)));
+					if (region != null)
+					{
+						region.Dispose();
+					}
+					_fieldSizes[field] = size;
+				}
+				catch
+				{
+				}
 			}
 		}
 
 		public void SyncFieldRegions()
 		{
-			foreach (Control field in _fields)
+			ApplyFieldRegions();
+		}
+
+		/// <summary>参与"需不需要重排"判定的文字（行标题、说明、整宽块的提示文字）。</summary>
+		public void AppendSignature(StringBuilder sb)
+		{
+			foreach (RowSpec row in _rows)
 			{
-				ApplyFieldRegion(field);
+				if (row.TitleCtl != null)
+				{
+					sb.Append(row.TitleCtl.Text).Append('|');
+				}
+				if (row.NoteCtl != null)
+				{
+					sb.Append(row.NoteCtl.Text).Append('|');
+				}
+				if (row.Kind == RowKind.Block && row.Ctl is Label label)
+				{
+					sb.Append(label.Text).Append('|');
+				}
 			}
 		}
 
-		public int Measure(int width)
-		{
-			int num = Sc(TitleH);
-			foreach (LinePlan item in Plan(width))
-			{
-				num += item.H;
-			}
-			return num + Sc(BottomPad);
-		}
-
-	public void Layout(int width)
-	{
-		SuspendLayout();
-		List<LinePlan> list = Plan(width);
-		int inner = width - Sc(PadX) * 2;
-		// 一张卡片里所有"单标签"的行共用同一列标签宽：值全部从同一列起跳，读起来是一条竖线。
-		int labelCol = LabelColumn();
-		foreach (LinePlan item in list)
-		{
-			int num = Sc(PadX);
-			int num2 = item.Cells.Count;
-			int numLabel = LabelWidthFor(item, inner, labelCol);
-			int num3 = 0;
-			int num4 = 0;
-			foreach (Cell cell in item.Cells)
-			{
-				if (cell.Wrap || cell.Auto)
-				{
-					continue;
-				}
-				if (!string.IsNullOrEmpty(cell.Label))
-				{
-					num3 += ((numLabel > 0) ? numLabel : Sc(cell.LabelW));
-				}
-				if (cell.Ctl != null && cell.FixedW > 0)
-				{
-					num3 += Sc(cell.FixedW);
-				}
-				if (cell.Ctl != null && cell.FixedW <= 0)
-				{
-					num4++;
-				}
-				num3 += Sc(item.Row.Gap);
-			}
-			num3 = Math.Max(0, num3 - Sc(item.Row.Gap));
-			int num5 = inner - num3;
-			int num6 = ((num4 > 0) ? Math.Max(Sc(90), num5 / num4) : 0);
-			for (int i = 0; i < num2; i++)
-			{
-				Cell cell2 = item.Cells[i];
-				if (!string.IsNullOrEmpty(cell2.Label))
-				{
-					Control control = item.Labels[i];
-					if (control != null)
-					{
-						int num7 = Math.Min((numLabel > 0) ? numLabel : Sc(cell2.LabelW), Math.Max(20, inner - (num - Sc(PadX)) - Sc(2)));
-						int num11 = Math.Min(item.H, Math.Max(control.Height, TextHeightFor(control) + Sc(4)));
-						control.SetBounds(num, item.Y + Math.Max(0, (item.H - num11) / 2), num7, num11);
-					}
-					num += ((numLabel > 0) ? numLabel : Sc(cell2.LabelW)) + Sc(item.Row.Gap);
-				}
-				if (cell2.Ctl == null)
-				{
-					continue;
-				}
-				int num8 = num6;
-				if (cell2.FixedW > 0)
-				{
-					num8 = Sc(cell2.FixedW);
-				}
-				else if (cell2.Wrap || cell2.Auto)
-				{
-					num8 = inner - (num - Sc(PadX));
-				}
-				int num9 = inner - (num - Sc(PadX));
-				if (num8 > num9)
-				{
-					num8 = num9;
-				}
-				if (num8 < 8)
-				{
-					num8 = 8;
-				}
-				int num10;
-				if (cell2.Wrap || cell2.Auto)
-				{
-					num10 = Math.Max(Sc(20), cell2.Ctl.Height);
-				}
-				else if (cell2.Ctl is FlatCombo || cell2.Ctl is TextBox || cell2.Ctl is FlatButton || cell2.Ctl is FlatNum)
-				{
-					num10 = Math.Min(item.H, Sc(32));
-				}
-				else
-				{
-					num10 = item.H;
-				}
-				cell2.Ctl.SetBounds(num, item.Y + Math.Max(0, (item.H - num10) / 2), num8, num10);
-				num += num8 + Sc(item.Row.Gap);
-			}
-		}
-		SyncFieldRegions();
-		ResumeLayout(performLayout: false);
-	}
-
-	// 卡片里"只有一个标签"的那些行，取它们的最大标签宽，夹在 [52, 88] 逻辑像素内。
-	private int LabelColumn()
-	{
-		int num = 0;
-		foreach (Row row in Rows)
-		{
-			int num2 = 0;
-			int num3 = 0;
-			foreach (Cell cell in row.Cells)
-			{
-				if (!string.IsNullOrEmpty(cell.Label))
-				{
-					num2++;
-					num3 = Math.Max(num3, Sc(cell.LabelW));
-				}
-			}
-			if (num2 == 1)
-			{
-				num = Math.Max(num, num3);
-			}
-		}
-		if (num < Sc(52))
-		{
-			num = Sc(52);
-		}
-		if (num > Sc(88))
-		{
-			num = Sc(88);
-		}
-		return num;
-	}
-
-	// 这一行套用统一列宽会不会挤爆？会的话返回 0（这一行退回自己的原始宽度）。
-	private static int LabelWidthFor(LinePlan line, int inner, int labelCol)
-	{
-		int num = 0;
-		foreach (Cell cell in line.Cells)
-		{
-			num += ((!string.IsNullOrEmpty(cell.Label)) ? labelCol : 0);
-			if (cell.Ctl != null)
-			{
-				num += ((cell.FixedW > 0) ? Sc(cell.FixedW) : Sc(90));
-			}
-			num += Sc(line.Row.Gap);
-		}
-		if (num > inner)
-		{
-			return 0;
-		}
-		return labelCol;
-	}
-
-		private List<LinePlan> Plan(int width)
-		{
-			List<LinePlan> list = new List<LinePlan>();
-			int inner = width - Sc(PadX) * 2;
-			int num = Sc(TitleH);
-			foreach (Row row in Rows)
-			{
-				foreach (List<Cell> line in PackLines(row, inner))
-				{
-					LinePlan linePlan = new LinePlan();
-					linePlan.Row = row;
-					linePlan.Cells = line;
-					linePlan.Y = num;
-					linePlan.H = RowHeight(row, line, inner);
-					foreach (Cell item in line)
-					{
-						linePlan.Labels.Add(GetLabel(item));
-					}
-					list.Add(linePlan);
-					num += linePlan.H;
-				}
-			}
-			return list;
-		}
-
-		private static List<List<Cell>> PackLines(Row row, int inner)
-		{
-			List<List<Cell>> list = new List<List<Cell>>();
-			List<Cell> list2 = new List<Cell>();
-			int num = 0;
-			foreach (Cell cell in row.Cells)
-			{
-				if (cell.Wrap || cell.Auto)
-				{
-					if (list2.Count > 0)
-					{
-						list.Add(list2);
-						list2 = new List<Cell>();
-						num = 0;
-					}
-					list.Add(new List<Cell> { cell });
-					continue;
-				}
-				int num2 = Natural(cell);
-				if (list2.Count > 0 && num + num2 > inner)
-				{
-					list.Add(list2);
-					list2 = new List<Cell>();
-					num = 0;
-				}
-				list2.Add(cell);
-				num += num2 + Sc(row.Gap);
-			}
-			if (list2.Count > 0)
-			{
-				list.Add(list2);
-			}
-			if (list.Count == 0)
-			{
-				list.Add(new List<Cell>());
-			}
-			return list;
-		}
-
-		private static int Natural(Cell c)
-		{
-			int num = 0;
-			if (!string.IsNullOrEmpty(c.Label))
-			{
-				num += Sc(c.LabelW);
-			}
-			if (c.Ctl != null)
-			{
-				num += ((c.FixedW > 0) ? Sc(c.FixedW) : Sc(90));
-			}
-			return num;
-		}
-
-	private int RowHeight(Row row, List<Cell> line, int inner)
-	{
-		foreach (Cell item in line)
-		{
-			if (item.Ctl == null || (!item.Wrap && !item.Auto))
-			{
-				continue;
-			}
-			if (item.Ctl is INeedHeight needHeight)
-			{
-				int num = needHeight.HeightFor(inner);
-				if (num > 0)
-				{
-					item.Ctl.Height = num;
-					return Math.Max(Sc(row.Height), num);
-				}
-			}
-			int num2 = TextLines(item.Ctl.Text, item.Ctl, inner - ((item.Ctl is FlatCheck) ? Sc(48) : Sc(2)));
-			int num3 = Math.Max(Sc(30), num2 * Sc(17) + Sc(12));
-			item.Ctl.Height = num3;
-			return Math.Max(Sc(row.Height), num3);
-		}
-		return Sc(row.Height);
-	}
-
-		private Control GetLabel(Cell c)
-		{
-			if (string.IsNullOrEmpty(c.Label))
-			{
-				return null;
-			}
-			if (c.LabelCtl != null && !Controls.Contains(c.LabelCtl))
-			{
-				Controls.Add(c.LabelCtl);
-			}
-			return c.LabelCtl;
-		}
+		// ---------- 绘制 ----------
 
 		protected override void OnPaint(PaintEventArgs e)
 		{
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
 			Rectangle clientRectangle = ClientRectangle;
-			using (SolidBrush solidBrush = new SolidBrush(Tokens.Canvas))
+			using (SolidBrush brush = new SolidBrush(Tokens.Canvas))
 			{
-				graphics.FillRectangle(solidBrush, clientRectangle);
+				graphics.FillRectangle(brush, clientRectangle);
 			}
-			int num = Sc(10);
-			Rectangle rectangle = new Rectangle(0, num, clientRectangle.Width, clientRectangle.Height - num * 2);
-			if (rectangle.Width <= 0 || rectangle.Height <= 0)
+			Rectangle rect = new Rectangle(0, 0, Math.Max(4, clientRectangle.Width - 1), Math.Max(4, clientRectangle.Height - 1));
+			using (GraphicsPath path = RoundedPath(rect, Sc(Tokens.Radius)))
 			{
-				return;
-			}
-			// 极淡的外投影：卡片不再是"描了边的白块"，而是在画布上浮起一层（暗色主题下换成更重的黑）。
-			using (GraphicsPath shadowPath = RoundedPath(new Rectangle(rectangle.X + Sc(1), rectangle.Y + Sc(2), rectangle.Width, rectangle.Height), Sc(Tokens.Radius)))
-			{
-				using SolidBrush shadowBrush = new SolidBrush(Tokens.CardShadow);
-				graphics.FillPath(shadowBrush, shadowPath);
-			}
-			using (GraphicsPath path = RoundedPath(rectangle, Sc(Tokens.Radius)))
-			{
-				using (SolidBrush solidBrush2 = new SolidBrush(Tokens.Surface))
+				using (SolidBrush brush2 = new SolidBrush(Tokens.Surface))
 				{
-					graphics.FillPath(solidBrush2, path);
+					graphics.FillPath(brush2, path);
 				}
-				using (Pen pen = new Pen(Tokens.Stroke))
+				using Pen pen = new Pen(Tokens.Stroke);
+				graphics.DrawPath(pen, path);
+			}
+			// 输入框底衬：TextBox / NumericUpDown 自己是无边框的，圆角描边在这里画
+			foreach (Control field in _fields)
+			{
+				if (!field.Visible || field.Width <= 4 || field.Height <= 4)
 				{
-					graphics.DrawPath(pen, path);
+					continue;
+				}
+				try
+				{
+					Rectangle rect2 = new Rectangle(field.Left, field.Top, field.Width, field.Height);
+					using GraphicsPath fieldPath = RoundedPath(rect2, Sc(Tokens.RadiusField));
+					using (SolidBrush brush3 = new SolidBrush(field.Enabled ? Tokens.FieldFill : Tokens.SurfaceAlt))
+					{
+						graphics.FillPath(brush3, fieldPath);
+					}
+					using Pen pen2 = new Pen(field.Enabled ? Tokens.FieldStroke : Tokens.Divider);
+					graphics.DrawPath(pen2, fieldPath);
+				}
+				catch
+				{
 				}
 			}
 			try
 			{
-				using Font font = new Font(Font.FontFamily, Sc(14), FontStyle.Bold, GraphicsUnit.Pixel);
-				TextRenderer.DrawText(graphics, Text, font, new Rectangle(Sc(PadX), Sc(20), Math.Max(20, clientRectangle.Width - Sc(PadX) * 2), Sc(26)), Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-				// 标题下一条极淡的分隔线：把"标题区"和"内容区"分开，层次更清楚也更像成品
-				using Pen pen3 = new Pen(Tokens.Divider);
-				graphics.DrawLine(pen3, Sc(PadX), Sc(TitleH) - 1, rectangle.Right - Sc(PadX), Sc(TitleH) - 1);
+				if (_titleRect.Width > 0)
+				{
+					// 卡片标题：17px 半粗，和参照里的 H2 同一档
+					TextRenderer.DrawText(graphics, Title, _fontTitle, _titleRect, Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+				}
+				if (_subRect.Width > 0)
+				{
+					TextRenderer.DrawText(graphics, Subtitle, _fontSub, _subRect, Tokens.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+				}
+				if (_dividers.Count > 0)
+				{
+					int padX = Sc(PadX);
+					using Pen pen3 = new Pen(Tokens.Divider);
+					foreach (int divider in _dividers)
+					{
+						graphics.DrawLine(pen3, padX, divider, Math.Max(padX + 4, clientRectangle.Width - padX - 1), divider);
+					}
+				}
 			}
 			catch (Exception ex)
 			{
 				Log.Error(ex);
 			}
-			foreach (Control field in _fields)
-			{
-				if (!field.Visible || field.Width <= 0 || field.Height <= 0)
-				{
-					continue;
-				}
-				Rectangle rect = new Rectangle(field.Left, field.Top, field.Width, field.Height);
-				bool enabled = field.Enabled;
-				using (GraphicsPath path2 = RoundedPath(rect, Sc(Tokens.RadiusField)))
-				{
-					using (SolidBrush solidBrush3 = new SolidBrush(enabled ? Tokens.FieldFill : Tokens.Canvas))
-					{
-						graphics.FillPath(solidBrush3, path2);
-					}
-					using (Pen pen2 = new Pen(enabled ? Tokens.FieldStroke : Tokens.Divider))
-					{
-						graphics.DrawPath(pen2, path2);
-					}
-				}
-			}
 		}
 	}
 
 	// ======================= 侧栏导航 =======================
+	//
+	// 参照里的侧栏：整条浅色底 + 右侧 1px 分隔线，
+	// 顶部品牌区（图标 + 名称 + 副标题），中间导航胶囊（选中=淡强调色底），
+	// 底部一张状态小卡。三段式比"一列项目干挂在顶上"稳得多。
 
 	private sealed class SideNav : Control
 	{
@@ -16831,14 +17152,45 @@ internal sealed class SettingsForm : Form
 		private int _hot = -1;
 		private string[] _titles = Array.Empty<string>();
 		private string[] _glyphs = Array.Empty<string>();
+		private string _statusTitle = "正在运行";
+		private string _statusDetail = "";
+		private Bitmap _brand;
+		private bool _brandTried;
+		// 侧栏是常驻控件，字体必须缓存：原来每次 OnPaint 都 new 6 个 Font
+		private readonly Font _fontBrand;
+		private readonly Font _fontBrandSub;
+		private readonly Font _fontItem;
+		private readonly Font _fontGlyph;
+		private readonly Font _fontStatus;
+		private readonly Font _fontStatusSub;
 		public event Action<int> Select;
 
 		public SideNav()
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
-			// 控件本身是外壳色，真正的侧栏是里面那张圆角面板
-			BackColor = Tokens.Surface;
+			BackColor = Tokens.Sidebar;
 			_glow = new Tween[16];
+			_fontBrand = new Font(DesignFontFamily, 10.5f, FontStyle.Bold, GraphicsUnit.Point);
+			_fontBrandSub = new Font(DesignFontFamily, 8.25f, FontStyle.Regular, GraphicsUnit.Point);
+			_fontItem = new Font(DesignFontFamily, 10f, FontStyle.Regular, GraphicsUnit.Point);
+			_fontGlyph = Icons.At(Sc(16));
+			_fontStatus = new Font(DesignFontFamily, 9.4f, FontStyle.Regular, GraphicsUnit.Point);
+			_fontStatusSub = new Font(DesignFontFamily, 8.25f, FontStyle.Regular, GraphicsUnit.Point);
+		}
+
+		protected override void Dispose(bool disposing)
+		{
+			if (disposing)
+			{
+				_fontBrand.Dispose();
+				_fontBrandSub.Dispose();
+				_fontItem.Dispose();
+				_fontGlyph?.Dispose();
+				_fontStatus.Dispose();
+				_fontStatusSub.Dispose();
+				_brand?.Dispose();
+			}
+			base.Dispose(disposing);
 		}
 
 		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -16853,6 +17205,14 @@ internal sealed class SettingsForm : Form
 				if (value != _active && value >= 0 && value < _titles.Length)
 				{
 					_active = value;
+					// 其它项的动画值归零：它们不是当前页，不该留下任何底色
+					for (int i = 0; i < _glow.Length; i++)
+					{
+						if (i != value && _glow[i] != null)
+						{
+							_glow[i].Snap(0f);
+						}
+					}
 					Invalidate();
 				}
 			}
@@ -16865,11 +17225,44 @@ internal sealed class SettingsForm : Form
 			_titles = titles;
 			_glyphs = glyphs;
 			Select = onSelect;
+			Invalidate();
 		}
 
-		private int RowH => Sc(42);
+		/// <summary>底部状态卡的两行字（运行状态 + 当前触发键）。</summary>
+		public void SetStatus(string title, string detail)
+		{
+			_statusTitle = title ?? "";
+			_statusDetail = detail ?? "";
+			Invalidate();
+		}
 
-		private int RowTop => Sc(66);
+		private int RowH => Sc(38);
+
+		private int RowTop => Sc(84);
+
+		private Bitmap Brand
+		{
+			get
+			{
+				if (!_brandTried)
+				{
+					_brandTried = true;
+					try
+					{
+						using Icon icon = Icon.ExtractAssociatedIcon(AppPaths.ExePath);
+						if (icon != null)
+						{
+							_brand = icon.ToBitmap();
+						}
+					}
+					catch
+					{
+						_brand = null;
+					}
+				}
+				return _brand;
+			}
+		}
 
 		protected override void OnMouseMove(MouseEventArgs e)
 		{
@@ -16877,6 +17270,7 @@ internal sealed class SettingsForm : Form
 			if (num != _hot)
 			{
 				_hot = num;
+				Cursor = ((num >= 0) ? Cursors.Hand : Cursors.Default);
 				Invalidate();
 			}
 			base.OnMouseMove(e);
@@ -16885,6 +17279,7 @@ internal sealed class SettingsForm : Form
 		protected override void OnMouseLeave(EventArgs e)
 		{
 			_hot = -1;
+			Cursor = Cursors.Default;
 			Invalidate();
 			base.OnMouseLeave(e);
 		}
@@ -16921,41 +17316,26 @@ internal sealed class SettingsForm : Form
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
 			Rectangle clientRectangle = ClientRectangle;
-			using (SolidBrush solidBrush = new SolidBrush(BackColor))
+			using (SolidBrush solidBrush = new SolidBrush(Tokens.Sidebar))
 			{
 				graphics.FillRectangle(solidBrush, clientRectangle);
 			}
-			if (clientRectangle.Width > 8 && clientRectangle.Height > 8)
+			using (Pen pen = new Pen(Tokens.Stroke))
 			{
-				using GraphicsPath panelPath = RoundedPath(new Rectangle(0, 0, clientRectangle.Width - 1, clientRectangle.Height - 1), Sc(Tokens.RadiusSheet));
-				using (SolidBrush panelBrush = new SolidBrush(Tokens.Canvas))
-				{
-					graphics.FillPath(panelBrush, panelPath);
-				}
-				using Pen panelPen = new Pen(Tokens.Stroke);
-				graphics.DrawPath(panelPen, panelPath);
+				graphics.DrawLine(pen, clientRectangle.Width - 1, 0, clientRectangle.Width - 1, clientRectangle.Height);
 			}
-			try
-			{
-				using Font font = new Font(DesignFontFamily, Sc(15), FontStyle.Bold, GraphicsUnit.Pixel);
-				using Font font2 = new Font(DesignFontFamily, Sc(11), FontStyle.Regular, GraphicsUnit.Pixel);
-				TextRenderer.DrawText(graphics, "长按拖窗", font, new Rectangle(Sc(20), Sc(18), Math.Max(20, clientRectangle.Width - Sc(28)), Sc(24)), Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-				TextRenderer.DrawText(graphics, "HoldDrag", font2, new Rectangle(Sc(20), Sc(40), Math.Max(20, clientRectangle.Width - Sc(28)), Sc(18)), Tokens.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-			}
-			catch (Exception ex)
-			{
-				Log.Error(ex);
-			}
+			DrawBrand(graphics, clientRectangle);
+			DrawStatus(graphics, clientRectangle);
 			if (_titles.Length == 0)
 			{
 				return;
 			}
-			using Font font3 = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
-			using Font font4 = Icons.At(Sc(16));
+			Font font = _fontItem;
+			Font font2 = _fontGlyph;
 			for (int i = 0; i < _titles.Length; i++)
 			{
 				int num = RowTop + i * RowH;
-				Rectangle r = new Rectangle(Sc(10), num + Sc(3), Math.Max(20, clientRectangle.Width - Sc(20)), RowH - Sc(6));
+				Rectangle r = new Rectangle(Sc(10), num + Sc(2), Math.Max(20, clientRectangle.Width - Sc(20)), RowH - Sc(4));
 				bool flag = i == _active;
 				bool flag2 = i == _hot;
 				float num2 = 0f;
@@ -16967,40 +17347,110 @@ internal sealed class SettingsForm : Form
 				{
 					num2 = 1f;
 				}
-				if (num2 > 0.01f)
+				// 只有"当前页"和"鼠标悬停"才配背景。
+				// 之前这里写的是 glow > 0.01 就画 —— 但 glow 是一次性打满的动画值（打到 1 就不再回落），
+				// 结果点过的每一项都会永久留一个灰胶囊，看起来像"没选中却高亮"。
+				if (flag || flag2)
 				{
-					Color color = (flag ? Tokens.AccentSoft : Tokens.ButtonHover);
-					using GraphicsPath path = RoundedPath(r, Sc(Tokens.RadiusField));
-					using (SolidBrush brush = new SolidBrush(Mix(Color.FromArgb(0, color), color, Math.Min(1f, num2 * 1.35f))))
+					Color color = (flag ? Tokens.AccentSoft : Tokens.Hover);
+					float num3 = (flag ? Math.Min(1f, Math.Max(0.4f, num2)) : 0.7f);
+					using GraphicsPath path = RoundedPath(r, Sc(10));
+					using (SolidBrush brush = new SolidBrush(Mix(Color.FromArgb(0, color), color, num3)))
 					{
 						graphics.FillPath(brush, path);
 					}
-					if (flag)
-					{
-						using (Pen pen4 = new Pen(Mix(Color.FromArgb(0, Tokens.AccentSoftStroke), Tokens.AccentSoftStroke, Math.Min(1f, num2))))
-						{
-							graphics.DrawPath(pen4, path);
-						}
-						// 左侧一道 3px 的强调色短条：不靠底色深浅也能一眼看出停在哪一页
-						int num4 = Math.Max(Sc(14), r.Height / 2);
-						Rectangle rect2 = new Rectangle(Sc(2), r.Top + (r.Height - num4) / 2, Math.Max(2, Sc(3)), num4);
-						using GraphicsPath path5 = RoundedPath(rect2, Math.Max(1, rect2.Width / 2));
-						using SolidBrush brush4 = new SolidBrush(Mix(Color.FromArgb(0, Tokens.Accent), Tokens.Accent, Math.Min(1f, num2)));
-						graphics.FillPath(brush4, path5);
-					}
 				}
 				Color color2 = ((flag || flag2) ? Tokens.TextPrimary : Tokens.TextSecondary);
-				if (num2 > 0.01f)
+				int num4 = r.Left + Sc(12);
+				if (font2 != null && i < _glyphs.Length)
 				{
-					color2 = Mix(Tokens.TextSecondary, color2, Math.Min(1f, num2 * 1.6f));
+					using (SolidBrush brush2 = new SolidBrush(flag ? Tokens.Accent : Tokens.TextSecondary))
+					{
+						TextRenderer.DrawText(graphics, _glyphs[i], font2, new Rectangle(num4, r.Top + (r.Height - Sc(16)) / 2, Sc(16), Sc(16)), flag ? Tokens.Accent : Tokens.TextSecondary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+					}
+					num4 += Sc(16) + Sc(11);
 				}
-				int num3 = r.Left + Sc(14);
-				if (font4 != null && i < _glyphs.Length)
+				TextRenderer.DrawText(graphics, _titles[i], font, new Rectangle(num4, r.Top, Math.Max(10, r.Right - Sc(10) - num4), r.Height), color2, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
+			}
+		}
+
+		private void DrawBrand(Graphics graphics, Rectangle client)
+		{
+			try
+			{
+				int num = Sc(18);
+				int num2 = Sc(30);
+				Rectangle rect = new Rectangle(num, num + Sc(2), num2, num2);
+				Bitmap brand = Brand;
+				if (brand != null)
 				{
-					TextRenderer.DrawText(graphics, _glyphs[i], font4, new Rectangle(num3, r.Top + (r.Height - Sc(16)) / 2, Sc(16), Sc(16)), color2, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-					num3 += Sc(16) + Sc(10);
+					using (GraphicsPath path = RoundedPath(new Rectangle(rect.X - Sc(1), rect.Y - Sc(1), rect.Width + Sc(2), rect.Height + Sc(2)), Sc(8)))
+					{
+						using SolidBrush brush = new SolidBrush(Tokens.Surface);
+						graphics.FillPath(brush, path);
+						using Pen pen = new Pen(Tokens.Stroke);
+						graphics.DrawPath(pen, path);
+					}
+					graphics.DrawImage(brand, rect);
 				}
-				TextRenderer.DrawText(graphics, _titles[i], font3, new Rectangle(num3, r.Top, Math.Max(10, r.Right - Sc(8) - num3), r.Height), color2, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
+				else
+				{
+					using GraphicsPath path2 = RoundedPath(rect, Sc(8));
+					using (SolidBrush brush2 = new SolidBrush(Tokens.AccentSoft))
+					{
+						graphics.FillPath(brush2, path2);
+					}
+					using Font font = Icons.At(Sc(16));
+					if (font != null)
+					{
+						TextRenderer.DrawText(graphics, Glyph.Move, font, rect, Tokens.Accent, TextFormatFlags.NoPrefix | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+					}
+				}
+				int num3 = rect.Right + Sc(11);
+				Font font2 = _fontBrand;
+				Font font3 = _fontBrandSub;
+				TextRenderer.DrawText(graphics, "长按拖窗", font2, new Rectangle(num3, rect.Top - Sc(2), Math.Max(20, client.Width - num3 - Sc(10)), Sc(20)), Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+				TextRenderer.DrawText(graphics, "HoldDrag · Win11 x64", font3, new Rectangle(num3, rect.Top + Sc(16), Math.Max(20, client.Width - num3 - Sc(10)), Sc(16)), Tokens.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+		}
+
+		private void DrawStatus(Graphics graphics, Rectangle client)
+		{
+			try
+			{
+				int num = Sc(62);
+				Rectangle rect = new Rectangle(Sc(12), Math.Max(RowTop + _titles.Length * RowH + Sc(8), client.Height - num - Sc(14)), Math.Max(40, client.Width - Sc(24)), num);
+				if (rect.Bottom > client.Height - Sc(6) || rect.Height < Sc(20))
+				{
+					return;
+				}
+				using (GraphicsPath path = RoundedPath(rect, Sc(12)))
+				{
+					using (SolidBrush brush = new SolidBrush(Tokens.SurfaceAlt))
+					{
+						graphics.FillPath(brush, path);
+					}
+					using Pen pen = new Pen(Tokens.Stroke);
+					graphics.DrawPath(pen, path);
+				}
+				int num2 = rect.Left + Sc(13);
+				int num3 = rect.Top + Sc(12);
+				using (SolidBrush brush2 = new SolidBrush(Tokens.Success))
+				{
+					graphics.FillEllipse(brush2, new Rectangle(num2, num3 + Sc(6), Sc(8), Sc(8)));
+				}
+				Font font = _fontStatus;
+				Font font2 = _fontStatusSub;
+				TextRenderer.DrawText(graphics, _statusTitle, font, new Rectangle(num2 + Sc(15), num3, Math.Max(20, rect.Right - num2 - Sc(24)), Sc(20)), Tokens.TextSecondary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+				TextRenderer.DrawText(graphics, _statusDetail, font2, new Rectangle(num2, num3 + Sc(21), Math.Max(20, rect.Right - num2 - Sc(13)), Sc(18)), Tokens.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
 			}
 		}
 
@@ -17034,6 +17484,10 @@ internal sealed class SettingsForm : Form
 			DropDownStyle = ComboBoxStyle.DropDownList;
 			DrawMode = DrawMode.OwnerDrawFixed;
 			FlatStyle = FlatStyle.Flat;
+			// ComboBox 的高度被系统锁成 PreferredHeight（ItemHeight + 边框），
+			// 默认值在高 DPI 下只有 21 逻辑像素，和旁边的数字框/按钮差一截，看着就是没对齐。
+			// 把行高顶上去，闭合态才和输入框同一量级。
+			ItemHeight = Sc(27);
 			BackColor = Tokens.Surface;
 			ForeColor = Tokens.TextPrimary;
 			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
@@ -18398,6 +18852,16 @@ internal sealed class SettingsForm : Form
 
 	// ======================= 分页滚动容器 =======================
 
+	// 双缓冲贴图纸：滚动时整页是"把画好的位图往上挪"，不逐控件重画
+	private sealed class BufferedPanel : Panel
+	{
+		public BufferedPanel()
+		{
+			SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, value: true);
+			DoubleBuffered = true;
+		}
+	}
+
 	private sealed class PageHost : Panel
 	{
 		private int _offset;
@@ -18444,7 +18908,7 @@ internal sealed class SettingsForm : Form
 			SetStyle(ControlStyles.OptimizedDoubleBuffer, value: true);
 			BackColor = Tokens.Canvas;
 			AutoScroll = false;
-			Canvas = new Panel
+			Canvas = new BufferedPanel
 			{
 				BackColor = Tokens.Canvas,
 				Location = new Point(0, 0)
@@ -18456,18 +18920,6 @@ internal sealed class SettingsForm : Form
 			Controls.Add(Canvas);
 		}
 
-		protected override void OnResize(EventArgs e)
-		{
-			base.OnResize(e);
-			try
-			{
-				Region = new Region(RoundedPath(new Rectangle(0, 0, Math.Max(4, Width - 1), Math.Max(4, Height - 1)), Math.Max(4, Sc(Tokens.RadiusSheet) - Sc(2))));
-			}
-			catch
-			{
-			}
-		}
-
 		public void UpdateScroll()
 		{
 			int num = MaxScroll;
@@ -18475,8 +18927,9 @@ internal sealed class SettingsForm : Form
 			{
 				_offset = num;
 			}
-			if (Canvas != null)
+			if (Canvas != null && Canvas.Top != -_offset)
 			{
+				// 值没变还去设一次，会把整页位图重新贴一遍
 				Canvas.Top = -_offset;
 			}
 		}
@@ -18511,8 +18964,9 @@ internal sealed class SettingsForm : Form
 		public string Subtitle;
 		public PageHost Host;
 		public List<Card> Cards = new List<Card>();
-		public Label LblTitle;
-		public Label LblSub;
+		// 上次排版用的宽度和文字签名：宽度/文字都没变就不用重排这一页
+		public int LaidOutWidth = -1;
+		public string Signature = "";
 	}
 
 	// ======================= 窗体字段 =======================
@@ -18529,13 +18983,13 @@ internal sealed class SettingsForm : Form
 	private Panel _pager;
 	private readonly List<Page> _pages = new List<Page>();
 	private int _activePage;
-	private int _cols = 1;
 
 	private Panel _titleStrip;
 	private CaptionButton _btnMin;
 	private CaptionButton _btnMax;
 	private CaptionButton _btnClose;
-	private Label _lblStripTitle;
+	private Label _lblPageTitle;
+	private Label _lblPageSub;
 
 	private Label _lblStatus;
 	private FlatButton _btnDefaultsRef;
@@ -18739,6 +19193,9 @@ internal sealed class SettingsForm : Form
 		Theme.Refresh();
 		BuildUi();
 		Populate();
+		// 文案是 Populate 才填进去的（比如「固定值」下面那段实测说明），
+		// 而行高要按文字折行数算 —— 填完必须重排一次，否则首帧用的是空文字的高度。
+		LayoutAllPages(ContentWidth());
 	}
 
 	private static string PickDesignFont()
@@ -18776,11 +19233,10 @@ internal sealed class SettingsForm : Form
 		Text = "长按拖窗 · 设置";
 		Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
 		AutoScaleMode = AutoScaleMode.None;
-		// 外壳色：标题条、内容容器、窗口边缘都用它，面板都是"浮"在这层上的圆角卡片
-		BackColor = Tokens.Surface;
+		BackColor = Tokens.Canvas;
 		ForeColor = Tokens.TextPrimary;
 		// 保留 Sizable（留着 WS_THICKFRAME：DWM 阴影、左右下三边原生缩放都靠它），
-		// 但用 WM_NCCALCSIZE 把系统标题栏整条吃掉 —— 标题条由我们自己画，颜色和页面 100% 一致。
+		// 但用 WM_NCCALCSIZE 把系统标题栏整条吃掉 —— 标题栏由我们自己画，和内容同色不"断层"。
 		FormBorderStyle = FormBorderStyle.Sizable;
 		MaximizeBox = true;
 		MinimizeBox = true;
@@ -18800,40 +19256,10 @@ internal sealed class SettingsForm : Form
 		{
 			Log.Error(ex);
 		}
+		// 内容区：单列卡片流，卡片限宽 880 左对齐
 		_content = new Panel
 		{
-			// 外壳色打底，真正的内容是里面那张圆角纸面（PageHost 会被裁成圆角）
-			BackColor = Tokens.Surface,
-			// 让出纸面间距 + 1px 描边：PageHost 正好落在纸面内侧，四角由 Region 裁圆
-			Padding = new Padding(S(Tokens.PageGap + 1), S(Tokens.PageGap + 1), S(Tokens.PageGap + 1), S(Tokens.PageGap + 1))
-		};
-		_content.Paint += delegate(object s5, PaintEventArgs e5)
-		{
-			Graphics graphics = e5.Graphics;
-			HQ.Apply(graphics);
-			int num = S(Tokens.PageGap);
-			Rectangle rect = new Rectangle(num, num, _content.ClientSize.Width - num * 2, _content.ClientSize.Height - num * 2);
-			if (rect.Width <= 8 || rect.Height <= 8)
-			{
-				return;
-			}
-			// 一层很淡的投影 + 圆角纸面 + 1px 描边：纸面四角都是圆的，看起来才像一张卡片
-			using (GraphicsPath shadowPath = RoundedPath(new Rectangle(rect.X, rect.Y + S(2), rect.Width, rect.Height), S(Tokens.RadiusSheet)))
-			{
-				using SolidBrush shadowBrush = new SolidBrush(Tokens.CardShadow);
-				graphics.FillPath(shadowBrush, shadowPath);
-			}
-			using (GraphicsPath path = RoundedPath(rect, S(Tokens.RadiusSheet)))
-			{
-				using (SolidBrush brush = new SolidBrush(Tokens.Canvas))
-				{
-					graphics.FillPath(brush, path);
-				}
-				using (Pen pen = new Pen(Tokens.Stroke))
-				{
-					graphics.DrawPath(pen, path);
-				}
-			}
+			BackColor = Tokens.Canvas
 		};
 		_content.Resize += delegate
 		{
@@ -18843,39 +19269,51 @@ internal sealed class SettingsForm : Form
 			}
 			LayoutWithContent(ContentWidth());
 		};
+		// 重建界面后几何全变了，强制走一次完整重排
+		_lastLayoutW = -1;
+		_lastLayoutSig = "";
 		BuildControls();
 		BuildPages();
+		// 侧栏：品牌区 + 导航胶囊 + 底部状态卡（照参照的三段式）
 		_nav = new SideNav();
-		// 和内容区那张纸面同一套：留 8px 外边距、16px 圆角，四角都是圆的
-		_nav.Dock = DockStyle.None;
-		_nav.Width = S(208);
+		_nav.Width = S(Tokens.SidebarW);
 		_nav.Bind(NavTitles(), NavGlyphs(), delegate(int i)
 		{
 			SelectPage(i);
 		});
-		// 标题条：贴在内容区上方的一条，画法同页面底色；窗口按钮在它右端。
+		// 标题栏：左边是当前页标题 + 一行说明，右边三个窗口按钮（和参照一样）
 		_titleStrip = new Panel
 		{
-			BackColor = Tokens.Surface
+			BackColor = Tokens.Canvas
 		};
 		_titleStrip.Paint += delegate(object s2, PaintEventArgs e2)
 		{
 			Graphics graphics = e2.Graphics;
 			HQ.Apply(graphics);
-			// 和外壳同色、不画分隔线：标题条就是窗口顶上的留白，不存在"另一条颜色"
-			using SolidBrush brush = new SolidBrush(Tokens.Surface);
+			// 标题栏和内容区同一个底色，中间不画分隔线：整页是一整块，没有"两条杠"
+			using SolidBrush brush = new SolidBrush(Tokens.Canvas);
 			graphics.FillRectangle(brush, _titleStrip.ClientRectangle);
 		};
-		_lblStripTitle = new Label
+		_lblPageTitle = new Label
 		{
 			AutoSize = false,
-			BackColor = Color.Transparent,
+			BackColor = Tokens.Canvas,
 			ForeColor = Tokens.TextPrimary,
-			Font = new Font(DesignFontFamily, 12f, FontStyle.Regular, GraphicsUnit.Point),
-			TextAlign = ContentAlignment.MiddleCenter,
-			Text = "设置"
+			Font = new Font(DesignFontFamily, 12.75f, FontStyle.Bold, GraphicsUnit.Point),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Text = ""
 		};
-		_titleStrip.Controls.Add(_lblStripTitle);
+		_lblPageSub = new Label
+		{
+			AutoSize = false,
+			BackColor = Tokens.Canvas,
+			ForeColor = Tokens.TextTertiary,
+			Font = new Font(DesignFontFamily, 9f, FontStyle.Regular, GraphicsUnit.Point),
+			TextAlign = ContentAlignment.MiddleLeft,
+			Text = ""
+		};
+		_titleStrip.Controls.Add(_lblPageTitle);
+		_titleStrip.Controls.Add(_lblPageSub);
 		_btnMin = new CaptionButton
 		{
 			Kind = 0
@@ -18900,7 +19338,8 @@ internal sealed class SettingsForm : Form
 		{
 			Close();
 		};
-		_titleStrip.MouseDown += delegate(object s3, MouseEventArgs e3)
+		// 整条标题栏都能拖动窗口、双击最大化（它是子控件，收不到窗体的 WM_NCHITTEST，只能自己转发）
+		MouseEventHandler dragHandler = delegate(object s3, MouseEventArgs e3)
 		{
 			if (e3.Button == MouseButtons.Left)
 			{
@@ -18908,44 +19347,50 @@ internal sealed class SettingsForm : Form
 				Native.SendMessageW(Handle, 161, new IntPtr(2), IntPtr.Zero);
 			}
 		};
+		_titleStrip.MouseDown += dragHandler;
 		_titleStrip.DoubleClick += delegate
 		{
 			ToggleMaximize();
 		};
-		_lblStripTitle.MouseDown += delegate(object s4, MouseEventArgs e4)
+		_lblPageTitle.MouseDown += dragHandler;
+		_lblPageTitle.DoubleClick += delegate
 		{
-			if (e4.Button == MouseButtons.Left)
-			{
-				Native.ReleaseCapture();
-				Native.SendMessageW(Handle, 161, new IntPtr(2), IntPtr.Zero);
-			}
+			ToggleMaximize();
 		};
-		_lblStripTitle.DoubleClick += delegate
+		_lblPageSub.MouseDown += dragHandler;
+		_lblPageSub.DoubleClick += delegate
 		{
 			ToggleMaximize();
 		};
 		_titleStrip.Controls.Add(_btnMin);
 		_titleStrip.Controls.Add(_btnMax);
 		_titleStrip.Controls.Add(_btnClose);
-		Controls.Add(_content);
-		Controls.Add(_nav);
-		Controls.Add(_titleStrip);
+		// 底栏：不铺自己的背景色，三个按钮直接落在内容底色上
 		_pager = new Panel
 		{
 			Height = S(60),
-			BackColor = Tokens.Surface
+			BackColor = Tokens.Canvas
 		};
-		_pager.Paint += delegate(object s, PaintEventArgs e)
+		_pager.Paint += delegate(object s4, PaintEventArgs e4)
 		{
-			// 三个按钮就直接放在窗口底色上，不再给它们单独套一层背景（多一块灰底反而脏）
-			e.Graphics.Clear(Tokens.Surface);
+			Graphics graphics = e4.Graphics;
+			HQ.Apply(graphics);
+			using (SolidBrush brush = new SolidBrush(Tokens.Canvas))
+			{
+				graphics.FillRectangle(brush, _pager.ClientRectangle);
+			}
+			// 只画一条极淡的上边线，把"操作区"和"内容区"分开，不再套整块背景
+			using Pen pen = new Pen(Tokens.Divider);
+			graphics.DrawLine(pen, 0, 0, _pager.Width, 0);
 		};
 		_lblStatus = new Label
 		{
 			AutoSize = false,
+			AutoEllipsis = true,
 			ForeColor = Tokens.Success,
 			TextAlign = ContentAlignment.MiddleLeft,
-			BackColor = Color.Transparent,
+			Font = new Font(DesignFontFamily, 9f, FontStyle.Regular, GraphicsUnit.Point),
+			BackColor = Tokens.Canvas,
 			Location = new Point(S(24), S(14)),
 			Size = new Size(S(360), S(32)),
 			Text = ""
@@ -18954,7 +19399,7 @@ internal sealed class SettingsForm : Form
 		_btnDefaultsRef = new FlatButton
 		{
 			Text = "恢复默认值",
-			Size = new Size(S(108), S(32))
+			Size = new Size(S(112), S(34))
 		};
 		_btnDefaultsRef.Click += delegate
 		{
@@ -18965,7 +19410,7 @@ internal sealed class SettingsForm : Form
 		{
 			Primary = true,
 			Text = "保存并生效",
-			Size = new Size(S(108), S(32))
+			Size = new Size(S(112), S(34))
 		};
 		_btnSaveRef.Click += delegate
 		{
@@ -18975,7 +19420,7 @@ internal sealed class SettingsForm : Form
 		_btnCancelRef = new FlatButton
 		{
 			Text = "取消",
-			Size = new Size(S(88), S(32))
+			Size = new Size(S(88), S(34))
 		};
 		_btnCancelRef.Click += delegate
 		{
@@ -18987,8 +19432,11 @@ internal sealed class SettingsForm : Form
 			LayoutPager();
 			LayoutChrome();
 		};
+		Controls.Add(_content);
+		Controls.Add(_nav);
+		Controls.Add(_titleStrip);
 		Controls.Add(_pager);
-		MinimumSize = new Size(S(640), S(480));
+		MinimumSize = new Size(S(860), S(520));
 		try
 		{
 			Rectangle workingArea = Screen.PrimaryScreen.WorkingArea;
@@ -19008,14 +19456,26 @@ internal sealed class SettingsForm : Form
 		LayoutChrome();
 		ApplySavedSize();
 		ResumeLayout(performLayout: false);
-		LayoutWithContent(ContentWidth());
+		// 首次构建：8 页都排好，切页时不会看到"半成品"
+		LayoutAllPages(ContentWidth());
 		SelectPage(0);
 	}
 
-	// 标题条高度（逻辑像素）
-	private int StripHeight => S(48);
-
-	private bool _chromeBusy;
+	// SetBounds 即使传的是相同的值，Windows 也要走一遍 WM_WINDOWPOSCHANGED
+	// （子控件跟着重排 + 无效区变大 + 重新贴图）。拖窗口时每帧几十次这种"没必要的设置"，
+	// 攒起来就是肉眼可见的卡顿 —— 所以在托管层先比一次。
+	private static void Place(Control c, Rectangle r)
+	{
+		if (c == null)
+		{
+			return;
+		}
+		if (c.Left == r.X && c.Top == r.Y && c.Width == r.Width && c.Height == r.Height)
+		{
+			return;
+		}
+		c.SetBounds(r.X, r.Y, r.Width, r.Height);
+	}
 
 	private void LayoutChrome()
 	{
@@ -19030,28 +19490,31 @@ internal sealed class SettingsForm : Form
 			{
 				return;
 			}
-			int num = StripHeight;
-			int num2 = ClientSize.Height - ((_pager != null) ? _pager.Height : 0);
-			int num5x = S(Tokens.PageGap);
+			int num = S(Tokens.TitleBarH);
 			int pagerH = ((_pager != null) ? _pager.Height : 0);
-			int num6x = Math.Max(S(120), ClientSize.Height - num - pagerH - num5x * 2);
-			_nav.Bounds = new Rectangle(num5x, num + num5x, S(208), num6x);
-			int num3 = Math.Max(S(12), ClientSize.Width - _nav.Right);
+			int num2 = S(Tokens.SidebarW);
+			Place(_nav, new Rectangle(0, 0, num2, ClientSize.Height));
+			int num3 = Math.Max(S(240), ClientSize.Width - num2);
+			Place(_titleStrip, new Rectangle(num2, 0, num3, num));
 			if (_pager != null)
 			{
-				_pager.Bounds = new Rectangle(_nav.Right, ClientSize.Height - pagerH - num5x, Math.Max(S(120), ClientSize.Width - _nav.Right - num5x), pagerH);
+				Place(_pager, new Rectangle(num2, Math.Max(num, ClientSize.Height - pagerH), num3, pagerH));
 			}
-			int num4 = Math.Max(S(12), ClientSize.Height - num - pagerH);
-			_titleStrip.Bounds = new Rectangle(_nav.Right, 0, num3, num);
-			_content.Bounds = new Rectangle(_nav.Right, num, num3, num4);
-			int num5 = S(46);
-			int num6 = S(30);
-			int num7 = (num - num6) / 2;
-			int num8 = num3 - S(8);
-			_btnClose.Bounds = new Rectangle(num8 - num5, num7, num5, num6);
-			_btnMax.Bounds = new Rectangle(_btnClose.Left - num5, num7, num5, num6);
-			_btnMin.Bounds = new Rectangle(_btnMax.Left - num5, num7, num5, num6);
-			_lblStripTitle.Bounds = new Rectangle(0, 0, num3, num);
+			Place(_content, new Rectangle(num2, num, num3, Math.Max(S(80), ClientSize.Height - num - pagerH)));
+			// 窗口按钮：靠右，46x30，垂直居中
+			int num4 = S(46);
+			int num5 = S(30);
+			int num6 = (num - num5) / 2;
+			int num7 = num3 - S(10);
+			Place(_btnClose, new Rectangle(num7 - num4, num6, num4, num5));
+			Place(_btnMax, new Rectangle(_btnClose.Left - num4, num6, num4, num5));
+			Place(_btnMin, new Rectangle(_btnMax.Left - num4, num6, num4, num5));
+			// 标题 + 副标题：按实际文字宽度紧排，副标题跟在后面（不是钉死在某个 x）
+			int num8 = S(24);
+			int num9 = Math.Max(S(60), _btnMin.Left - num8 - S(16));
+			int num10 = Math.Min(num9, TextRenderer.MeasureText(_lblPageTitle.Text, _lblPageTitle.Font).Width + S(8));
+			Place(_lblPageTitle, new Rectangle(num8, 0, num10, num));
+			Place(_lblPageSub, new Rectangle(num8 + num10 + S(12), 0, Math.Max(S(20), num9 - num10 - S(12)), num));
 		}
 		catch
 		{
@@ -19077,27 +19540,42 @@ internal sealed class SettingsForm : Form
 	{
 		try
 		{
-			int num = S(24);
+			int num = S(20);
 			int num2 = (_pager.ClientSize.Height > 10) ? _pager.ClientSize.Height : S(60);
 			int num3 = (_pager.ClientSize.Width > 10) ? _pager.ClientSize.Width : S(900);
-			// ComboBox 的高度被系统锁在 PreferredHeight（ItemHeight + 边框），SetBounds 设不大，
-			// 所以底栏按钮反过来对齐到输入框的真实高度，保证两者同一量级（视觉不突兀）。
-			int fieldH = InputRowHeight();
-			_btnDefaultsRef.Height = fieldH;
-			_btnSaveRef.Height = fieldH;
-			_btnCancelRef.Height = fieldH;
-			_btnCancelRef.Location = new Point(num3 - num - _btnCancelRef.Width, (num2 - _btnCancelRef.Height) / 2);
-			_btnSaveRef.Location = new Point(_btnCancelRef.Left - S(12) - _btnSaveRef.Width, (num2 - _btnSaveRef.Height) / 2);
-			_btnDefaultsRef.Location = new Point(_btnSaveRef.Left - S(12) - _btnDefaultsRef.Width, (num2 - _btnDefaultsRef.Height) / 2);
-			_lblStatus.Width = Math.Max(S(120), _btnDefaultsRef.Left - S(20) - _lblStatus.Left);
+			// ComboBox 的高度被系统锁在 PreferredHeight，SetBounds 设不上去 ——
+			// 底栏按钮反过来对齐输入框的真实高度，保证两者同一量级。
+			int num4 = InputRowHeight();
+			if (num4 > 0)
+			{
+				_btnDefaultsRef.Height = num4;
+				_btnSaveRef.Height = num4;
+				_btnCancelRef.Height = num4;
+			}
+			Place(_btnCancelRef, new Rectangle(num3 - num - _btnCancelRef.Width, (num2 - _btnCancelRef.Height) / 2, _btnCancelRef.Width, _btnCancelRef.Height));
+			Place(_btnSaveRef, new Rectangle(_btnCancelRef.Left - S(10) - _btnSaveRef.Width, (num2 - _btnSaveRef.Height) / 2, _btnSaveRef.Width, _btnSaveRef.Height));
+			Place(_btnDefaultsRef, new Rectangle(_btnSaveRef.Left - S(10) - _btnDefaultsRef.Width, (num2 - _btnDefaultsRef.Height) / 2, _btnDefaultsRef.Width, _btnDefaultsRef.Height));
+			Place(_lblStatus, new Rectangle(S(24), 0, Math.Max(S(120), _btnDefaultsRef.Left - S(24) - S(20)), num2));
 		}
 		catch
 		{
 		}
 	}
 
-	// 取树里第一个下拉框的真实锁定高度（与自测 FindFirstCombo 的遍历顺序一致：
-	// Controls 索引序 + 深度优先），拿不到时退回 1x 基准高度。
+	private static string[] NavTitles()
+	{
+		return new string[8] { "触发方式", "鼠标键动作", "视觉反馈", "拖动行为", "流畅度", "启动与权限", "帮助", "关于" };
+	}
+
+	private static string[] NavGlyphs()
+	{
+		return new string[8] { Glyph.Keyboard, Glyph.Move, Glyph.Color, Glyph.Move, Glyph.Speed, Glyph.Shield, Glyph.Help, Glyph.Info };
+	}
+
+	// 外壳几何对齐过程中会改控件尺寸，导致 Resize 回调重入；用一个标志挡住
+	private bool _chromeBusy;
+
+	// 取树里第一个下拉框的真实锁定高度（拿不到时退回 1x 基准高度）
 	private int InputRowHeight()
 	{
 		try
@@ -19114,7 +19592,7 @@ internal sealed class SettingsForm : Form
 		catch
 		{
 		}
-		return Sc(24);
+		return Sc(32);
 	}
 
 	private static ComboBox FindCombo(Control root)
@@ -19144,19 +19622,9 @@ internal sealed class SettingsForm : Form
 	{
 		if (IsHandleCreated && _content != null && _content.ClientSize.Width > 10)
 		{
-			return Math.Max(10, _content.ClientSize.Width - _content.Padding.Horizontal);
+			return _content.ClientSize.Width;
 		}
-		return Math.Max(10, ClientSize.Width - S(208));
-	}
-
-	private static string[] NavTitles()
-	{
-		return new string[8] { "触发方式", "鼠标键动作", "视觉反馈", "拖动行为", "流畅度", "启动与权限", "帮助", "关于" };
-	}
-
-	private static string[] NavGlyphs()
-	{
-		return new string[8] { Glyph.Keyboard, Glyph.Move, Glyph.Color, Glyph.Move, Glyph.Speed, Glyph.Shield, Glyph.Help, Glyph.Info };
+		return Math.Max(10, ClientSize.Width - S(Tokens.SidebarW));
 	}
 
 	private void BuildControls()
@@ -19166,6 +19634,9 @@ internal sealed class SettingsForm : Form
 			ReadOnly = true,
 			TabStop = false,
 			BorderStyle = BorderStyle.None,
+			// 一定要显式给前景色：TextBox 默认是系统黑色，深色主题下就是"深底黑字"，完全看不见
+			ForeColor = Tokens.TextPrimary,
+			BackColor = Tokens.FieldFill,
 			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
 			TextAlign = HorizontalAlignment.Center
 		};
@@ -19279,6 +19750,8 @@ internal sealed class SettingsForm : Form
 		_txtBlacklist = new TextBox
 		{
 			BorderStyle = BorderStyle.None,
+			ForeColor = Tokens.TextPrimary,
+			BackColor = Tokens.FieldFill,
 			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point)
 		};
 		_btnPickExe = new FlatButton
@@ -19386,7 +19859,7 @@ internal sealed class SettingsForm : Form
 			AutoSize = false,
 			AutoEllipsis = false,
 			ForeColor = Tokens.Hint,
-			BackColor = Color.Transparent,
+			BackColor = Tokens.Surface,
 			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
 			Size = new Size(100, 20)
 		};
@@ -19399,58 +19872,34 @@ internal sealed class SettingsForm : Form
 		return label;
 	}
 
-	private static Cell L(string text, int w)
+	// 数值后面的单位（毫秒 / px / Hz / %）：和输入框同一行、靠右对齐
+	private static Label UnitLabel(string text)
 	{
-		return new Cell
+		return new Label
 		{
-			Label = text,
-			LabelW = w,
-			LabelCtl = new Label
-			{
-				Text = text,
-				AutoSize = false,
-				TextAlign = ContentAlignment.MiddleLeft,
-				ForeColor = Tokens.TextSecondary,
-				BackColor = Color.Transparent,
-				Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
-				Size = new Size(w, 20)
-			}
+			Text = text,
+			AutoSize = false,
+			UseMnemonic = false,
+			BackColor = Tokens.Surface,
+			ForeColor = Tokens.TextTertiary,
+			Font = new Font(DesignFontFamily, 9f, FontStyle.Regular, GraphicsUnit.Point),
+			TextAlign = ContentAlignment.MiddleLeft
 		};
 	}
 
-	private static Cell C(Control ctl, int fixedW)
+	// 只读的"值"（开发者、版本号这种不需要编辑的信息）
+	private static Label ValueLabel(string text, bool accent = false)
 	{
-		return new Cell
+		return new Label
 		{
-			Ctl = ctl,
-			FixedW = fixedW
-		};
-	}
-
-	private static Cell F(Control ctl)
-	{
-		return new Cell
-		{
-			Ctl = ctl,
-			FixedW = 0
-		};
-	}
-
-	private static Cell W(Control ctl)
-	{
-		return new Cell
-		{
-			Ctl = ctl,
-			Wrap = true
-		};
-	}
-
-	private static Cell A(Control ctl)
-	{
-		return new Cell
-		{
-			Ctl = ctl,
-			Auto = true
+			Text = text,
+			AutoSize = false,
+			UseMnemonic = false,
+			AutoEllipsis = true,
+			BackColor = Tokens.Surface,
+			ForeColor = accent ? Tokens.Accent : Tokens.TextPrimary,
+			Font = new Font(DesignFontFamily, 10f, FontStyle.Regular, GraphicsUnit.Point),
+			TextAlign = ContentAlignment.MiddleRight
 		};
 	}
 
@@ -19460,24 +19909,6 @@ internal sealed class SettingsForm : Form
 		page.Title = title;
 		page.Subtitle = subtitle;
 		page.Host = new PageHost();
-		page.LblTitle = new Label
-		{
-			Text = title,
-			AutoSize = false,
-			BackColor = Color.Transparent,
-			ForeColor = Tokens.TextPrimary,
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point)
-		};
-		page.LblSub = new Label
-		{
-			Text = subtitle,
-			AutoSize = false,
-			BackColor = Color.Transparent,
-			ForeColor = Tokens.TextSecondary,
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point)
-		};
-		page.Host.Canvas.Controls.Add(page.LblTitle);
-		page.Host.Canvas.Controls.Add(page.LblSub);
 		_pages.Add(page);
 		_content.Controls.Add(page.Host);
 		page.Host.Dock = DockStyle.Fill;
@@ -19485,10 +19916,9 @@ internal sealed class SettingsForm : Form
 		return page;
 	}
 
-	private Card NewCard(Page page, string title, bool wide = false)
+	private Card NewCard(Page page, string title, string subtitle = null)
 	{
-		Card card = new Card(title);
-		card.Wide = wide;
+		Card card = new Card(title, subtitle);
 		page.Cards.Add(card);
 		page.Host.Canvas.Controls.Add(card);
 		return card;
@@ -19496,80 +19926,100 @@ internal sealed class SettingsForm : Form
 
 	private void BuildPages()
 	{
-		Page page = NewPage("触发方式", "决定什么时候开始接管窗口");
-		Card card = NewCard(page, "触发方式");
+		// ---------- 1. 触发方式 ----------
+		Page page = NewPage("触发方式", "决定什么时候开始接管窗口；短按仍然原样放行");
+		Card card = NewCard(page, "触发键", "按住它，光标下的窗口才开始响应拖动");
 		card.RegisterField(_txtKey);
-		card.RegisterField(_numHold);
-		card.Add(40, L("触发键", 72), F(_txtKey), C(_btnRecord, 96));
-		card.Add(40, W(_lblKeyHint));
-		card.Add(36, W(_chkHold));
-		card.Add(40, L("长按阈值", 84), C(_numHold, 100), L("毫秒", 48));
+		card.Setting(_txtKey, 150, _btnRecord, 92, "当前触发键", "点「重新录制」后按任意键或鼠标侧键即可更换");
+		card.Block(_lblKeyHint, null, 22);
+		Card cardHold = NewCard(page, "长按判定", "区分「长按触发」和「正常打字」就靠这一段时长");
+		cardHold.RegisterField(_numHold);
+		cardHold.Toggle(_chkHold, "需要长按触发", "关掉后按住触发键立即生效，不再等阈值");
+		cardHold.Setting(_numHold, 84, UnitLabel("毫秒"), 34, "长按阈值", "按住多久才算长按；太短容易误触发，太长会显得迟钝");
+
+		// ---------- 2. 鼠标键动作 ----------
 		Page page2 = NewPage("鼠标键动作", "长按触发键之后，三个鼠标键各自做什么");
-		Card card2 = NewCard(page2, "鼠标键动作（长按触发键之后）");
-		card2.Add(40, L("左键", 60), F(_cmbLeft));
-		card2.Add(40, L("右键", 60), F(_cmbRight));
-		card2.Add(40, L("中键", 60), F(_cmbMiddle));
-		Card card3 = NewCard(page2, "双击手势");
-		card3.Add(36, W(_chkDblLeft));
-		card3.Add(36, W(_chkDblRight));
-		Page page3 = NewPage("视觉反馈", "外框颜色、样式与实时预览");
-		Card card4 = NewCard(page3, "外框外观", wide: true);
+		Card card2 = NewCard(page2, "鼠标键动作", "触发期间：左键拖动窗口，右键从边缘缩放，中键执行一次动作");
+		card2.Setting(_cmbLeft, "左键", "按住不放，窗口跟着鼠标走", 200);
+		card2.Setting(_cmbRight, "右键", "按住不放，从被抓的那条边/角缩放", 200);
+		card2.Setting(_cmbMiddle, "中键", "按一下执行一次，不需要按住", 200);
+		Card card3 = NewCard(page2, "双击手势", "触发期间快速连按两次鼠标键");
+		card3.Toggle(_chkDblLeft, "双击左键 = 最大化 / 还原", "不用去够标题栏，在窗口任意位置都行");
+		card3.Toggle(_chkDblRight, "双击右键 = 九宫格分区", "把窗口吸附到屏幕的九个区域之一");
+
+		// ---------- 3. 视觉反馈 ----------
+		Page page3 = NewPage("视觉反馈", "外框的颜色、样式与实时预览");
+		Card card4 = NewCard(page3, "外框", "触发期间在窗口四周画一圈提示，让你看清这次会拖动谁");
 		card4.RegisterField(_numFrameThick);
 		card4.RegisterField(_numFrameRadius);
 		card4.RegisterField(_numFrameOpacity);
-		card4.Add(36, W(_chkFrame));
-		card4.Add(40, L("外框颜色", 84), F(_lblColorName));
-		card4.Add(0, A(_gridColor));
-		card4.Add(36, W(_chkFollowAccent));
-		card4.Add(36, C(_btnCustomColor, 120), F(_lblCustomColor));
-		card4.Add(36, L("样式", 60), F(_lblStyleHeader));
-		card4.Add(0, A(_galleryStyle));
-		card4.Add(26, W(_lblStyleHint));
-		card4.Add(40, L("粗细", 60), C(_numFrameThick, 70), L("圆角", 60), C(_numFrameRadius, 70), L("不透明度", 84), C(_numFrameOpacity, 70));
-		card4.Add(172, C(_pnlPreview, 240));
-		card4.Add(40, W(_lblFrameTip));
+		card4.Toggle(_chkFrame, "显示外框", "关掉后触发时没有任何视觉提示");
+		card4.Setting(_cmbFrameColor, "外框颜色", "先选一个预设颜色；下面色板可以直接点", 200);
+		card4.Block(_gridColor, "色板");
+		card4.Toggle(_chkFollowAccent, "颜色跟随系统强调色", "换 Windows 主题色时外框一起变；优先级高于自定义颜色");
+		card4.Setting(_btnCustomColor, 120, _lblCustomColor, 240, "自定义颜色", "打开系统取色器，可以选任意颜色");
+		Card card5 = NewCard(page3, "样式", "外框长什么样：虚线、细线、焦点、柔光、投影");
+		card5.Setting(_cmbFrameStyle, "样式", "选一种画法；下面的缩略图也可以直接点", 200);
+		card5.Block(_galleryStyle, "缩略图");
+		card5.Block(_lblStyleHint, null, 22);
+		card5.Setting(_numFrameThick, 72, UnitLabel("px"), 26, "粗细", "线有多粗；虚线 / 焦点环靠它区分轻重");
+		card5.Setting(_numFrameRadius, 72, UnitLabel("px"), 26, "圆角", "外框跟着窗口的圆角走，改这里能立刻在下面的预览里看到");
+		card5.Setting(_numFrameOpacity, 72, UnitLabel("%"), 26, "不透明度", "调低会变成半透明，暗色桌面上更柔和");
+		Card card6 = NewCard(page3, "预览", "和真正拖动时用的是同一段绘制代码，看到什么就是什么");
+		card6.Block(_pnlPreview, null, 170);
+		card6.Block(_lblFrameTip, null, 22);
+
+		// ---------- 4. 拖动行为 ----------
 		Page page4 = NewPage("拖动行为", "双击手势、全屏窗口与黑名单");
-		Card card5 = NewCard(page4, "拖动与缩放");
-		card5.RegisterField(_numCorner);
-		card5.Add(40, L("缩放角区", 84), C(_numCorner, 80), L("%", 30));
-		card5.Add(36, W(_chkRestoreMax));
-		Card card6 = NewCard(page4, "窗口层级与全屏");
-		card6.Add(36, W(_chkFront));
-		card6.Add(36, W(_chkFullscreen));
-		card6.Add(36, W(_chkExitFullscreen));
-		Card card7 = NewCard(page4, "晃窗最小化其它窗口");
-		card7.Add(36, W(_chkShake));
-		Card card8 = NewCard(page4, "不生效的窗口", wide: true);
-		card8.RegisterField(_txtBlacklist);
-		card8.Add(40, L("关键字", 72), F(_txtBlacklist));
-		card8.Add(40, C(_btnPickExe, 96), C(_btnPickWindow, 96));
-		card8.Add(40, W(HintLabelWith("填窗口标题 / 程序名 / 类名的关键字，逗号分隔；命中就完全不接管。")));
+		Card card7 = NewCard(page4, "拖动与缩放", "触发期间的拖动、缩放细节");
+		card7.RegisterField(_numCorner);
+		card7.Setting(_numCorner, 72, UnitLabel("%"), 26, "缩放角区", "鼠标离角多近才算抓住角；越大越好抓，但容易误触");
+		card7.Toggle(_chkRestoreMax, "允许拖动已最大化的窗口", "会先把窗口还原成普通大小，再开始拖");
+		Card card8 = NewCard(page4, "窗口层级与全屏", "全屏 / 无边框窗口容易被拖成一片黑");
+		card8.Toggle(_chkFront, "开始拖动时把窗口提到最前", "不用先点一下激活它");
+		card8.Toggle(_chkFullscreen, "允许拖动全屏 / 无边框窗口（有风险）", "部分游戏和视频窗口拖完会显示异常");
+		card8.Toggle(_chkExitFullscreen, "触发时先把全屏 / 最大化窗口变回普通", "推荐开着：拖动和缩放都从正常尺寸开始");
+		Card card9 = NewCard(page4, "晃窗最小化", "选中窗口后左右晃一晃");
+		card9.Toggle(_chkShake, "晃窗把其它窗口最小化", "再晃一次还原；判定要求多次往复且净位移接近 0，正常拖动不会误触发");
+		Card card10 = NewCard(page4, "不生效的窗口", "命中黑名单的窗口完全不接管");
+		card10.RegisterField(_txtBlacklist);
+		card10.Setting(_txtBlacklist, "关键字", "窗口标题 / 程序名 / 类名，逗号分隔；命中就完全不接管");
+		card10.Setting(_btnPickExe, 96, _btnPickWindow, 92, "快速添加", "不知道填什么时，用「选择程序」挑 exe，或「点选窗口」直接在屏幕上点那扇窗");
+
+		// ---------- 5. 流畅度 ----------
 		Page page5 = NewPage("流畅度", "拖动过程中的刷新节流");
-		Card card9 = NewCard(page5, "拖动刷新率");
-		card9.RegisterField(_numRefreshHz);
-		card9.Add(40, L("刷新率", 72), F(_cmbRefreshMode));
-		card9.Add(40, L("固定值", 72), C(_numRefreshHz, 100), L("Hz", 30));
-		card9.Add(40, W(_lblRefreshHint));
+		Card card11 = NewCard(page5, "刷新模式", "刷新越快越跟手，但也更吃 CPU");
+		card11.Setting(_cmbRefreshMode, "刷新模式", "「自动」会按当前显示器的刷新率决定", 200);
+		Card card11b = NewCard(page5, "固定值", "只在「固定值」模式下用得上");
+		card11b.RegisterField(_numRefreshHz);
+		card11b.Setting(_numRefreshHz, 72, UnitLabel("Hz"), 26, "刷新频率", "0 = 不限制；非 0 时下限钳到 20");
+		card11b.Block(_lblRefreshHint, null, 22);
+
+		// ---------- 6. 启动与权限 ----------
 		Page page6 = NewPage("启动与权限", "开机自启与管理员权限");
-		Card card10 = NewCard(page6, "开机自启与权限");
-		card10.Add(40, L("开机自启", 84), F(_cmbAutoStart));
-		card10.Add(36, W(_chkRunAsAdmin));
-		card10.Add(36, W(_chkWarnNonAdmin));
-		card10.Add(40, W(_lblAdmin));
-		card10.Add(40, C(_btnRestartAdmin, 130));
+		Card card12 = NewCard(page6, "开机自启", "登录 Windows 后自动在托盘运行");
+		card12.Setting(_cmbAutoStart, "开机自启", "显示的是系统里的真实状态（会去查计划任务与注册表）", 200);
+		Card card12b = NewCard(page6, "管理员权限", "管理员权限能拖动更多程序，代价是每次启动弹一次 UAC");
+		card12b.Toggle(_chkRunAsAdmin, "开机时自动申请管理员权限", "默认开启；关掉后遇到管理员程序可能拖不动");
+		card12b.Toggle(_chkWarnNonAdmin, "没有管理员权限时提示我", "不提示的话，拖不动会很像程序坏了");
+		card12b.Block(_lblAdmin, null, 22);
+		card12b.Setting(_btnRestartAdmin, "立即生效", "改完权限相关设置后，用这个按钮重启一次", 128);
+
+		// ---------- 7. 帮助 ----------
 		Page page7 = NewPage("帮助", "每一项功能的实际行为说明");
-		Card card11 = NewCard(page7, "帮助");
-		card11.Add(40, W(HintLabelWith("点一下标题，就能展开对应功能的说明。")));
-		card11.Add(0, A(_helpPanel));
+		Card card13 = NewCard(page7, "功能说明", "点一下标题，就能展开对应功能的说明");
+		card13.Block(_helpPanel);
+
+		// ---------- 8. 关于 ----------
 		Page page8 = NewPage("关于", "版本、开发者与更新");
-		Card card12 = NewCard(page8, "关于", wide: true);
-		card12.Add(28, W(HintLabelWith("长按拖窗 HoldDrag    版本 v" + AppInfo.Version)));
-		card12.Add(28, W(HintLabelWith("长按触发键，随手拖动 / 缩放任意窗口")));
-		card12.Add(28, L("开发者", 84), F(HintLabelWith("QQQOrange")), L("开发工具", 84), F(HintLabelWith("DeepSeek")));
-		card12.Add(28, L("当前版本", 84), F(HintLabelWith("v" + AppInfo.Version)), L("更新时间", 84), F(HintLabelWith(AppInfo.ReleaseDate)));
-		card12.Add(36, C(_btnGitHub, 250));
-		card12.Add(36, W(_chkAutoUpdate));
-		card12.Add(40, C(_btnCheckUpdate, 104), F(_lblUpdateStatus));
+		Card card14 = NewCard(page8, "关于", "长按拖窗 HoldDrag · 长按触发键，随手拖动 / 缩放任意窗口");
+		card14.Setting(ValueLabel("QQQOrange"), "开发者", null, 140);
+		card14.Setting(ValueLabel("DeepSeek"), "开发工具", null, 140);
+		card14.Setting(ValueLabel("v" + AppInfo.Version, accent: true), "当前版本", null, 140);
+		card14.Setting(ValueLabel(AppInfo.ReleaseDate), "更新时间", null, 140);
+		card14.Setting(_btnGitHub, "项目主页", "github.com/QQQOrange/holddrag", 250);
+		card14.Toggle(_chkAutoUpdate, "自动更新", "启动时检查一次，有新版本会提示");
+		card14.Setting(_btnCheckUpdate, 104, _lblUpdateStatus, 240, "检查更新");
 	}
 
 	private static List<HelpPanel.Entry> BuildHelpEntries()
@@ -19631,113 +20081,187 @@ internal sealed class SettingsForm : Form
 			_nav.ActiveIndex = index;
 			_nav.KickGlow(index);
 		}
+		// 切页时把目标页按当前宽度补排一次（运行时只排可见页，所以这里必须补）
+		// 标题栏跟着换页：当前页的名字 + 一句说明（参照里也是标题在顶上、内容在下面）
+		_lblPageTitle.Text = _pages[index].Title;
+		_lblPageSub.Text = _pages[index].Subtitle;
+		LayoutChrome();
 		LayoutWithContent(ContentWidth());
 		_pages[index].Host.Invalidate();
 	}
 
-	private int DecideColumns(int contentW)
+	/// <summary>
+	/// 内容列宽。窗口不宽时单列、限宽 880 并水平居中（不在右边留一大片空白）；
+	/// 窗口拉得很宽（最大化）时改成两列卡片，把宽度用满，而不是让右半边空着。
+	/// </summary>
+	private int CardWidth(int contentW, out bool twoColumns, out int left, out int gap)
 	{
-		int num = S(640);
-		if (contentW >= num)
+		int num = S(24);
+		int num2 = Math.Max(S(200), contentW - num * 2);
+		twoColumns = num2 >= S(1200);
+		gap = S(16);
+		if (twoColumns)
 		{
-			_cols = 2;
+			left = num;
+			return Math.Max(S(320), (num2 - gap) / 2);
 		}
-		else if (contentW < num - S(40))
+		int num3 = Math.Min(num2, S(Tokens.CardMaxW));
+		// 单列但窗口还比较宽：左右均分留白，视觉上居中，而不是全挤在左边
+		left = num + Math.Max(0, (num2 - num3) / 2);
+		return num3;
+	}
+
+	private int _lastLayoutW = -1;
+	private string _lastLayoutSig = "";
+
+	// 影响行高的只有"文字 + 可用宽度"。两者都没变时跳过整轮重排：
+	// 拖窗口时 WM_SIZE 一来就是几十次，之前每次都把 8 页 17 张卡片全排一遍。
+	private string LayoutSignature()
+	{
+		StringBuilder stringBuilder = new StringBuilder(1024);
+		foreach (Page page in _pages)
 		{
-			_cols = 1;
+			foreach (Card card in page.Cards)
+			{
+				card.AppendSignature(stringBuilder);
+			}
 		}
-		return _cols;
+		return stringBuilder.ToString();
 	}
 
 	private void LayoutWithContent(int contentW)
 	{
 		LayoutChrome();
-		// 宽度一律以内容区实际客户宽为准：外面传进来的可能是"改尺寸之前"的旧值，
-		// 拿旧宽度排一次、再拿新宽度排一次，来回拉时看起来就是"控件位置在漂"。
 		contentW = ContentWidth();
 		if (contentW < 10)
 		{
 			contentW = 10;
 		}
-		int num = Math.Min(contentW, S(880));
-		int num2 = (contentW - num) / 2;
-		int cols = DecideColumns(contentW);
-		int num3 = S(12);
-		int num4 = ((cols == 2) ? ((num - num3) / 2) : num);
-		foreach (Page page in _pages)
+		LayoutPages(contentW, forceAll: false);
+	}
+
+	/// <summary>把 8 页全部排一遍（首次构建、DPI 重建、自检用）。</summary>
+	private void LayoutAllPages(int contentW)
+	{
+		LayoutChrome();
+		contentW = ContentWidth();
+		if (contentW < 10)
 		{
-			page.Host.SuspendLayout();
-			page.Host.Canvas.SuspendLayout();
-			try
+			contentW = 10;
+		}
+		LayoutPages(contentW, forceAll: true);
+	}
+
+	private static string PageSignature(Page page)
+	{
+		StringBuilder stringBuilder = new StringBuilder(256);
+		foreach (Card card in page.Cards)
+		{
+			card.AppendSignature(stringBuilder);
+		}
+		return stringBuilder.ToString();
+	}
+
+	private void LayoutPages(int contentW, bool forceAll)
+	{
+		for (int i = 0; i < _pages.Count; i++)
+		{
+			Page page = _pages[i];
+			bool flag = i == _activePage;
+			// 看不见的页不排：拖窗口/最大化时只有当前页会真的显示出来，
+			// 之前 8 页 17 张卡每次都全排一遍，绝大部分是无用功。切页时会补排。
+			if (!flag && !forceAll)
 			{
-				SyncPageFonts(page);
-				page.LblTitle.SetBounds(num2, S(18), num, S(32));
-				page.LblSub.SetBounds(num2, S(52), num, S(22));
-				int num5 = S(88);
-				int num6 = 0;
-				int num7 = 0;
-				foreach (Card card in page.Cards)
-				{
-					int num8 = (card.Wide ? num : num4);
-					int num9 = card.Measure(num8);
-					if (card.Wide)
-					{
-						if (num6 == 1)
-						{
-							num5 += num7 + num3;
-							num6 = 0;
-						}
-						card.SetBounds(num2, num5, num8, num9);
-						num5 += num9 + num3;
-						num6 = 0;
-						num7 = 0;
-						continue;
-					}
-					if (num6 == 0)
-					{
-						card.SetBounds(num2, num5, num8, num9);
-						num6 = 1;
-						num7 = num9;
-						continue;
-					}
-					card.SetBounds(num2 + num4 + num3, num5, num8, num9);
-					num5 += Math.Max(num7, num9) + num3;
-					num6 = 0;
-					num7 = 0;
-				}
-				if (num6 == 1)
-				{
-					num5 += num7 + num3;
-				}
-				int num10 = Math.Max(num5 - num3, S(72));
-				foreach (Card card2 in page.Cards)
-				{
-					card2.Layout(card2.Width);
-				}
-				page.Host.Canvas.Size = new Size(contentW, num10);
-				page.Host.UpdateScroll();
+				continue;
 			}
-			catch (Exception ex)
+			string text = PageSignature(page);
+			if (!forceAll && page.LaidOutWidth == contentW && page.Signature == text)
 			{
-				Log.Error(ex);
+				continue;
 			}
-			finally
-			{
-				page.Host.Canvas.ResumeLayout(performLayout: false);
-				page.Host.ResumeLayout(performLayout: false);
-			}
+			LayoutOnePage(page, contentW, text);
 		}
 	}
 
-	private void SyncPageFonts(Page page)
+	private void LayoutOnePage(Page page, int contentW, string signature)
 	{
+		// 每页单独算列宽：
+		//  - 两张以上卡片 + 窗口够宽 → 两列，把宽度用满；
+		//  - 只有一张卡片 → 占满（最多 1200 逻辑）并居中，不排两列（否则单卡只占左半边，右边又空了）；
+		//  - 其余 → 单列限宽 880，居中。
+		bool flag;
+		int num;
+		int num2;
+		int numW = CardWidth(contentW, out flag, out num, out num2);
+		bool flag2 = flag && page.Cards.Count >= 2;
+		int cardW;
+		int numX;
+		if (flag2)
+		{
+			cardW = numW;
+			numX = num;
+		}
+		else
+		{
+			int numY = Math.Max(S(200), contentW - S(48));
+			cardW = Math.Min(numY, (page.Cards.Count <= 1) ? S(1200) : S(Tokens.CardMaxW));
+			numX = S(24) + Math.Max(0, (numY - cardW) / 2);
+		}
+		page.Host.SuspendLayout();
+		page.Host.Canvas.SuspendLayout();
 		try
 		{
-			page.LblTitle.Font = new Font(DesignFontFamily, Sc(18), FontStyle.Bold, GraphicsUnit.Pixel);
-			page.LblSub.Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel);
+			int num3 = S(6);
+			int num4 = 0;
+			int num5 = 0;
+			int num6 = 0;
+			foreach (Card card in page.Cards)
+			{
+				int num7 = card.Measure(cardW);
+				if (flag2)
+				{
+					// 两列：0/2/4… 放左列，1/3/5… 放右列；同一行取两张卡里较高的那个做行高
+					if (num4 % 2 == 0)
+					{
+						num5 = num3;
+						num6 = num7;
+						Place(card, new Rectangle(numX, num3, cardW, num7));
+					}
+					else
+					{
+						Place(card, new Rectangle(numX + cardW + num2, num5, cardW, num7));
+						num3 = num5 + Math.Max(num6, num7) + S(Tokens.CardGap);
+					}
+					num4++;
+				}
+				else
+				{
+					Place(card, new Rectangle(numX, num3, cardW, num7));
+					num3 += num7 + S(Tokens.CardGap);
+				}
+				card.Layout(cardW);
+			}
+			if (flag2 && num4 % 2 == 1)
+			{
+				num3 = num5 + num6 + S(Tokens.CardGap);
+			}
+			Size size = new Size(contentW, Math.Max(num3 + S(4), S(80)));
+			if (page.Host.Canvas.Size != size)
+			{
+				page.Host.Canvas.Size = size;
+			}
+			page.Host.UpdateScroll();
+			page.LaidOutWidth = contentW;
+			page.Signature = signature;
 		}
-		catch
+		catch (Exception ex)
 		{
+			Log.Error(ex);
+		}
+		finally
+		{
+			page.Host.Canvas.ResumeLayout(performLayout: false);
+			page.Host.ResumeLayout(performLayout: false);
 		}
 	}
 
@@ -19963,6 +20487,11 @@ internal sealed class SettingsForm : Form
 	private void UpdateKeyText()
 	{
 		_txtKey.Text = KeysUtil.DisplayName(_edit.TriggerKeyId);
+		if (_nav != null)
+		{
+			// 侧栏底部状态卡：一眼看到"正在运行"和当前触发键
+			_nav.SetStatus("正在运行", KeysUtil.DisplayName(_edit.TriggerKeyId) + " + 左键拖动");
+		}
 	}
 
 	private static int Clamp(int v, int min, int max)
@@ -20712,8 +21241,9 @@ internal sealed class SettingsForm : Form
 	protected override void OnResize(EventArgs e)
 	{
 		base.OnResize(e);
+		// 只对齐外壳：内容重排由 _content.Resize 负责（改尺寸必然触发），
+		// 这里再排一次等于同一帧干两遍，拖边框时最明显。
 		LayoutChrome();
-		LayoutWithContent(ContentWidth());
 		UpdateMaximizeGlyph();
 	}
 
@@ -21692,24 +22222,129 @@ internal sealed class SettingsForm : Form
 			{
 				return false;
 			}
-			// 新 UI：内容区（去掉侧栏后的宽度）≥ S(640) 时两列，< S(600) 时回到一列（带回滞）。
-			// 注意：窗口有 MinimumSize=S(640)，测试宽度必须大于它，否则会被系统夹小。
-			settingsForm.ClientSize = new Size(Sc(660), Sc(700));
+			// 窄：单列（限宽 880、居中）；宽（最大化那种）：两列，把右边那片空白用起来。
+			settingsForm.ClientSize = new Size(Sc(900), Sc(700));
 			LayoutWithContentOf(settingsForm);
-			int cols = settingsForm._cols;
-			settingsForm.ClientSize = new Size(Sc(1160), Sc(700));
+			int width = CardBoxOf(settingsForm).Width;
+			int num = ProbeCardsPerRow(f);
+			settingsForm.ClientSize = new Size(Sc(1400), Sc(700));
 			LayoutWithContentOf(settingsForm);
-			int cols2 = settingsForm._cols;
-			settingsForm.ClientSize = new Size(Sc(660), Sc(700));
+			Rectangle cardBox = CardBoxOf(settingsForm);
+			settingsForm.ClientSize = new Size(Sc(2400), Sc(700));
+			SettingsForm.ProbeSelectPage(settingsForm, 1);
+			Application.DoEvents();
+			int num2 = ProbeCardsPerRow(f);
+			Rectangle cardBox2 = CardBoxOf(settingsForm);
+			settingsForm.ClientSize = new Size(Sc(900), Sc(700));
+			SettingsForm.ProbeSelectPage(settingsForm, 0);
 			LayoutWithContentOf(settingsForm);
-			int cols3 = settingsForm._cols;
-			LastStretchDetail = "列数 " + cols + "->" + cols2 + "->" + cols3 + "（内容区 " + settingsForm.ContentWidth() + "/" + (Sc(1160) - Sc(208)) + "/" + settingsForm.ContentWidth() + "，阈值 " + Sc(600) + "~" + Sc(640) + "）";
-			return cols == 1 && cols2 == 2 && cols3 == 1;
+			int width2 = CardBoxOf(settingsForm).Width;
+			LastStretchDetail = "卡片宽 " + width + "->" + cardBox.Width + "->" + width2 + " | 每行张数 " + num + "->" + num2 + " | 宽窗口下卡片 " + cardBox2.ToString();
+			return width2 == width && cardBox.Width > width && cardBox.Width <= Sc(Tokens.CardMaxW) + Sc(2) && num == 1 && num2 == 2;
 		}
 		catch
 		{
 			return false;
 		}
+	}
+
+	/// <summary>当前页"同一行"有几张卡片（1 = 单列，2 = 两列）。</summary>
+	/// <summary>
+	/// 侧栏第 index 项右端的实际底色：有胶囊底就是 Hover/AccentSoft，没有就是侧栏底色。
+	/// 用真实绘制结果判定，"没选中却有底"这类回归才测得出来。
+	/// </summary>
+	internal static Color ProbeNavRowColor(Form f, int index)
+	{
+		try
+		{
+			if (!(f is SettingsForm settingsForm) || settingsForm._nav == null)
+			{
+				return Color.Empty;
+			}
+			SideNav nav = settingsForm._nav;
+			if (nav.Width < 40 || nav.Height < 40)
+			{
+				return Color.Empty;
+			}
+			using Bitmap bitmap = new Bitmap(nav.Width, nav.Height);
+			nav.DrawToBitmap(bitmap, new Rectangle(0, 0, nav.Width, nav.Height));
+			int num = (int)Math.Round(84.0 * (double)UiScaleForTest);
+			int num2 = (int)Math.Round(38.0 * (double)UiScaleForTest);
+			int x = Math.Max(2, nav.Width - (int)Math.Round(18.0 * (double)UiScaleForTest));
+			int y = num + index * num2 + num2 / 2;
+			if (y < 0 || y >= bitmap.Height)
+			{
+				return Color.Empty;
+			}
+			return bitmap.GetPixel(x, y);
+		}
+		catch
+		{
+			return Color.Empty;
+		}
+	}
+
+	internal static int TextLinesForTest(string text, Control ctl, int width)
+	{
+		// 与卡片排版同一把尺子：折行总高 ÷ 单行高（带硬换行也算得对）
+		try
+		{
+			int num = TextRenderer.MeasureText("字", ctl.Font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding).Height;
+			int num2 = TextRenderer.MeasureText(text, ctl.Font, new Size(Math.Max(20, width), int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height;
+			return Math.Max(1, (int)Math.Round((double)num2 / (double)Math.Max(1, num)));
+		}
+		catch
+		{
+			return 1;
+		}
+	}
+
+	internal static int ProbeCardsPerRow(Form f)
+	{
+		try
+		{
+			if (f is SettingsForm settingsForm && settingsForm._pages.Count > settingsForm._activePage)
+			{
+				List<Card> cards = settingsForm._pages[settingsForm._activePage].Cards;
+				if (cards.Count > 0)
+				{
+					int top = cards[0].Top;
+					int num = 0;
+					foreach (Card card in cards)
+					{
+						if (card.Top == top)
+						{
+							num++;
+						}
+					}
+					return num;
+				}
+			}
+		}
+		catch
+		{
+		}
+		return 0;
+	}
+
+	/// <summary>取当前页第一张卡片的边界（用来量内容列宽与左边距）。</summary>
+	internal static Rectangle CardBoxOf(Form f)
+	{
+		try
+		{
+			if (f is SettingsForm settingsForm && settingsForm._pages.Count > settingsForm._activePage)
+			{
+				List<Card> cards = settingsForm._pages[settingsForm._activePage].Cards;
+				if (cards.Count > 0)
+				{
+					return cards[0].Bounds;
+				}
+			}
+		}
+		catch
+		{
+		}
+		return Rectangle.Empty;
 	}
 
 	internal static string LastStretchDetail = string.Empty;
@@ -21722,22 +22357,20 @@ internal sealed class SettingsForm : Form
 			{
 				return false;
 			}
-			// 新 UI：一列模式下把窗口拉宽（仍在两列阈值以下），卡片跟着变宽，
-			// 卡片里的下拉框 / 黑名单输入框也必须跟着变宽（不是只把分组撑大）。
-			// 注意：DecideColumns 有 40px 设计滞回带（S(600)~S(640)），测试宽度要落在带外，
-			// 否则列数会保持上一次的状态，断言「cols==1」会时灵时不灵。
-			settingsForm.ClientSize = new Size(Sc(660), Sc(720));
+			// 卡内：整宽块（色板）必须跟着卡片变宽；固定宽的控件（下拉框）保持宽度不变、
+			// 但右边界要跟着卡片右边界走（右对齐的代价就是宽度不跟着长）。
+			settingsForm.ClientSize = new Size(Sc(900), Sc(720));
 			LayoutWithContentOf(settingsForm);
-			int width = settingsForm._cmbLeft.Width;
-			int width2 = settingsForm._txtBlacklist.Width;
-			int cols = settingsForm._cols;
-			settingsForm.ClientSize = new Size(Sc(800), Sc(720));
+			int width = settingsForm._gridColor.Width;
+			int width2 = settingsForm._cmbLeft.Width;
+			int num = CardBoxOf(settingsForm).Right - settingsForm._cmbLeft.Right;
+			settingsForm.ClientSize = new Size(Sc(1150), Sc(720));
 			LayoutWithContentOf(settingsForm);
-			int width3 = settingsForm._cmbLeft.Width;
-			int width4 = settingsForm._txtBlacklist.Width;
-			int cols2 = settingsForm._cols;
-			LastStretchDetail = "列数 " + cols + "->" + cols2 + " | 下拉框 " + width + "->" + width3 + " | 黑名单 " + width2 + "->" + width4 + " | " + DumpLayoutItem(f, settingsForm._cmbLeft);
-			return width3 > width && width4 > width2 && cols == 1 && cols2 == 1;
+			int width3 = settingsForm._gridColor.Width;
+			int width4 = settingsForm._cmbLeft.Width;
+			int num2 = CardBoxOf(settingsForm).Right - settingsForm._cmbLeft.Right;
+			LastStretchDetail = "色板 " + width + "->" + width3 + " | 下拉框 " + width2 + "->" + width4 + " | 右间距 " + num + "->" + num2;
+			return width3 > width && width4 == width2 && num == num2;
 		}
 		catch
 		{
@@ -21753,10 +22386,9 @@ internal sealed class SettingsForm : Form
 			{
 				return false;
 			}
-			// 窄档内容宽 Sc(800)-S(208)=Sc(592) < S(600)，稳稳在一列（避开滞回带）；
-			// 宽档 Sc(1180)-S(208)=Sc(972) ≥ S(640)，稳稳两列。来回切列数确定，才测得出漂移。
-			int num = Sc(800);
-			int num2 = Sc(1180);
+			// 窄 -> 宽 -> 窄 来回拉 5 轮，回到原尺寸后控件位置必须和一开始完全一致。
+			int num = Sc(900);
+			int num2 = Sc(1240);
 			settingsForm.ClientSize = new Size(num, Sc(720));
 			LayoutWithContentOf(settingsForm);
 			Rectangle bounds = settingsForm._cmbLeft.Bounds;
@@ -21768,6 +22400,7 @@ internal sealed class SettingsForm : Form
 				LayoutWithContentOf(settingsForm);
 			}
 			Rectangle bounds2 = settingsForm._cmbLeft.Bounds;
+			LastStretchDetail = "A=" + bounds.ToString() + " B=" + bounds2.ToString();
 			return bounds.Left == bounds2.Left && bounds.Width == bounds2.Width && bounds.Top == bounds2.Top;
 		}
 		catch
@@ -21778,7 +22411,9 @@ internal sealed class SettingsForm : Form
 
 	private static void LayoutWithContentOf(SettingsForm f)
 	{
-		f.LayoutWithContent(f.ContentWidth());
+		// 自检要跨页读几何（比如在"触发方式"页量"视觉反馈"页的色板宽度），
+		// 所以测试路径一律全排，不走运行时"只排可见页"的快路径。
+		f.LayoutAllPages(f.ContentWidth());
 	}
 
 	internal static string DumpLayoutItem(Form f, Control target)
@@ -21803,6 +22438,15 @@ internal sealed class SettingsForm : Form
 		{
 			LayoutWithContentOf(settingsForm);
 			settingsForm.Invalidate();
+		}
+	}
+
+	/// <summary>按运行时的快路径重排一次（只排当前可见页），用于性能自检。</summary>
+	internal static void RelayoutActiveForTest(Form f)
+	{
+		if (f is SettingsForm settingsForm)
+		{
+			settingsForm.LayoutWithContent(settingsForm.ContentWidth());
 		}
 	}
 
@@ -21866,7 +22510,6 @@ internal sealed class SettingsForm : Form
 			{
 				return "";
 			}
-			stringBuilder.Append("cols=").Append(settingsForm._cols).Append(';');
 			foreach (Card item in AllCards(settingsForm))
 			{
 				stringBuilder.Append(item.GetType().Name).Append(':').Append(item.Left).Append(',')
@@ -21902,27 +22545,9 @@ internal sealed class SettingsForm : Form
 		return stringBuilder.ToString();
 	}
 
-	internal static int ProbeTwoColumnThresholdPx(Form f)
+	internal static int ProbeCardMaxWidthPx(Form f)
 	{
-		return Sc(640);
-	}
-
-	internal static int ProbeRelayoutColumns(Form f, int available)
-	{
-		if (!(f is SettingsForm settingsForm))
-		{
-			return -1;
-		}
-		try
-		{
-			// 只问决策函数：整页重排现在一律以内容区真实宽度为准，
-			// 借道重排会测到"宽度被最小尺寸夹住"的假象，测不准滞回带。
-			return settingsForm.DecideColumns(available);
-		}
-		catch
-		{
-			return -1;
-		}
+		return Sc(Tokens.CardMaxW);
 	}
 
 		internal static Color ProbeTokenColor(string name)
@@ -21939,6 +22564,10 @@ internal sealed class SettingsForm : Form
 			return Tokens.Accent;
 		case "Canvas":
 			return Tokens.Canvas;
+		case "Sidebar":
+			return Tokens.Sidebar;
+		case "AccentSoft":
+			return Tokens.AccentSoft;
 		default:
 			return Color.Empty;
 		}
@@ -21947,6 +22576,45 @@ internal sealed class SettingsForm : Form
 	internal static void ProbeForceDarkTheme(bool? dark)
 	{
 		Theme.SetForceDark(dark);
+	}
+
+	internal static int ProbePreviewRadiusDiff(Form f, int radiusA, int radiusB)
+	{
+		try
+		{
+			if (!(f is SettingsForm settingsForm))
+			{
+				return -1;
+			}
+			settingsForm.SelectPage(2);
+			int width = Math.Max(8, settingsForm._pnlPreview.Width);
+			int height = Math.Max(8, settingsForm._pnlPreview.Height);
+			using Bitmap bitmap = new Bitmap(width, height);
+			using Bitmap bitmap2 = new Bitmap(width, height);
+			settingsForm._numFrameRadius.Value = Clamp(radiusA, (int)settingsForm._numFrameRadius.Minimum, (int)settingsForm._numFrameRadius.Maximum);
+			settingsForm.SyncPreview();
+			settingsForm._pnlPreview.DrawToBitmap(bitmap, new Rectangle(0, 0, width, height));
+			settingsForm._numFrameRadius.Value = Clamp(radiusB, (int)settingsForm._numFrameRadius.Minimum, (int)settingsForm._numFrameRadius.Maximum);
+			settingsForm.SyncPreview();
+			settingsForm._pnlPreview.DrawToBitmap(bitmap2, new Rectangle(0, 0, width, height));
+			int num = 0;
+			for (int i = 0; i < height; i++)
+			{
+				for (int j = 0; j < width; j++)
+				{
+					if (bitmap.GetPixel(j, i).ToArgb() != bitmap2.GetPixel(j, i).ToArgb())
+					{
+						num++;
+					}
+				}
+			}
+			return num;
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			return -1;
+		}
 	}
 
 	internal Rectangle ProbePagerBounds()
@@ -25603,6 +26271,9 @@ internal static class VisualCheck
 		Shoot(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "settings-wide-dark.png"));
 		SettingsForm.ProbeForceDarkTheme(false);
 		Shoot(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "visual-page-light.png"), 2);
+		// 默认尺寸（1024）和拉宽两档都拍一张：单列居中 / 两列用满宽度，一眼能对比
+		ShootLive(configStore, coord, new Size(num2, num7), Path.Combine(outDir, "live-default.png"), 0);
+		ShootLive(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "live-wide.png"), 0);
 		ShootLive(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "live-light.png"), 2);
 		SettingsForm.ProbeForceDarkTheme(true);
 		Shoot(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "visual-page-dark.png"), 2);
@@ -25621,6 +26292,51 @@ internal static class VisualCheck
 		Dump(configStore, coord, new Size(num3, num6), Path.Combine(outDir, "layout-g3-wide.txt"), 2);
 		ShootGroup(configStore, coord, new Size(num, num5), Path.Combine(outDir, "group-visual.png"), 2);
 		ShootFrameSheet(Path.Combine(outDir, "frames-all.png"));
+		ShootRadiusSheet(Path.Combine(outDir, "radius-sheet.png"));
+	}
+
+	private static void ShootRadiusSheet(string path)
+	{
+		try
+		{
+			int[] array = new int[4] { 0, 10, 20, 28 };
+			string[] array2 = new string[3] { "Dashed", "Focus", "Shadow" };
+			int num = 260;
+			int num2 = 180;
+			int num3 = 10;
+			int num4 = 26;
+			int width = num3 + array2.Length * (num + num3);
+			int height = num4 + array.Length * (num2 + num4 + num3);
+			using Bitmap bitmap = new Bitmap(width, height);
+			using Graphics graphics = Graphics.FromImage(bitmap);
+			graphics.Clear(Color.White);
+			using Font font = new Font("Microsoft YaHei UI", 10f, FontStyle.Regular);
+			using SolidBrush brush = new SolidBrush(Color.FromArgb(40, 42, 48));
+			for (int i = 0; i < array2.Length; i++)
+			{
+				graphics.DrawString(array2[i], font, brush, new PointF(num3 + i * (num + num3), 4f));
+			}
+			for (int j = 0; j < array.Length; j++)
+			{
+				for (int k = 0; k < array2.Length; k++)
+				{
+					int x = num3 + k * (num + num3);
+					int y = num4 + j * (num2 + num4 + num3);
+					RectangleF rectangleF = new RectangleF(x, y, num, num2);
+					using (SolidBrush brush2 = new SolidBrush(Color.White))
+					{
+						graphics.FillRectangle(brush2, rectangleF);
+					}
+					FrameStyles.Draw(graphics, rectangleF, Color.FromArgb(107, 196, 165), array2[k], 3, array[j]);
+					graphics.DrawString("半径 " + array[j], font, brush, new PointF(x + 4f, (float)(y + num2) - 18f));
+				}
+			}
+			bitmap.Save(path, ImageFormat.Png);
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
 	}
 
 	private static void ShootFrameSheet(string path)

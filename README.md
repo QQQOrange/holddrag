@@ -176,14 +176,14 @@ dotnet publish holddrag/src/HoldDrag.csproj -c Release -o out `
 > 并发跑两份实例会争抢全局光标与前台窗口，产生"期望 90、实际 -1500"这类离谱读数；
 > 若日志目录被宿主沙箱禁止写入，`%APPDATA%` 日志用例会自动跳过并标注环境限制。
 
-构建产物期望（v1.5.0 交付态）：
+构建产物期望（v1.6.0 交付态）：
 
 | 项 | 值 |
 | --- | --- |
 | 输出目录内容 | 仅 `HoldDrag.exe` + `HoldDrag.pdb` |
-| exe 字节数 | 676,007 |
-| exe SHA-256 | `49D3189D90C72BB43204A13DFBED3586568D44DEC6F2AFB53B32364B5C2A24B3` |
-| 文件版本 | `1.5.0.0` |
+| exe 字节数 | 685,735 |
+| exe SHA-256 | `7D5BD07D652B4CA70BC0265E3CEB040D9C2145F78A97C0069B9B8876DD5196FA` |
+| 文件版本 | `1.6.0.0` |
 
 ---
 
