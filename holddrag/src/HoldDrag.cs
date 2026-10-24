@@ -42,7 +42,7 @@ internal static class AppInfo
 
 	public const string Tagline = "长按触发键，随手拖动 / 缩放任意窗口";
 
-	public const string ReleaseDate = "2026-10-23";
+	public const string ReleaseDate = "2026-10-24";
 
 	public const string Developer = "QQQOrange";
 
@@ -59,7 +59,7 @@ internal static class AppInfo
 	public const string ReleasesApiUrl = "https://api.github.com/repos/QQQOrange/holddrag/releases/latest";
 
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.6.0";
+	public const string FallbackVersion = "1.6.1";
 
 	public static string Version
 	{
@@ -326,6 +326,16 @@ internal static class Updater
 	/// </summary>
 	public const string ArgUpdatedFrom = "--updated-from";
 
+	/// <summary>给单个命令行参数按需包引号：路径含空白时必须包，否则会被拆成多个参数。</summary>
+	public static string QuoteArg(string arg)
+	{
+		if (string.IsNullOrEmpty(arg) || (arg.IndexOf(' ') < 0 && arg.IndexOf('\t') < 0))
+		{
+			return arg;
+		}
+		return "\"" + arg + "\"";
+	}
+
 	/// <summary>
 	/// 就地替换正在运行的 exe。
 	///
@@ -334,7 +344,7 @@ internal static class Updater
 	///   1) 旧 exe 改名为 HoldDrag.exe.old（正在运行也允许）
 	///   2) 新文件移入 HoldDrag.exe
 	///   3) 拉起新 exe，并让它启动后删掉 .old（那时旧进程已退出，删除就成功了）
-	/// 这样即使中途任一步失败，也总有一个可运行的 exe 在，不会把用户卡死。
+	/// 任一步失败都会尝试把旧文件改回来；万一回滚也失败，旧版仍以 .old 留在同目录，可手动改回，不会把用户卡死。
 	/// </summary>
 	public static bool ApplyAndRestart(string downloadedPath, string exePath, out string error)
 	{
@@ -368,7 +378,7 @@ internal static class Updater
 			}
 			catch (Exception ex2)
 			{
-				// 移入失败：把旧文件改回来，保证至少还有一个能跑的 exe
+				// 移入失败：把旧文件改回来；回滚也失败时旧版仍在 .old 里，可让用户手动改回
 				Log.Error("新版本移入失败，正在回滚：" + ex2.Message);
 				try
 				{
@@ -385,7 +395,7 @@ internal static class Updater
 			Process process = Process.Start(new ProcessStartInfo(exePath)
 			{
 				UseShellExecute = true,
-				Arguments = ArgUpdatedFrom + " \"" + text + "\""
+				Arguments = ArgUpdatedFrom + " " + QuoteArg(text)
 			});
 			if (process == null)
 			{
@@ -652,11 +662,7 @@ internal static class Updater
 				error = $"下载不完整：期望 {num} 字节，实际 {num2} 字节。";
 				return false;
 			}
-			if (File.Exists(targetPath))
-			{
-				File.Delete(targetPath);
-			}
-			File.Move(text, targetPath);
+			File.Move(text, targetPath, overwrite: true);
 			return true;
 		}
 		catch (Exception ex)
@@ -810,8 +816,6 @@ internal sealed class AppConfig
 
 	public string DragRefreshMode { get; set; }
 
-	public string MovePreviewMode { get; set; }
-
 	public int DragRefreshHz { get; set; }
 
 	public int MoveRate { get; set; }
@@ -865,7 +869,6 @@ internal sealed class AppConfig
 		CornerPercent = 26;
 		Blacklist = string.Empty;
 		DragRefreshMode = "Auto";
-		MovePreviewMode = "FullWin";
 		DragRefreshHz = 0;
 		MoveRate = 1;
 		ResizeRate = 1;
@@ -891,6 +894,11 @@ internal sealed class AppConfig
 	public void Normalize()
 	{
 		if (string.IsNullOrEmpty(TriggerKeyId))
+		{
+			TriggerKeyId = "K:0x0D";
+		}
+		// 解析不出有效虚拟键码的触发键（如历史 bug 产出、或手改配置写出的 "K:0x00"）等于没有触发键，回落默认值
+		if (KeysUtil.ToVirtualKey(TriggerKeyId) == 0)
 		{
 			TriggerKeyId = "K:0x0D";
 		}
@@ -971,7 +979,6 @@ internal sealed class AppConfig
 		{
 			DragRefreshMode = "Auto";
 		}
-		MovePreviewMode = "FullWin";
 		if (DragRefreshHz < 0)
 		{
 			DragRefreshHz = 0;
@@ -983,11 +990,6 @@ internal sealed class AppConfig
 		if (DragRefreshHz > 500)
 		{
 			DragRefreshHz = 500;
-		}
-		if (MoveRate == 2 && ResizeRate == 4)
-		{
-			MoveRate = 1;
-			ResizeRate = 1;
 		}
 		MoveRate = 1;
 		ResizeRate = 1;
@@ -1099,12 +1101,6 @@ internal sealed class AppConfig
 		return (int)Math.Round(1000.0 / (double)detectedHz);
 	}
 }
-internal static class PreviewModes
-{
-	public const string Outline = "Outline";
-
-	public const string FullWin = "FullWin";
-}
 internal static class RefreshModes
 {
 	public const string Auto = "Auto";
@@ -1181,7 +1177,7 @@ internal sealed class ConfigStore
 		{
 			try
 			{
-				Save();
+				Save(out _);
 			}
 			catch (Exception ex)
 			{
@@ -1212,8 +1208,9 @@ internal sealed class ConfigStore
 		}
 	}
 
-	public void Save()
+	public bool Save(out string error)
 	{
+		error = string.Empty;
 		try
 		{
 			Current.Normalize();
@@ -1230,34 +1227,27 @@ internal sealed class ConfigStore
 			string text = FilePath + ".tmp";
 			File.WriteAllText(text, contents);
 			File.Move(text, FilePath, overwrite: true);
+			return true;
 		}
 		catch (Exception ex)
 		{
+			error = ex.Message;
 			Log.Error("保存配置失败 :: " + ex.Message);
+			return false;
 		}
 	}
 
-	public void Apply(AppConfig edited)
+	public bool Apply(AppConfig edited, out string error)
 	{
 		edited.Normalize();
 		Current = edited;
-		Save();
+		bool result = Save(out error);
 		Changed?.Invoke();
+		return result;
 	}
 }
 internal sealed class Coordinator : IInputSink, IDisposable
 {
-	internal sealed class PairedUpProbe
-	{
-		public nint Hwnd;
-
-		public int Msg;
-
-		public int WParam;
-
-		public nint LParam;
-	}
-
 	private const int BtnLeft = 0;
 
 	private const int BtnRight = 1;
@@ -1290,11 +1280,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
 
 	internal static int CancelModeSentForTest;
 
-	internal static int PhantomUpSentForTest;
-
 	internal static int ReplayedClickForTest;
-
-	internal static volatile PairedUpProbe LastPairedUpForTest;
 
 	internal static bool[] ButtonsDownOverrideForTest;
 
@@ -1719,55 +1705,6 @@ internal sealed class Coordinator : IInputSink, IDisposable
 				break;
 			}
 			Log.Info("[诊断] 激活瞬间补起拖动未成立（对照上一条「鼠标键按下」日志的坐标与目标）键=" + i);
-		}
-	}
-
-	// 遗留：曾经用于"先把按下放行给目标窗口、激活后再补发一个 WM_LBUTTONUP 把这对按下抬起配平"。
-	// 那个做法正是"触发键激活后左键仍点穿到下层窗口"的直接原因：目标窗口先收到真实的
-	// WM_LBUTTONDOWN、再收到我们补发的 WM_LBUTTONUP，于是一次完整点击成立。
-	// 现在阈值期间按下会被缓冲、从不投递，因此不再需要 pairing，这里保留实现仅供诊断/自检观察，
-	// 生产路径不会再调用它（PhantomUpSentForTest 应恒为 0 增长）。
-	private static void PostPairedButtonUp(nint hwnd, int idx, Native.POINT pt)
-	{
-		try
-		{
-			if (hwnd != IntPtr.Zero)
-			{
-				int msg = idx switch
-				{
-					1 => 517, 
-					0 => 514, 
-					_ => 520, 
-				};
-				int num = 0;
-				if (idx != 0 && IsButtonPhysicallyDown(0))
-				{
-					num |= 1;
-				}
-				if (idx != 1 && IsButtonPhysicallyDown(1))
-				{
-					num |= 2;
-				}
-				if (idx != 2 && IsButtonPhysicallyDown(2))
-				{
-					num |= 0x10;
-				}
-				Native.POINT lpPoint = pt;
-				Native.ScreenToClient(hwnd, ref lpPoint);
-				nint lParam = new IntPtr((lpPoint.Y << 16) | (lpPoint.X & 0xFFFF));
-				Native.PostMessageW(hwnd, msg, new IntPtr(num), lParam);
-				PhantomUpSentForTest++;
-				LastPairedUpForTest = new PairedUpProbe
-				{
-					Hwnd = hwnd,
-					Msg = msg,
-					WParam = num,
-					LParam = lParam
-				};
-			}
-		}
-		catch
-		{
 		}
 	}
 
@@ -2279,7 +2216,6 @@ internal static class DragBench
 			current.ActionMiddle = "Nothing";
 			current.ShowActivationFrame = true;
 			current.BringToFront = false;
-			current.MovePreviewMode = "FullWin";
 			current.MoveRate = Math.Max(1, current.MoveRate);
 			current.ResizeRate = Math.Max(1, current.ResizeRate);
 			using SlowTargetForm slowTargetForm = new SlowTargetForm();
@@ -2811,6 +2747,7 @@ internal sealed class DragEngine : IDisposable
 			_frame.Destroy();
 			_overlaysReady = false;
 		}
+		_idleReleaseTimer?.Dispose();
 	}
 
 	public void Precreate()
@@ -2999,11 +2936,7 @@ internal sealed class DragEngine : IDisposable
 		WindowActions.ResetSessionKickCache();
 		DiagReset();
 		_frameInside = false;
-		_inset = ComputeInset(hwnd, lpRect);
-		if (appConfig.MovePreviewMode != "Outline")
-		{
-			WindowActions.NotifySizeMove(hwnd, start: true);
-		}
+		WindowActions.NotifySizeMove(hwnd, start: true);
 		_worker.FrameIntervalMs = appConfig.FrameIntervalMs(DetectedRefreshHz);
 		try
 		{
@@ -3206,8 +3139,7 @@ internal sealed class DragEngine : IDisposable
 					ShakeAction.ToggleMinimizeOthers(s.Hwnd);
 				}
 			}
-			bool flag = appConfig.MovePreviewMode == "Outline" && !forceWrite;
-			if (appConfig.ShowActivationFrame && !flag)
+			if (appConfig.ShowActivationFrame)
 			{
 				Native.RECT rectNow = FrameRectOf(rECT, appConfig, out var inset);
 				_frame.RaiseAboveAll = true;
@@ -3224,11 +3156,7 @@ internal sealed class DragEngine : IDisposable
 					}
 				}
 			}
-			if (flag)
-			{
-				ShowOutline(rECT, s, appConfig);
-			}
-			else if (forceWrite)
+			if (forceWrite)
 			{
 				WindowActions.SetDragRect(s.Hwnd, rECT);
 			}
@@ -3284,10 +3212,6 @@ internal sealed class DragEngine : IDisposable
 			{
 				s = _session;
 				hwnd = _session.Hwnd;
-			}
-			if (appConfig.MovePreviewMode == "Outline" && hwnd != IntPtr.Zero)
-			{
-				WindowActions.NotifySizeMove(hwnd, start: true);
 			}
 			bool cursorPos = Native.GetCursorPos(out var pt);
 			lock (_gate)
@@ -3692,28 +3616,6 @@ internal sealed class DragEngine : IDisposable
 			}
 		}
 	}
-
-	private void ShowOutline(Native.RECT target, Session s, AppConfig c)
-	{
-		if (target.Width < 12 || target.Height < 12)
-		{
-			return;
-		}
-		Native.RECT rectNow = FrameRectOf(target, c, out var inset);
-		_frame.RaiseAboveAll = true;
-		if (rectNow.Width < 4 || rectNow.Height < 4)
-		{
-			return;
-		}
-		_frame.ApplyTheme(c.FrameColorId, c.FrameStyleId, c.FrameThickness, c.FrameRadius, c.FrameOpacity, c.EffectiveFrameColor);
-		lock (_gate)
-		{
-			if (_dragging && _session.Gen == s.Gen)
-			{
-				_frame.SetRectNow(rectNow);
-			}
-		}
-	}
 }
 internal sealed class DragWorker : IDisposable
 {
@@ -3812,7 +3714,10 @@ internal sealed class DragWorker : IDisposable
 			_work.Enqueue(work);
 			if (!Native.PostThreadMessageW(_threadId, 32774u, IntPtr.Zero, IntPtr.Zero))
 			{
-				_work.TryDequeue(out var _);
+				// 投递失败（线程消息队列满）时不能 TryDequeue：队列是 FIFO，
+				// 出队的会是最早那条而不是刚入队的这条，丢旧的留新的，语义反了。
+				// 让活计留在队列里，下次投递成功时一起处理。
+				Log.Trace("投递任务失败（线程消息队列可能已满），任务已留在队列中");
 			}
 		}
 	}
@@ -4746,7 +4651,9 @@ internal static class FrameStyles
 		{
 			return;
 		}
-		long key = ((long)w << 42) ^ ((long)h << 22) ^ ((long)(int)Math.Round(r) << 9) ^ (long)(uint)color.ToArgb() ^ ((long)pad << 3);
+		// 键必须无碰撞地覆盖全部入参：w/h 各 14 位、圆角 10 位、色值 32 位、pad 6 位，
+		// 加起来超过 64 位，硬塞进一个 long 必然位域重叠（色值的低位会盖住 h/r），曾导致命中错误缓存。
+		var key = (w, h, (int)Math.Round(r), color.ToArgb(), pad);
 		lock (ShadowGate)
 		{
 			if (_shadowCache == null || _shadowKey != key)
@@ -4787,7 +4694,7 @@ internal static class FrameStyles
 
 	private static Bitmap _shadowCache;
 
-	private static long _shadowKey = long.MinValue;
+	private static (int W, int H, int R, int Color, int Pad) _shadowKey;
 
 	private static Bitmap BuildShadowBitmap(int w, int h, float radius, int pad, Color color)
 	{
@@ -8950,7 +8857,7 @@ internal static class Program
 			{
 				if (!string.Equals(text, "--no-elevate", StringComparison.OrdinalIgnoreCase))
 				{
-					list.Add(text);
+					list.Add(Updater.QuoteArg(text));
 				}
 			}
 			Process.Start(new ProcessStartInfo
@@ -9008,7 +8915,6 @@ internal static class SelfTest
 			current.DoubleClickLeftMaximize = false;
 			current.DoubleClickRightZone = false;
 			current.AllowFullscreenWindows = true;
-			current.MovePreviewMode = "FullWin";
 			tweak?.Invoke(current);
 			Window = new Form();
 			Window.FormBorderStyle = FormBorderStyle.Sizable;
@@ -9193,7 +9099,6 @@ internal static class SelfTest
 		Safe("T47 黑名单能用进程名匹配 + 两个挑选入口都在（黑名单易用性回归）", TestBlacklistPickers);
 		Safe("T48 全链路真实拖动：窗口必须真的跟着光标动（核心功能端到端）", TestRealDragMovesWindow);
 		Safe("T50 真实长按触发键能激活（钩子线程化后 WinForms Timer 失效回归）", TestRealKeyboardHoldActivates);
-		Safe("T51 空心矩形模式：拖动期窗口不动、松手落位（AltSnap FullWin=0 移植回归）", TestOutlineMode);
 		Safe("T52 视觉反馈组几何：窄/宽各档下样式预览框必须留在分组内且不被遮", TestVisualGroupGeometry);
 		Safe("T53 晃窗手势：真晃才触发、匀速/小幅抖动/拖太慢都不触发（#39）", TestShakeGesture);
 		Safe("T54 松开触发键后外框立即消失，pin 机制已下线（外框残留）", TestFrameGoesAwayOnRelease);
@@ -9240,6 +9145,8 @@ internal static class SelfTest
 		Safe("T96 设置页重排性能：换宽度一次 < 60ms、同宽度重复调用被去重", TestSettingsRelayoutPerformance);
 		Safe("T97 侧栏高亮只跟着当前页（点过就留胶囊的回归）", TestNavHighlightFollowsSelection);
 		Safe("T95 圆角参数必须真的改变渲染结果（圆角设置失效回归）", TestFrameRadiusTakesEffect);
+		Safe("T98 录制守卫与配置不变量：\"K:0x00\" 必被 Normalize 兜底、鼠标侧键/Shift 不被误伤、QuoteArg 按需包引号", TestRecordedKeyAndConfigInvariants);
+		Safe("T99 保存失败不再静默：Save/Apply 返回 false 并带回错误信息（设置页据此红字早退）", TestConfigSaveFailureIsVisible);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();
@@ -9422,9 +9329,8 @@ internal static class SelfTest
 			configStore.Current.HoldMs = 888;
 			configStore.Current.TriggerKeyId = "K:RAlt";
 			configStore.Current.ActionLeft = "Resize";
-			configStore.Current.MovePreviewMode = "FullWin";
 			configStore.Current.ShakeMinimizeOthers = false;
-			configStore.Save();
+			configStore.Save(out _);
 			ConfigStore configStore2 = new ConfigStore(text);
 			configStore2.Load();
 			Eq(configStore2.Current.HoldMs, 888, "HoldMs 往返一致");
@@ -9453,9 +9359,9 @@ internal static class SelfTest
 			ConfigStore configStore = new ConfigStore(text);
 			configStore.Load();
 			configStore.Current.HoldMs = 777;
-			configStore.Save();
+			configStore.Save(out _);
 			configStore.Current.HoldMs = 888;
-			configStore.Save();
+			configStore.Save(out _);
 			string text2 = Path.Combine(text, "config.json");
 			Check(File.Exists(text2 + ".bak"), "备份文件已生成");
 			File.WriteAllText(text2, "{ 这不是一个合法的 JSON");
@@ -10320,7 +10226,6 @@ internal static class SelfTest
 			current.RequireHold = true;
 			current.HoldMs = 400;
 			current.ActionLeft = "Move";
-			current.MovePreviewMode = "FullWin";
 			current.ActionRight = "Resize";
 			current.ActionMiddle = "Nothing";
 			current.ShowActivationFrame = true;
@@ -10824,76 +10729,6 @@ internal static class SelfTest
 		}
 	}
 
-	private static void TestOutlineMode()
-	{
-		string text = Path.Combine(Path.GetTempPath(), "holddrag-outline-" + Guid.NewGuid().ToString("N"));
-		Directory.CreateDirectory(text);
-		Form form = null;
-		DragEngine dragEngine = null;
-		try
-		{
-			ConfigStore store = new ConfigStore(text);
-			store.Load();
-			AppConfig current = store.Current;
-			current.MovePreviewMode = "Outline";
-			current.ActionLeft = "Move";
-			current.ActionRight = "Resize";
-			current.ActionMiddle = "Nothing";
-			current.ShowActivationFrame = false;
-			current.BringToFront = false;
-			current.MoveRate = 1;
-			current.ResizeRate = 1;
-			form = new Form();
-			form.FormBorderStyle = FormBorderStyle.Sizable;
-			form.StartPosition = FormStartPosition.Manual;
-			form.ShowInTaskbar = false;
-			form.TopMost = true;
-			form.Bounds = new Rectangle(150, 150, 300, 200);
-			form.Show();
-			Pump();
-			Native.RECT win = new Native.RECT(150, 150, 450, 350);
-			Native.POINT pt = new Native.POINT(300, 250);
-			dragEngine = new DragEngine(() => store.Current);
-			dragEngine.Precreate();
-			if (!dragEngine.Begin(form.Handle, move: true, 0, pt))
-			{
-				Check(ok: false, "Outline：会话启动成功", "Begin 返回 false");
-				return;
-			}
-			for (int num = 1; num <= 5; num++)
-			{
-				dragEngine.StepForTest(new Native.POINT(pt.X + num * 10, pt.Y + num * 6));
-			}
-			Native.GetWindowRect(form.Handle, out var lpRect);
-			Eq(lpRect.Left, win.Left, "Outline：拖动期间窗口左缘纹丝不动");
-			Eq(lpRect.Top, win.Top, "Outline：拖动期间窗口上缘纹丝不动");
-			Eq(lpRect.Width, win.Width, "Outline：拖动期间窗口宽度不变");
-			Check(dragEngine.Frame.IsShown, "Outline：预览框在拖动期间可见", "IsShown=" + dragEngine.Frame.IsShown);
-			Native.GetWindowRect(dragEngine.Frame.Handle, out var lpRect2);
-			Check(Math.Abs(lpRect2.Left + lpRect2.Width / 2 - (win.Left + 50 + win.Width / 2)) <= 12, "Outline：预览框中心跟到第 5 步位置（左）", "框中心=" + (lpRect2.Left + lpRect2.Width / 2) + " 期望=" + (win.Left + 50 + win.Width / 2));
-			Check(Math.Abs(lpRect2.Top + lpRect2.Height / 2 - (win.Top + 30 + win.Height / 2)) <= 12, "Outline：预览框中心跟到第 5 步位置（上）", "框中心=" + (lpRect2.Top + lpRect2.Height / 2) + " 期望=" + (win.Top + 30 + win.Height / 2));
-			int num2 = CountFramePixelsAround(win, FrameColors.Resolve(current.FrameColorId));
-			Check(num2 > 200, "Outline：预览框在屏幕上真的有渲染的像素", "inkPixels=" + num2);
-			dragEngine.UpdateFinal(new Native.POINT(pt.X + 60, pt.Y + 36));
-			Native.GetWindowRect(form.Handle, out var lpRect3);
-			Eq(lpRect3.Left, win.Left + 60, "Outline：松手后窗口落到最新位置（左缘）");
-			Eq(lpRect3.Top, win.Top + 36, "Outline：松手后窗口落到最新位置（上缘）");
-		}
-		finally
-		{
-			dragEngine?.Cancel();
-			form?.Dispose();
-			Pump();
-			try
-			{
-				Directory.Delete(text, recursive: true);
-			}
-			catch
-			{
-			}
-		}
-	}
-
 	private static void TestRealKeyboardHoldActivates()
 	{
 		if (!NoRoomForTestWindow())
@@ -10913,7 +10748,6 @@ internal static class SelfTest
 			current.RequireHold = true;
 			current.HoldMs = 200;
 			current.ActionLeft = "Move";
-			current.MovePreviewMode = "FullWin";
 			current.ActionRight = "Resize";
 			current.ActionMiddle = "Nothing";
 			current.ShowActivationFrame = false;
@@ -11013,7 +10847,6 @@ internal static class SelfTest
 			current.RequireHold = true;
 			current.HoldMs = 400;
 			current.ActionLeft = "Move";
-			current.MovePreviewMode = "FullWin";
 			current.ActionRight = "Resize";
 			current.ActionMiddle = "Nothing";
 			current.ShowActivationFrame = true;
@@ -11325,7 +11158,6 @@ internal static class SelfTest
 			current.RequireHold = true;
 			current.HoldMs = 200;
 			current.ActionLeft = "Move";
-			current.MovePreviewMode = "FullWin";
 			current.ActionRight = "Resize";
 			current.ActionMiddle = "Nothing";
 			current.ShowActivationFrame = false;
@@ -11915,7 +11747,6 @@ internal static class SelfTest
 			current.RequireHold = false;
 			current.HoldMs = 1234;
 			current.ActionLeft = "Resize";
-			current.MovePreviewMode = "FullWin";
 			current.ActionRight = "AlwaysOnTop";
 			current.ActionMiddle = "Nothing";
 			current.ShowActivationFrame = false;
@@ -11940,7 +11771,7 @@ internal static class SelfTest
 			current.FrameOpacity = 55;
 			current.SettingsWidth = 1234;
 			current.SettingsHeight = 876;
-			configStore.Save();
+			configStore.Save(out _);
 			ConfigStore configStore2 = new ConfigStore(text);
 			configStore2.Load();
 			AppConfig current2 = configStore2.Current;
@@ -11977,7 +11808,7 @@ internal static class SelfTest
 			{
 				configStore2.Current.SettingsWidth = width;
 				configStore2.Current.SettingsHeight = 1000;
-				configStore2.Save();
+				configStore2.Save(out _);
 				ConfigStore configStore3 = new ConfigStore(text);
 				configStore3.Load();
 				Check(configStore3.Current.SettingsWidth >= width, "★ 窗口宽度上限跟随屏幕（不再写死 2400）", "屏幕宽=" + width + " 存回来=" + configStore3.Current.SettingsWidth);
@@ -11987,9 +11818,9 @@ internal static class SelfTest
 				Line("（跳过）本机屏幕宽度 " + width + " 不大于 2400，无法验证上限是否跟随屏幕");
 			}
 			configStore2.Current.HoldMs = 555;
-			configStore2.Save();
+			configStore2.Save(out _);
 			configStore2.Current.HoldMs = 666;
-			configStore2.Save();
+			configStore2.Save(out _);
 			ConfigStore configStore4 = new ConfigStore(text);
 			configStore4.Load();
 			Eq(configStore4.Current.HoldMs, 666, "连续多次保存后最新值仍能读回");
@@ -12236,6 +12067,7 @@ internal static class SelfTest
 		bool flag4 = false;
 		bool flag5 = false;
 		bool flag6 = false;
+		bool flag7 = false;
 		PropertyInfo[] properties = typeof(AppConfig).GetProperties();
 		foreach (PropertyInfo obj in properties)
 		{
@@ -12263,6 +12095,10 @@ internal static class SelfTest
 			{
 				flag6 = true;
 			}
+			if (obj.Name == "MovePreviewMode")
+			{
+				flag7 = true;
+			}
 		}
 		Check(!flag, "AppConfig 里已无 DragTransparency");
 		Check(!flag2, "AppConfig 里已无 DragSizeHint");
@@ -12270,6 +12106,7 @@ internal static class SelfTest
 		Check(!flag4, "AppConfig 里已无 SnapToOtherWindows（#32 与其它窗口对齐整体删除）");
 		Check(!flag5, "AppConfig 里已无 SnapPreview（#32 边缘预览落位整体删除）");
 		Check(!flag6, "AppConfig 里已无 SnapDistance（#32 吸附距离整体删除）");
+		Check(!flag7, "AppConfig 里已无 MovePreviewMode（v1.6.1 删除 Outline 预览模式：无 UI 入口且被 Normalize 钉死 FullWin，生产不可达）");
 		ConfigStore configStore = new ConfigStore(Path.Combine(Path.GetTempPath(), "holddrag-legacy-" + Guid.NewGuid().ToString("N")));
 		Directory.CreateDirectory(configStore.Dir);
 		File.WriteAllText(configStore.FilePath, "{\r\n  \"TriggerKeyId\": \"K:0xA4\",\r\n  \"DragTransparency\": true,\r\n  \"DragTransparencyAlpha\": 70,\r\n  \"DragSizeHint\": true,\r\n  \"EdgeSnap\": true,\r\n  \"SnapToOtherWindows\": true,\r\n  \"SnapPreview\": true,\r\n  \"SnapDistance\": 42\r\n}", Encoding.UTF8);
@@ -12283,6 +12120,95 @@ internal static class SelfTest
 			try
 			{
 				Directory.Delete(configStore.Dir, recursive: true);
+			}
+			catch
+			{
+			}
+		}
+	}
+
+	/// <summary>
+	/// v1.6.1 Must #1 / Must #3 的回归：
+	/// #1 录制纯修饰键时 KeyCode 掩码把修饰位掩掉后是 Keys.None，历史 bug 会绑成 "K:0x00"
+	///    （vk=0 永远匹配不上任何真实按键，触发键就此失效）；设置页已加守卫，Normalize 也加了不变量兜底；
+	/// #3 更新重启的两处命令行拼接必须按需包引号（路径含空白否则会被拆成多个参数）。
+	/// </summary>
+	private static void TestRecordedKeyAndConfigInvariants()
+	{
+		Eq(KeysUtil.ToVirtualKey("K:0x00"), 0, "\"K:0x00\" 解析不出有效虚拟键码（纯修饰键被 KeyCode 掩码掩掉的产物）");
+		AppConfig appConfig = new AppConfig();
+		appConfig.TriggerKeyId = "K:0x00";
+		appConfig.Normalize();
+		Eq(appConfig.TriggerKeyId, "K:0x0D", "Normalize 兜底：无效触发键 \"K:0x00\" 回落默认回车键（录制守卫的兜底回归）");
+		AppConfig appConfig2 = new AppConfig();
+		appConfig2.TriggerKeyId = "M:1";
+		appConfig2.Normalize();
+		Eq(appConfig2.TriggerKeyId, "M:1", "Normalize 不误伤鼠标侧键 X1（vk=5）作为触发键");
+		AppConfig appConfig3 = new AppConfig();
+		appConfig3.TriggerKeyId = "K:LShift";
+		appConfig3.Normalize();
+		Eq(appConfig3.TriggerKeyId, "K:LShift", "Normalize 不误伤左 Shift（vk=160）作为触发键");
+		AppConfig appConfig4 = new AppConfig();
+		appConfig4.TriggerKeyId = "";
+		appConfig4.Normalize();
+		Eq(appConfig4.TriggerKeyId, "K:0x0D", "Normalize 兜底：空触发键同样回落默认回车键");
+		Eq(Updater.QuoteArg("C:\\Program Files\\HoldDrag\\HoldDrag.exe.old"), "\"C:\\Program Files\\HoldDrag\\HoldDrag.exe.old\"", "QuoteArg：路径含空白时整段包引号（否则会被拆成多个参数）");
+		Eq(Updater.QuoteArg("--no-elevate"), "--no-elevate", "QuoteArg：无空白的参数原样返回（不多包引号）");
+		Eq(Updater.QuoteArg(""), "", "QuoteArg：空串原样返回");
+		string composed = Updater.ArgUpdatedFrom + " " + Updater.QuoteArg("D:\\a b\\HoldDrag.exe.old");
+		Eq(composed, "--updated-from \"D:\\a b\\HoldDrag.exe.old\"", "ApplyAndRestart 实际拼出的命令行：flag 不包、路径按需包");
+	}
+
+	/// <summary>
+	/// v1.6.1 Must #2 的回归：保存失败绝不能再对用户显示"已保存并立即生效"——
+	/// ConfigStore.Save/Apply 必须返回 false 且带回错误信息，设置页据此红字早退。
+	/// </summary>
+	private static void TestConfigSaveFailureIsVisible()
+	{
+		// 把配置目录指向一个"已存在的文件"：Directory.CreateDirectory 必然抛异常，Save 必然失败
+		string blocker = Path.Combine(Path.GetTempPath(), "holddrag-blocker-" + Guid.NewGuid().ToString("N"));
+		File.WriteAllText(blocker, "x");
+		try
+		{
+			ConfigStore configStore = new ConfigStore(blocker);
+			configStore.Load();
+			bool saved = configStore.Save(out string error);
+			Check(!saved, "保存失败时 Save 返回 false（不再静默成功）");
+			Check(!string.IsNullOrEmpty(error), "保存失败时 error 带回了异常信息（设置页要原样显示给用户）");
+			AppConfig appConfig = new AppConfig();
+			appConfig.TriggerKeyId = "K:0x0D";
+			bool applied = configStore.Apply(appConfig, out string error2);
+			Check(!applied, "Apply 同样返回 false（Current 已被替换但磁盘没写成功，调用方必须知道）");
+			Check(!string.IsNullOrEmpty(error2), "Apply 失败时同样带回错误信息");
+		}
+		finally
+		{
+			try
+			{
+				File.Delete(blocker);
+			}
+			catch
+			{
+			}
+		}
+		// 正对照：正常目录下必须真的保存成功（防止"永远返回 false"式的假修复）
+		string dir = Path.Combine(Path.GetTempPath(), "holddrag-saveok-" + Guid.NewGuid().ToString("N"));
+		try
+		{
+			ConfigStore okStore = new ConfigStore(dir);
+			okStore.Load();
+			AppConfig okConfig = new AppConfig();
+			okConfig.TriggerKeyId = "K:0x0D";
+			bool ok = okStore.Apply(okConfig, out string okError);
+			Check(ok, "正常目录下 Apply 返回 true（保存失败路径的对照）");
+			Check(File.Exists(okStore.FilePath), "正常目录下配置文件真的落盘了");
+			Check(string.IsNullOrEmpty(okError), "保存成功时 error 为空串");
+		}
+		finally
+		{
+			try
+			{
+				Directory.Delete(dir, recursive: true);
 			}
 			catch
 			{
@@ -13002,7 +12928,6 @@ internal static class SelfTest
 			using DragFixture dragFixture = new DragFixture((AppConfig c) =>
 			{
 				c.ShowActivationFrame = true;
-				c.MovePreviewMode = "FullWin";
 			});
 			DragEngine drag = dragFixture.Coord.Drag;
 			Color want = FrameColors.Resolve(dragFixture.Store.Current.FrameColorId);
@@ -13644,7 +13569,6 @@ internal static class SelfTest
 			{
 				Native.GetWindowRect(dragFixture.H, out var lpRect);
 				Native.POINT p = CenterOf(dragFixture.H);
-				int phantomUpSentForTest = Coordinator.PhantomUpSentForTest;
 				// 真实光标必须与"按下点"一致：激活瞬间补起时以当前光标为起点（见 AdoptBufferedButtonsNow），
 				// 光标若还停在上一个用例的位置，补起那一帧窗口就会跳。
 				Native.GetCursorPos(out var cursorBefore);
@@ -13665,7 +13589,6 @@ internal static class SelfTest
 				Eq(lpAdopt.Left - lpRect.Left, 0, "★ 补起那一帧窗口不跳（以当前光标为起点）");
 				Eq(lpAdopt.Top - lpRect.Top, 0, "★ 补起那一帧窗口不跳（垂直）");
 				Check(!dragFixture.Coord.PassedDownForTest(0), "按住阶段放行的那条 down 同样记入『幽灵按下』账，收养时已完成配对");
-				Check(Coordinator.PhantomUpSentForTest == phantomUpSentForTest, "★ 收养时不再补发合成抬起（按下从未投递给目标窗口，不需要配对，也就不会凑成一次点击）");
 				for (int num = 0; num < 12; num++)
 				{
 					Application.DoEvents();
@@ -13697,7 +13620,6 @@ internal static class SelfTest
 				c.DoubleClickLeftMaximize = false;
 			});
 			Native.POINT p2 = CenterOf(dragFixture2.H);
-			int phantomUpSentForTest2 = Coordinator.PhantomUpSentForTest;
 			Native.MSLLHOOKSTRUCT ms5 = Ms(p2);
 			dragFixture2.Coord.OnMouse(513, ref ms5);
 			Check(!dragFixture2.Coord.HeldDuringHoldForTest(0), "按下发生在触发键按住【之前】：『按住期间』记账不置位（两套账分工正确）");
@@ -13708,7 +13630,6 @@ internal static class SelfTest
 			dragFixture2.Coord.OnMouse(512, ref ms6);
 			Settle();
 			Check(dragFixture2.Coord.Drag.IsDragging, "★ 第四十四轮：激活时仍按着的键现在必须补起（用户报障场景的修复点）");
-			Check(Coordinator.PhantomUpSentForTest == phantomUpSentForTest2, "★ 不再补发配对的按钮抬起（目标程序从未收到过这条按下，无需复位）");
 			Native.MSLLHOOKSTRUCT ms7 = Ms(ms6.pt);
 			dragFixture2.Coord.OnMouse(514, ref ms7);
 			dragFixture2.Coord.Trigger.SimulateKeyUp(null);
@@ -13853,7 +13774,6 @@ internal static class SelfTest
 			DragFixture f = new DragFixture((AppConfig c) =>
 			{
 				c.ShowActivationFrame = true;
-				c.MovePreviewMode = "FullWin";
 				c.BringToFront = false;
 				c.FrameStyleId = "Glow";
 				c.FrameThickness = 3;
@@ -14005,7 +13925,6 @@ internal static class SelfTest
 			using DragFixture dragFixture = new DragFixture((AppConfig c) =>
 			{
 				c.ShowActivationFrame = true;
-				c.MovePreviewMode = "FullWin";
 				c.BringToFront = false;
 				c.FrameStyleId = "Glow";
 				c.FrameThickness = 3;
@@ -14271,7 +14190,7 @@ internal static class SelfTest
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
 		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
-		Check(SettingsForm.AppVersionForTest == "1.6.0", "★ 版本号已升到 1.6.0", "实际=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == "1.6.1", "★ 版本号已升到 1.6.1", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
 
@@ -14838,7 +14757,6 @@ internal static class SelfTest
 			using DragFixture dragFixture = new DragFixture((AppConfig c) =>
 			{
 				c.ShowActivationFrame = true;
-				c.MovePreviewMode = "FullWin";
 				c.BringToFront = false;
 				c.AllowFullscreenWindows = false;
 				c.ExitFullscreenOnTrigger = true;
@@ -15027,7 +14945,6 @@ internal static class SelfTest
 			using DragFixture dragFixture = new DragFixture((AppConfig c) =>
 			{
 				c.ShowActivationFrame = true;
-				c.MovePreviewMode = "FullWin";
 				c.BringToFront = false;
 				c.AllowFullscreenWindows = false;
 				c.ExitFullscreenOnTrigger = true;
@@ -15522,7 +15439,6 @@ internal static class SelfTest
 				Native.GetWindowRect(dragFixture.H, out var lpRect);
 				Native.POINT p = CenterOf(dragFixture.H);
 				int cancelModeSentForTest = Coordinator.CancelModeSentForTest;
-				int phantomUpSentForTest = Coordinator.PhantomUpSentForTest;
 				Native.MSLLHOOKSTRUCT ms = Ms(p);
 				Check(!dragFixture.Coord.OnMouse(513, ref ms), "① 拖选文字的左键按下被原样放行（目标程序实收，进入拖选模态）");
 				Check(dragFixture.Coord.PassedDownForTest(0), "★ 放行的按下记入『幽灵按下』账（本 bug 的根源量：不记账就永远想不起补配对）");
@@ -15537,7 +15453,6 @@ internal static class SelfTest
 				Check(!dragFixture.Coord.OnMouse(512, ref ms2), "拖动期间的移动绝不吞（吞了光标会冻结）");
 				Check(dragFixture.Coord.Drag.IsDragging, "★★ 左键还按着就补起了拖动（修复点：以前这里永远补不起来，只剩拖选文字）");
 				Check(Coordinator.CancelModeSentForTest > cancelModeSentForTest + 1, "★ 收养时再次取消目标窗口的拖拽模态");
-				Check(Coordinator.PhantomUpSentForTest == phantomUpSentForTest, "★ 不再补发【配对的按钮抬起】（目标程序从未见过这条按下，也就没有需要复位的按下标记）");
 				Check(!dragFixture.Coord.PassedDownForTest(0), "配对后幽灵按下账已清");
 				Settle();
 				Native.GetWindowRect(dragFixture.H, out var lpRect2);
@@ -15561,7 +15476,6 @@ internal static class SelfTest
 			}))
 			{
 				Native.POINT p2 = CenterOf(dragFixture2.H);
-				int phantomUpSentForTest2 = Coordinator.PhantomUpSentForTest;
 				Native.MSLLHOOKSTRUCT ms5 = Ms(p2);
 				dragFixture2.Coord.OnMouse(513, ref ms5);
 				Check(dragFixture2.Coord.PassedDownForTest(0), "② 按下被记账");
@@ -15569,7 +15483,6 @@ internal static class SelfTest
 				Native.MSLLHOOKSTRUCT ms6 = Ms(p2);
 				Check(!dragFixture2.Coord.OnMouse(514, ref ms6), "激活后直接松手：这次真实抬起原样放行（目标窗口自己完成配对）");
 				Check(!dragFixture2.Coord.PassedDownForTest(0), "配对后记账清零（不会秋后补发骚扰消息）");
-				Check(Coordinator.PhantomUpSentForTest == phantomUpSentForTest2, "没有补发合成抬起（真实 up 已经完成配对，不需要我们插手）");
 				Check(!dragFixture2.Coord.Drag.IsDragging, "没有会话残留");
 				dragFixture2.Coord.Trigger.SimulateKeyUp(null);
 				Settle();
@@ -15631,9 +15544,9 @@ internal static class SelfTest
 		WindowActions.AllowOwnProcessAsTargetForTest = true;
 		try
 		{
-			RunPairedUpMaskCase(0, new bool[3] { true, true, true }, 513, "收养左键：右/中键都还按着 → wParam=MkRM（自己已松开故不含左键）");
-			RunPairedUpMaskCase(1, new bool[3] { true, true, false }, 516, "收养右键：左键还按着、中键已松 → wParam=MkL（如实带左键、不带中键）");
-			RunPairedUpMaskCase(2, new bool[3] { false, false, true }, 519, "收养中键：其余键都没按 → wParam=0（不许把没按着的键报成按着）");
+			RunSwallowedButtonCase(0, new bool[3] { true, true, true }, 513, "收养左键：右/中键都还按着 → wParam=MkRM（自己已松开故不含左键）");
+			RunSwallowedButtonCase(1, new bool[3] { true, true, false }, 516, "收养右键：左键还按着、中键已松 → wParam=MkL（如实带左键、不带中键）");
+			RunSwallowedButtonCase(2, new bool[3] { false, false, true }, 519, "收养中键：其余键都没按 → wParam=0（不许把没按着的键报成按着）");
 		}
 		finally
 		{
@@ -15642,10 +15555,9 @@ internal static class SelfTest
 		}
 	}
 
-	private static void RunPairedUpMaskCase(int btn, bool[] downs, int downMsg, string maskWhat)
+	private static void RunSwallowedButtonCase(int btn, bool[] downs, int downMsg, string maskWhat)
 	{
 		Coordinator.ButtonsDownOverrideForTest = downs;
-		Coordinator.LastPairedUpForTest = null;
 		using DragFixture dragFixture = new DragFixture((AppConfig c) =>
 		{
 			if (btn == 0)
@@ -15663,7 +15575,6 @@ internal static class SelfTest
 			}
 		});
 		Native.POINT p = CenterOf(dragFixture.H);
-		int phantomUpSentForTest = Coordinator.PhantomUpSentForTest;
 		Native.MSLLHOOKSTRUCT ms = Ms(p);
 		dragFixture.Coord.Trigger.SimulateKeyDown();
 		Check(dragFixture.Coord.Trigger.Held && !dragFixture.Coord.Trigger.Active, "触发键处于阈值内的『按住』阶段（btn=" + btn + "）");
@@ -15677,9 +15588,7 @@ internal static class SelfTest
 		dragFixture.Coord.OnMouse(512, ref ms2);
 		Settle();
 		Check(dragFixture.Coord.Drag.IsDragging, "激活后第一次移动就把拖动补起（btn=" + btn + "）");
-		Check(Coordinator.PhantomUpSentForTest == phantomUpSentForTest, "★ 全程没有向目标窗口补发任何合成抬起（btn=" + btn + "）：那条抬起正是把『被放行的按下』凑成一次真实点击的元凶");
-		Check(Coordinator.LastPairedUpForTest == null, "配对抬起探针保持为空（btn=" + btn + "）");
-		Check(!dragFixture.Coord.BufferedDownForTest(btn), "缓冲已消费（btn=" + btn + "）");
+			Check(!dragFixture.Coord.BufferedDownForTest(btn), "缓冲已消费（btn=" + btn + "）");
 	}
 
 	private static int MaskOf(bool[] downs, int btn)
@@ -15724,7 +15633,6 @@ internal static class SelfTest
 			current.ActionLeft = "Move";
 			current.ActionRight = "Resize";
 			current.ActionMiddle = "Nothing";
-			current.MovePreviewMode = "FullWin";
 			current.ShowActivationFrame = false;
 			current.BringToFront = false;
 			current.DoubleClickLeftMaximize = false;
@@ -15864,7 +15772,6 @@ internal static class SelfTest
 			current.ActionLeft = "Move";
 			current.ActionRight = "Resize";
 			current.ActionMiddle = "Nothing";
-			current.MovePreviewMode = "FullWin";
 			current.ShowActivationFrame = false;
 			current.BringToFront = false;
 			current.DoubleClickLeftMaximize = false;
@@ -20624,6 +20531,14 @@ internal sealed class SettingsForm : Form
 				StopRecording(applied: false);
 				return true;
 			}
+			if (keys == Keys.None)
+			{
+				// 纯修饰键（Ctrl/Shift/Alt/Win）被 KeyCode 掩码掩掉后就是 Keys.None；
+				// 放任不管会走默认分支绑成 "K:0x00"（vk=0 永远匹配不上任何真实按键），触发键就此失效。
+				_lblKeyHint.Text = "修饰键（Ctrl / Shift / Alt / Win）不能单独作为触发键，请再按一个主键。";
+				_lblKeyHint.ForeColor = Tokens.WarnText;
+				return true;
+			}
 			string text = ResolveRecordedKey(keys);
 			if (text == null)
 			{
@@ -20712,7 +20627,13 @@ internal sealed class SettingsForm : Form
 			StopRecording(applied: false);
 		}
 		CaptureInto(_edit);
-		_store.Apply(_edit);
+		if (!_store.Apply(_edit, out string saveError))
+		{
+			// 保存失败时绝不能再显示"已保存并立即生效"：设置没有落盘，重启就会丢
+			_lblStatus.ForeColor = Tokens.Danger;
+			_lblStatus.Text = "保存失败：" + saveError + "（本次修改没有写入磁盘，重启后会丢失；请检查配置目录权限或磁盘空间）";
+			return;
+		}
 		string message;
 		if (AutoStart.Apply(_edit.AutoStart, AppPaths.ExePath, out message))
 		{
@@ -20724,10 +20645,6 @@ internal sealed class SettingsForm : Form
 			_lblStatus.ForeColor = Tokens.Danger;
 			_lblStatus.Text = "配置已保存，但开机自启设置失败";
 			MessageBox.Show(message, "开机自启设置失败", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
-		}
-		if (!string.IsNullOrEmpty(message))
-		{
-			MessageBox.Show(message, "开机自启", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 		}
 		if (_edit.RunAsAdmin && !Program.IsAdministrator() && MessageBox.Show("已保存。\r\n\r\n管理员权限只在【启动的时候】申请，所以要重启程序才会生效。\r\n现在以管理员身份重启吗？（选\"否\"就等下次启动再提权）", "长按拖窗 · 权限变更", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
 		{
@@ -23621,7 +23538,6 @@ internal static class StressTest
 			Store = new ConfigStore(_dir);
 			Store.Load();
 			AppConfig current = Store.Current;
-			current.MovePreviewMode = "FullWin";
 			current.ShowActivationFrame = true;
 			current.AllowFullscreenWindows = true;
 			current.BringToFront = true;
@@ -24180,7 +24096,7 @@ internal sealed class TrayContext : ApplicationContext
 					if (appConfig != null && !string.Equals(appConfig.LastUpdateNotified, info.Tag, StringComparison.OrdinalIgnoreCase))
 					{
 						appConfig.LastUpdateNotified = info.Tag;
-						_store.Save();
+						_store.Save(out _);
 					}
 					_tray.BalloonTipTitle = "长按拖窗：发现新版本 " + info.Tag;
 					_tray.BalloonTipText = "当前 v" + AppInfo.Version + "。双击托盘图标打开设置，点「检查更新」即可下载并自动替换。";
@@ -24332,7 +24248,15 @@ internal sealed class TrayContext : ApplicationContext
 	{
 		AppConfig current = _store.Current;
 		string mode = (current.AutoStart = ((current.AutoStart == "None") ? "TaskScheduler" : "None"));
-		_store.Save();
+		if (!_store.Save(out string saveError))
+		{
+			// 保存失败就把内存改动撤回：系统自启项此时还没改，但配置没落盘，
+			// 留着翻转后的值会让之后任何一次成功保存把"用户没确认过的切换"写进磁盘。
+			current.AutoStart = ((mode == "None") ? "TaskScheduler" : "None");
+			UpdateMenuState();
+			ShowBalloon("开机自启切换失败", "配置没能写入磁盘：" + saveError + "（本次切换没有生效，重启后会恢复原样；请检查配置目录权限或磁盘空间）", ToolTipIcon.Warning);
+			return;
+		}
 		ApplyConfig(initial: false);
 		AutoStart.Apply(mode, AppPaths.ExePath, out var message);
 		if (!string.IsNullOrEmpty(message))
