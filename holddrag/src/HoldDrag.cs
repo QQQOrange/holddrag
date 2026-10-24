@@ -65,7 +65,7 @@ internal static class AppInfo
 	public const string PatDocsUrl = "https://docs.github.com/zh/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens";
 
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.7.0";
+	public const string FallbackVersion = "1.7.1";
 
 	public static string Version
 	{
@@ -8963,6 +8963,40 @@ internal static class Program
 	/// 用途：用户反馈"检查更新没反应/总是失败"时，让他跑这一条就能拿到确切原因，
 	/// 不必去翻 GUI 状态。
 	/// </summary>
+	/// <summary>
+	/// `--checkupdate` 的输出正文（不含"当前版本 / 令牌"这两行）。
+	/// 抽成纯函数是为了让自检锁住这条规则：**说明与 发现新版本/已是最新/检查失败 必须同时出现**。
+	/// （v1.7.0 曾把"说明"写成互斥分支，结果有说明时整段结果被吞掉、退出码还误报成功。）
+	/// </summary>
+	internal static string DescribeCheckUpdate(UpdateInfo info, bool upToDate, string error, string note, bool hasToken)
+	{
+		StringBuilder stringBuilder = new StringBuilder();
+		if (!string.IsNullOrEmpty(note))
+		{
+			stringBuilder.AppendLine("说明　　：" + note);
+		}
+		if (info != null)
+		{
+			stringBuilder.AppendLine("发现新版本 " + info.Tag + "（当前 v" + AppInfo.Version + "）");
+			stringBuilder.AppendLine("下载地址：" + info.AssetUrl);
+			stringBuilder.AppendLine("发布页　：" + info.PageUrl);
+			if (!hasToken)
+			{
+				stringBuilder.AppendLine("　　　　　（未填令牌：程序内不会下载，请用上面的地址在浏览器下载）");
+			}
+		}
+		else if (upToDate)
+		{
+			stringBuilder.AppendLine("已是最新版本（v" + AppInfo.Version + "）");
+		}
+		else
+		{
+			stringBuilder.AppendLine("检查失败：" + error);
+			stringBuilder.AppendLine("发布页　：" + AppInfo.ReleasesUrl);
+		}
+		return stringBuilder.ToString().TrimEnd();
+	}
+
 	private static void RunCheckUpdateOnly()
 	{
 		Console.WriteLine("当前版本：" + AppInfo.Version);
@@ -8994,20 +9028,18 @@ internal static class Program
 			bool upToDate;
 			string note;
 			UpdateInfo updateInfo = Updater.CheckLatest(out error, out upToDate, out note);
-			if (!string.IsNullOrEmpty(note))
+			Console.WriteLine(DescribeCheckUpdate(updateInfo, upToDate, error, note, Updater.HasToken));
+			if (updateInfo != null)
 			{
-				Console.WriteLine("说明　　：" + note);
+				text = "发现新版本 " + updateInfo.Tag + "（当前 v" + AppInfo.Version + "）";
 			}
 			else if (upToDate)
 			{
 				text = "已是最新版本（v" + AppInfo.Version + "）";
-				Console.WriteLine(text);
 			}
 			else
 			{
 				text = "检查失败：" + error;
-				Console.WriteLine(text);
-				Console.WriteLine("发布页　：" + AppInfo.ReleasesUrl);
 			}
 			Log.Info("--checkupdate 结果：" + text);
 		}
@@ -12541,6 +12573,21 @@ internal static class SelfTest
 		Check(text3.Contains("不会下载到本机"), "★ 没令牌的提示正文明确写「不会下载到本机」（用户一眼看懂程序内不下载）", text3);
 		Check(text3.Contains("浏览器"), "★ 没令牌的提示正文指明去浏览器下载", text3);
 		Check(text3.Contains("令牌"), "提示正文说明了补令牌后可自动下载");
+		// --checkupdate 输出：说明必须与三分支并存（v1.7.0 曾把说明写成互斥分支，把结果整段吞掉）
+		UpdateInfo updateInfo = new UpdateInfo
+		{
+			Tag = "v9.9.9",
+			Version = "9.9.9",
+			AssetUrl = "https://example.invalid/HoldDrag.exe",
+			PageUrl = "https://example.invalid/tag/v9.9.9"
+		};
+		string text4 = Program.DescribeCheckUpdate(updateInfo, upToDate: false, error: "", note: "令牌无效，已改用匿名方式检查", hasToken: false);
+		Check(text4.Contains("说明") && text4.Contains("发现新版本") && text4.Contains("下载地址"), "★ --checkupdate：有说明时仍要报「发现新版本 + 下载地址」（说明吞掉结果的回归）", text4);
+		Check(text4.Contains("不会下载"), "★ --checkupdate：未填令牌时明确提示「程序内不会下载」", text4);
+		string text5 = Program.DescribeCheckUpdate(null, upToDate: true, error: "", note: "限额已用尽，已改用网页方式检查", hasToken: true);
+		Check(text5.Contains("说明") && text5.Contains("已是最新版本"), "★ --checkupdate：有说明时仍要报「已是最新版本」", text5);
+		string text6 = Program.DescribeCheckUpdate(null, upToDate: false, error: "网络不可达", note: "令牌无效", hasToken: false);
+		Check(text6.Contains("说明") && text6.Contains("检查失败") && text6.Contains("网络不可达"), "★ --checkupdate：有说明时仍要报「检查失败」（否则退出码会误报成功）", text6);
 		string text2 = Updater.Token;
 		try
 		{
@@ -14529,7 +14576,7 @@ internal static class SelfTest
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
 		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
-		Check(SettingsForm.AppVersionForTest == "1.7.0", "★ 版本号已升到 1.7.0", "实际=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == "1.7.1", "★ 版本号已升到 1.7.1", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
 
