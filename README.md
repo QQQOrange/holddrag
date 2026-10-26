@@ -16,19 +16,16 @@
 
 ## 目录结构
 
+> 本目录已精简为**只保留最新版源码**（2026-10-25）。历史 PRD、自检证据、早期原型、
+> 构建产物与 git 历史都移到了归档包与远端仓库：归档 `D:\Local AI\_归档\HoldDrag-源码与历史-2026-10-25.tar.gz`，
+> 远端 https://github.com/QQQOrange/holddrag （已发布到 `v1.9.1`：多语言、可取消的更新下载窗口、缺 .NET 10 的中文引导、单文件自解包）。
+
 | 路径 | 内容 |
 | --- | --- |
-| [`holddrag/src/`](holddrag/src/) | **产品源码**（`HoldDrag.cs` / `HoldDrag.csproj` / 图标 / 清单 / 程序集信息） |
-| [`holddrag/dist/`](holddrag/dist/) | **交付产物**：框架依赖单文件 `HoldDrag.exe`（+ pdb） |
-| [`holddrag/docs/PRD.md`](holddrag/docs/PRD.md) | **产品需求文档**：产品目标 / 页面结构 / 功能边界 / 验收标准（唯一基准） |
-| [`holddrag/docs/修复实施报告.md`](holddrag/docs/修复实施报告.md) | 三轮缺陷的根因、坐标（行号）、修复方案与验证结论 |
-| [`holddrag/docs/patches/`](holddrag/docs/patches/) | 可 `git apply` 的历史修复补丁 |
-| [`holddrag/evidence/`](holddrag/evidence/) | 自检报告、真实输入链路取证、截图与原始日志 |
-| [`holddrag/probes/`](holddrag/probes/) | 探针工程（样式墨量、浮层渲染、表单几何、真实输入 E2E 工具） |
-| [`holddrag/reference/`](holddrag/reference/) | 反编译基准源码 + 修复前的基线 exe（可做 A/B） |
-| [`holddrag/legacy/`](holddrag/legacy/) | 历史多文件工程快照、各阶段构建产物、设计截图 |
-| [`holddrag/notes/`](holddrag/notes/) | 开发期长期笔记与会话记录（踩坑、约定、决策） |
-| `altdrag.c` / `hooks.c` / `build.bat` … | 上游 AltDrag 的原始文件，未改动 |
+| [`holddrag/src/`](holddrag/src/) | **主程序源码**（`HoldDrag.cs` 主体 / `Loc.cs` 文案表 / `UpdateFlow.cs` 更新窗口 / `HoldDrag.csproj` / 图标 / 清单 / 程序集信息） |
+| [`launcher/`](launcher/) | **启动器源码**（`Launcher.cs` + `HoldDragLauncher.csproj`，net48，产物就是对外唯一的 `HoldDrag.exe`）——检查 .NET 10、缺了就弹中文提示、把内嵌的主程序解包后启动 |
+| `README.md` | 本说明（功能、构建、更新机制） |
+| `LICENSE` | GPL 授权（派生自 AltDrag，必须保留） |
 
 ---
 
@@ -44,8 +41,49 @@
 > 换触发键：设置窗口里点「重新录制」→ 直接按下你想用的键。
 > 左 / 右 / 中键已被鼠标动作占用，不能当触发键；鼠标侧键（前进 / 后退）可以。
 
-> **需要 .NET 10 桌面运行时**（框架依赖单文件发布）。没有的话装一个
-> [Windows Desktop Runtime 10](https://dotnet.microsoft.com/download/dotnet/10.0) 即可。
+> **需要 .NET 10 桌面运行时**（框架依赖发布，主程序只有 745 KB）。
+> 没装也不会看到看不懂的英文报错：双击 `HoldDrag.exe` 时，启动器会先检查，缺了就弹一个中文窗口，
+> 点「去官网下载」直接打开 [Windows Desktop Runtime 10](https://dotnet.microsoft.com/download/dotnet/10.0)，
+> 也可以「复制链接」自己粘到浏览器；窗口里还会提醒要选 **x64** 的 **Desktop Runtime**（只装 .NET Runtime / ASP.NET Core 不够）。
+
+---
+
+## 单文件 + .NET 10：怎么既"不打包运行时"又能提示下载
+
+对外**只有一个 `HoldDrag.exe`（约 805 KB）**，它同时干两件事：
+
+1. 用 **.NET Framework 4.8** 写的那一层做启动前检查（Win10 1903+ / Win11 自带，缺 .NET 10 时它也能跑）；
+2. 真正的程序（.NET 10，745 KB 单文件）**内嵌在这个 exe 里**，检查通过后解包再启动。
+
+```
+%LOCALAPPDATA%\HoldDrag\app\<内容哈希>\HoldDrag.App.exe   ← 首次启动自动展开，同版本只解一次
+```
+
+| 场景 | 表现 |
+| --- | --- |
+| 装了 .NET 10 | 解包（首次）/ 直接命中缓存（之后），无任何提示，正常启动 |
+| 没装 .NET 10 | 弹出中文窗口：「需要先安装 .NET 10 桌面运行时」+ 官网链接 +「去官网下载 / 复制链接 / 关闭」，**不会启动主程序** |
+| 解包失败（磁盘满 / 无权限 / 杀软拦） | 明确告诉原因，而不是闪退 |
+
+**为什么必须这么绕**：主程序是 .NET 10 应用，缺运行时它连进程都起不来，没机会自己弹窗；
+能弹窗的只能是"不依赖 .NET 10"的那一层。要"只有一个文件"，这一层就只能把主程序背在身上。
+
+**更新时替换的是这个单文件本身**：启动器启动时会用 `--host <自身路径>` 告诉主程序"用户手里那个 exe 在哪"，
+自动更新按这个路径做「旧 exe → `.old`、新文件 → 正式名」，重启后由新 exe 解包新版主程序并自动清掉旧解包目录。
+
+--- | --- | --- |
+| `HoldDrag.exe` | **启动器**，57 KB | .NET Framework 4.8（Windows 10 1903+ / Windows 11 自带，一定跑得起来） |
+| `HoldDrag.App.exe` | **主程序**，745 KB，单文件 | .NET 10 桌面运行时 |
+| `HoldDrag.exe.config` | 启动器的运行时配置（**别删**，和启动器放一起） | — |
+
+**为什么不能合成一个 exe**：主程序是 .NET 10 应用，缺运行时的时候它进程都起不来，
+根本没有机会自己弹窗；能弹窗的只能是"不依赖 .NET 10"的那一层。所以启动器用系统自带的
+.NET Framework 4.8 写，检查通过后原样转发命令行参数给 `HoldDrag.App.exe` 并立即退出。
+
+启动器还负责两件事：**安装不完整**（只有启动器没有主程序）时说清楚缺哪个文件；
+**运行时齐全时零打扰**（不弹任何东西，直接启动）。
+
+更新时只需要替换 `HoldDrag.App.exe` —— 自动更新做的就是这件事，启动器不用动。
 
 ---
 
@@ -60,15 +98,46 @@
 - 更新接续是特例：就地替换时新版本先启动、旧进程后退出，带 `--updated-from` 的实例必须**等**旧进程释放互斥体再接管，而不是让位（否则更新完一个进程都不剩）。
 - 回归保护：自检 **T91** 会**真实启动第二个 exe**，断言它自己退出并唤起已有实例（该用例已做反向验证：禁用让位分支后必然报 2 项失败）。
 
-## 自动更新（v1.1 新增，v1.7.0 支持 GitHub 令牌）
+## 多语言（v1.9.0 新增）
+
+「启动与权限 → 语言 / Language」里选 **简体中文** 或 **English**：
+
+- **选中即生效**：写进 `config.json` 的 `Language` 字段，并立刻重建整个设置窗口与托盘菜单，
+  不需要重启、也不用再点「保存并生效」；
+- 下次启动按这个值加载，**中文启动就是全中文，英文启动就是全英文**，不会出现半中半英；
+- 覆盖范围：设置窗口全部页面（标题/副标题/卡片/说明/按钮/下拉项/无障碍名称）、
+  托盘右键菜单与气泡、所有对话框与提示、更新窗口、按键名（`Enter` / `CapsLock` 等）、
+  颜色与样式名（`薄荷青` → `Mint`、`虚线环` → `Dashed ring`）。
+- 实现方式：源码里的中文原文直接当 key（`Loc.T("检查更新")`），译文集中放在 `Loc.cs` 的表里；
+  查不到就回退中文，**不会露 key、也不会抛异常**。新增文案只要在源码里写 `Loc.T("…")` 再补一条译文即可。
+- 静态表（按键名、颜色表）里**只存中文原文**，取用时才翻译——否则静态构造只会跑一次，会把首次的语言"烤"死在内存里。
+- 调试：`HoldDrag.exe --langshot en` 会按"中文起步 → 用下拉框切到英文"的真实路径走一遍，
+  再把每个设置页截图到 `%TEMP%\holddrag-langshot\`，用来核对译文有没有溢出或折行错位。
+
+## 文字渲染（v1.9.1 调整）
+
+界面文字发毛 / 锯齿，通常是两件事叠加，这里各修一处：
+
+- **字号一律用整数像素**。原来用磅值（9.5pt），在 125% / 150% 缩放下会算成 15.83px、19px 这类小数，
+  GDI 对小数号字号的取舍不匀，中文字形边缘就会毛。现在统一 `Sc(px)` → `GraphicsUnit.Pixel`。
+- **字体族按语言挑**：中文用「微软雅黑 UI」（为界面设计的字重），英文用 Segoe UI。
+  不再使用 `Segoe UI Variable*`——它是可变字体，WinForms 控件走 GDI 渲染只能取默认实例，
+  中文还会逐字回退到别的字体，两套字形混排比纯雅黑更"花"。
+
+> 令牌显示：设置页只回显「已生效 / 待保存」，**不显示令牌的任何片段**（原来会露出 `ghp_…4dU7`）；
+> 日志与控制台同样只记"已配置 / 长度 N"，不写内容。
+
+## 自动更新（v1.1 新增，v1.7.0 支持 GitHub 令牌，v1.9.0 改为弹窗 + 可取消下载）
 
 「关于」页里有 **GitHub 项目主页**链接、**自动更新**开关和**检查更新**按钮：
 
-- **自动更新默认开启**：每次启动后台查一次最新发布，**只在真有新版本时**用托盘气泡提示，不打断你正在做的事。
-- 点「检查更新」会立刻检查并在按钮右侧实时回显状态（检查中 / 已是最新 / 发现新版 / 下载进度）。
-- **填了 GitHub 个人访问令牌 → 发现新版本后确认即在设置页里直接下载**，下载完成自动替换旧文件并重启。
-- **没填令牌 → 只提示、不自动下载**：会弹出「下载地址」对话框，给出可点击的 GitHub 下载链接
-  （另有「用浏览器打开」「复制链接」），**程序内不会下载**；托盘气泡也会改成"点这个气泡用浏览器打开下载页"。
+- **自动更新默认开启**：每次启动后台查一次最新发布，**真有新版本就弹一个独立窗口**
+  （「发现新版本」：立即下载 / 稍后 / 打开发布页），窗口在任务栏里有条目，切走了也能找回来。
+- **下载有专属窗口**：显示百分比与已下载/总大小，**窗口本身在任务栏里可见**（`ShowInTaskbar = true`），
+  并带一个**「取消下载」按钮**——点了就真的中断（取消令牌传到下载循环，每读一块检查一次），
+  半截的 `.part` 会被删掉，程序保持当前版本；直接关窗口也等同取消。
+- **无论有没有令牌，下载前都先弹窗确认**；没填令牌时走匿名直链（发布资产不吃接口限额）。
+- 点「检查更新」同样走这套流程，并在按钮右侧实时回显状态（检查中 / 已是最新 / 发现新版 / 已取消 / 下载失败）。
 - 同一个新版本**只提示一次**，不会每次开机都弹。
 - 网络不通时如实报出具体原因并给出发布页链接，**绝不**谎报"已是最新"。
 - 更换机制不用批处理脚本：Windows 允许重命名正在运行的 exe，因此按
@@ -95,6 +164,9 @@ GitHub 的接口对匿名请求只给 **60 次/小时**，公司网络/代理下
 - 接口限额真用尽时同样会自动退回网页方式，并提示大约多久后重置。
 
 托盘右键菜单里也有「检查更新…」和「项目主页（GitHub）」两个入口。
+
+**维护者注意**：自动更新抓的资产名是 `HoldDrag.exe`（`Updater.AssetName`）——
+也就是"启动器 + 内嵌主程序"那个单文件，**不要**上传解包出来的 `HoldDrag.App.exe`。
 
 ### 默认绑定（对齐 AltSnap 出厂绑定，只是把修饰键换成了长按 Enter）
 
@@ -154,7 +226,7 @@ HoldDrag.exe --no-elevate
 | `--trace` | 手感类问题的取证开关：逐帧把光标 / 期望矩形 / 实际矩形 / 是否贴边写入日志 |
 | `--updated-from <path>` | 更新接续：新版启动后删除该路径指向的 `.old` 旧版本备份 |
 | `--checkupdate` | 只做一次更新检查并把结果打到控制台与日志（排查更新链路用） |
-| `--dragbench` / `--probe` / `--windowhost` / `--visualcheck` / `--previewtest` | 基准、渲染探针、外部窗口宿主、视觉核对、样式预览导出 |
+| `--dragbench` / `--probe` / `--windowhost` / `--visualcheck` / `--previewtest` / `--langshot` | 基准、渲染探针、外部窗口宿主、视觉核对、样式预览导出、多语言逐页截图 |
 
 ---
 
@@ -176,12 +248,18 @@ HoldDrag.exe --no-elevate
 需要 **.NET SDK 10**（`dotnet --list-sdks` 应能看到 `10.0.x`）。
 
 ```powershell
-# 编译
-dotnet build holddrag/src/HoldDrag.csproj -c Release
+# 1) 先发布主程序（.NET 10 单文件）——启动器要把它内嵌进去
+dotnet publish holddrag/src/HoldDrag.csproj -c Release
 
-# 发布单文件（与仓库内交付产物同形态）
-dotnet publish holddrag/src/HoldDrag.csproj -c Release -o out `
-  --self-contained false -p:PublishSingleFile=true
+# 2) 再编启动器（net48）→ 产物就是对外唯一那个 HoldDrag.exe（约 805 KB）
+dotnet build launcher/HoldDragLauncher.csproj -c Release
+
+# 3) 拷出来即可发布（只有一个文件）
+copy launcher\bin\Release\net48\HoldDrag.exe out\
+
+# 4) 验证"缺 .NET 10"的中文提示（设这个环境变量就假装没装，不会真的去下载）
+$env:HOLDDRAAG_FORCE_MISSING_DOTNET=1
+.\out\HoldDrag.exe
 
 # 自检（必须先确认桌面上没有旧实例在跑）
 .\out\HoldDrag.exe --selftest      # 退出码 0 = 全通过
@@ -223,18 +301,18 @@ dotnet publish holddrag/src/HoldDrag.csproj -c Release -o out `
 8. `tap`（点一下触发键即松开）在"按住才拖"语义下不会拖动；
    若需要"点一下抓住 / 再点一下放下"，暂未实现。
 
-完整的边界定义与验收标准见 [`holddrag/docs/PRD.md`](holddrag/docs/PRD.md)。
+完整的边界定义与验收标准见远端仓库的 `holddrag/docs/PRD.md`（本地已随精简移除，归档包与 GitHub 上仍可查）。
 
 ---
 
-## 仓库的提交内容说明
+## 本目录的内容说明
 
-- 仓库根目录的上游 C 源码（`altdrag.c`、`hooks.c`、`installer.nsi`、`localization/` …）**原样保留**，
-  与 `upstream` 远端一致，便于对照与合并。
-- 本产品源码集中在 [`holddrag/`](holddrag/)，与上游文件不交叉。
-- `holddrag/dist/HoldDrag.exe` 与 `holddrag/reference/baseline/HoldDrag.exe` 是**有意提交的二进制**
-  （交付产物与修复前基线），因此 `.gitignore` 中对这两个目录做了反忽略。
-- 上游 `.gitignore` 里的 `bin` / `*.dll` / `*.exe` 规则依然生效，构建中间产物不会被提交。
+- 本目录**只保留最新版源码**：`holddrag/src/`（`HoldDrag.cs` 主体 / `Loc.cs` 中英文案表 / `UpdateFlow.cs` 更新窗口 / `HoldDrag.csproj` / `app.ico` / `app.manifest` / `Properties/AssemblyInfo.cs`）、`README.md`、`LICENSE`。
+- 已移除：上游 AltDrag 的 C 源与资源、历史原型（`legacy/` `probes/` `reference/` `notes/`）、自检证据（`evidence/`）、
+  构建产物（`dist/` 与 `bin/` `obj/`）、旧文档（`docs/`）以及本地 git 历史。
+- 归档包：`D:\Local AI\_归档\HoldDrag-源码与历史-2026-10-25.tar.gz`（含被移除的全部内容与 `.git`）。
+- 远端仓库 https://github.com/QQQOrange/holddrag 仍保留完整历史与 tag（最新 `v1.8.0`），需要查旧版本从那里取。
+- 构建：`dotnet publish holddrag/src/HoldDrag.csproj -c Release --self-contained false -p:PublishSingleFile=true`。
 
 ---
 

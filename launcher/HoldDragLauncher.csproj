@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    启动器（bootstrapper）——对外**只有这一个 exe**，主程序以资源形式内嵌在里面。
+
+    为什么需要这一层：主程序是 .NET 10 应用，缺运行时的时候它连进程都起不来，
+    没机会自己弹窗；能弹窗的只能是"不依赖 .NET 10"的那一层。
+    这里选 net48（Windows 10 1903+ / Win11 自带），所以它一定跑得起来。
+
+    工作流程：检查 .NET 10 桌面运行时 → 缺了就弹中文窗口让用户去官网装；
+    齐了就把内嵌的 HoldDrag.App.exe 解到 %LOCALAPPDATA%\HoldDrag\app\<内容哈希>\ 再启动。
+
+    编译前必须先 dotnet publish 主程序（payload 路径见 PayloadPath）。
+  -->
+  <PropertyGroup>
+    <AssemblyName>HoldDrag</AssemblyName>
+    <RootNamespace>HoldDragLauncher</RootNamespace>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>7.3</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
+    <ApplicationIcon>..\holddrag\src\app.ico</ApplicationIcon>
+    <DebugType>none</DebugType>
+    <Optimize>True</Optimize>
+    <NoWarn>CS0168;CS0219</NoWarn>
+    <!-- 不生成 HoldDrag.exe.config：对外只有一个文件，启动器也不需要绑定重定向 -->
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
+    <!-- 内嵌的主程序（先 publish 主程序，再编启动器） -->
+    <PayloadPath Condition="'$(PayloadPath)' == ''">$(MSBuildThisFileDirectory)..\holddrag\src\bin\Release\net10.0-windows7.0\win-x64\publish\HoldDrag.App.exe</PayloadPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+  <Target Name="RequirePayload" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(PayloadPath)')"
+           Text="找不到内嵌的主程序：$(PayloadPath)  请先执行 dotnet publish holddrag/src/HoldDrag.csproj -c Release，再用 -p:PayloadPath=... 指定路径。" />
+    <Message Importance="high" Text="内嵌主程序：$(PayloadPath)" />
+  </Target>
+  <ItemGroup>
+    <EmbeddedResource Include="$(PayloadPath)" LogicalName="HoldDrag.Payload.exe" Condition="Exists('$(PayloadPath)')" />
+  </ItemGroup>
+</Project>

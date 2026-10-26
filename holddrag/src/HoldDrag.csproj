@@ -1,12 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <AssemblyName>HoldDrag</AssemblyName>
+    <!-- 主程序叫 HoldDrag.App.exe：外层 HoldDrag.exe 是启动器（launcher/ 目录，net48），
+         负责在缺 .NET 10 桌面运行时时给出中文提示。改名时 Updater.AssetName 与打包脚本要同步。 -->
+    <AssemblyName>HoldDrag.App</AssemblyName>
     <GenerateAssemblyInfo>False</GenerateAssemblyInfo>
     <OutputType>WinExe</OutputType>
     <UseWindowsForms>True</UseWindowsForms>
     <TargetFramework>net10.0-windows7.0</TargetFramework>
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- 明确"依赖 .NET 10，不打包运行时"：产物只有几百 KB，缺运行时时由启动器提示下载 -->
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
   <PropertyGroup>
     <LangVersion>14.0</LangVersion>

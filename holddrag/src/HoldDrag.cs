@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -65,7 +65,7 @@ internal static class AppInfo
 	public const string PatDocsUrl = "https://docs.github.com/zh/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens";
 
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.8.0";
+	public const string FallbackVersion = "1.9.1";
 
 	public static string Version
 	{
@@ -89,6 +89,24 @@ internal static class AppInfo
 }
 internal static class AppPaths
 {
+	/// <summary>
+	/// 用户手里那个 exe（外层启动器）的路径，由启动器用 <c>--host</c> 传进来；直接跑主程序时为空。
+	/// </summary>
+	internal static string HostPath;
+
+	/// <summary>
+	/// 「用户双击的那个文件」：有启动器时是启动器，没有时就是自己。
+	/// 自动更新要替换它（否则只换了 %LOCALAPPDATA% 里的副本，下次启动又跑回旧版），
+	/// 开机自启也要注册它（否则绕开启动器，缺 .NET 10 时就没有中文提示了）。
+	/// </summary>
+	public static string EntryPath
+	{
+		get
+		{
+			return string.IsNullOrEmpty(HostPath) ? ExePath : HostPath;
+		}
+	}
+
 	public static string ExePath
 	{
 		get
@@ -142,7 +160,7 @@ internal static class AutoStart
 					{
 						return true;
 					}
-					message = "写注册表 Run 项失败，可能被安全软件拦截。";
+					message = Loc.T("写注册表 Run 项失败，可能被安全软件拦截。");
 					Log.Error(message);
 					return false;
 				}
@@ -158,17 +176,17 @@ internal static class AutoStart
 			RemoveTask();
 			if (WriteRegistry(exePath))
 			{
-				message = "计划任务创建失败（" + error + "），已改用注册表方式。注意：注册表方式每次登录会弹一次 UAC 确认框。";
+				message = Loc.T("计划任务创建失败（") + error + Loc.T("），已改用注册表方式。注意：注册表方式每次登录会弹一次 UAC 确认框。");
 				Log.Info(message);
 				return true;
 			}
-			message = "计划任务与注册表方式都失败了：" + error;
+			message = Loc.T("计划任务与注册表方式都失败了：") + error;
 			Log.Error(message);
 			return false;
 		}
 		catch (Exception ex)
 		{
-			message = "设置开机自启时出错：" + ex.Message;
+			message = Loc.T("设置开机自启时出错：") + ex.Message;
 			Log.Error(ex);
 			return false;
 		}
@@ -360,7 +378,7 @@ internal static class Updater
 		{
 			if (!File.Exists(downloadedPath))
 			{
-				error = "下载文件不存在：" + downloadedPath;
+				error = Loc.T("下载文件不存在：") + downloadedPath;
 				return false;
 			}
 			// 1) 先清掉上一次可能残留的 .old（旧进程早已退出，这时能删掉）
@@ -394,7 +412,7 @@ internal static class Updater
 				{
 					Log.Error("回滚也失败了：" + ex3.Message);
 				}
-				error = "无法用新版本覆盖程序文件：" + ex2.Message;
+				error = Loc.T("无法用新版本覆盖程序文件：") + ex2.Message;
 				return false;
 			}
 			// 4) 拉起新版本；把 .old 路径传给它，由新版启动后清理
@@ -405,7 +423,7 @@ internal static class Updater
 			});
 			if (process == null)
 			{
-				error = "新版本已就位，但没能自动启动。请手动打开：" + exePath;
+				error = Loc.T("新版本已就位，但没能自动启动。请手动打开：") + exePath;
 				return false;
 			}
 			Log.Info("新版已就位并启动 pid=" + process.Id + "，旧版备份 " + text);
@@ -524,7 +542,7 @@ internal static class Updater
 		string text = NormalizeToken(token);
 		if (text.Length == 0)
 		{
-			return "（未填写）";
+			return Loc.T("（未填写）");
 		}
 		if (text.Length <= 8)
 		{
@@ -574,7 +592,7 @@ internal static class Updater
 	public static string FormatRateLimitMessage(int waitMinutes, bool withToken)
 	{
 		int num = Math.Max(1, waitMinutes);
-		return "GitHub 接口限额已用尽（" + (withToken ? "令牌 5000 次/小时" : "匿名 60 次/小时") + "），约 " + num + " 分钟后重置；已自动改用网页方式检查";
+		return Loc.T("GitHub 接口限额已用尽（") + (withToken ? Loc.T("令牌 5000 次/小时") : Loc.T("匿名 60 次/小时")) + Loc.T("），约 ") + num + Loc.T(" 分钟后重置；已自动改用网页方式检查");
 	}
 
 	/// <summary>「验证令牌」的结果分类（用于配色与自测断言）。</summary>
@@ -633,7 +651,7 @@ internal static class Updater
 		string text = NormalizeToken(rawToken);
 		if (string.IsNullOrEmpty(text))
 		{
-			message = "还没填令牌，没什么可验证的";
+			message = Loc.T("还没填令牌，没什么可验证的");
 			return TokenCheckResult.NotConfigured;
 		}
 		try
@@ -665,24 +683,24 @@ internal static class Updater
 				}
 				string remaining = HeaderValue(response, "x-ratelimit-remaining");
 				string limit = HeaderValue(response, "x-ratelimit-limit");
-				message = "令牌有效" + (string.IsNullOrEmpty(text2) ? "（接口有响应）" : ("，读到最新版本 " + text2));
+				message = Loc.T("令牌有效") + (string.IsNullOrEmpty(text2) ? Loc.T("（接口有响应）") : (Loc.T("，读到最新版本 ") + text2));
 				if (!string.IsNullOrEmpty(remaining) && !string.IsNullOrEmpty(limit))
 				{
-					message += "；接口额度剩余 " + remaining + "/" + limit;
+					message += Loc.T("；接口额度剩余 ") + remaining + "/" + limit;
 				}
 				break;
 			}
 			case TokenCheckResult.Invalid:
-				message = "令牌无效或已过期（HTTP 401）——请重新复制一个令牌；若刚改过权限，重新生成一个再试";
+				message = Loc.T("令牌无效或已过期（HTTP 401）——请重新复制一个令牌；若刚改过权限，重新生成一个再试");
 				break;
 			case TokenCheckResult.NoAccess:
-				message = "令牌有效，但读不到本仓库（HTTP " + status + "）——fine-grained 令牌请在 Resource owner → Repositories 里勾选 QQQOrange/holddrag";
+				message = Loc.T("令牌有效，但读不到本仓库（HTTP ") + status + Loc.T("）——fine-grained 令牌请在 Resource owner → Repositories 里勾选 QQQOrange/holddrag");
 				break;
 			case TokenCheckResult.RateLimited:
-				message = rateLimitNote + "（令牌本身没问题，等重置即可）";
+				message = rateLimitNote + Loc.T("（令牌本身没问题，等重置即可）");
 				break;
 			default:
-				message = "没法验证：HTTP " + status + "（服务端异常或网络中间设备拦截）";
+				message = Loc.T("没法验证：HTTP ") + status + Loc.T("（服务端异常或网络中间设备拦截）");
 				break;
 			}
 			Log.Info("验证令牌：" + result + " | " + message);
@@ -690,7 +708,7 @@ internal static class Updater
 		}
 		catch (Exception ex)
 		{
-			message = "网络不通，没法验证：" + Describe(ex);
+			message = Loc.T("网络不通，没法验证：") + Describe(ex);
 			Log.Info("验证令牌失败：" + ex.Message);
 			return TokenCheckResult.Network;
 		}
@@ -806,7 +824,7 @@ internal static class Updater
 		note = string.Empty;
 		if (ForceOfflineForTest)
 		{
-			error = "（测试）模拟网络不可达：无法连接 github.com";
+			error = Loc.T("（测试）模拟网络不可达：无法连接 github.com");
 			return null;
 		}
 		try
@@ -814,13 +832,13 @@ internal static class Updater
 			string tag = ResolveLatestTag(out note);
 			if (string.IsNullOrEmpty(tag))
 			{
-				error = "没能从发布页解析出最新版本号（可能没有已发布的 Release，或网络被拦截）。" + (string.IsNullOrEmpty(note) ? "" : ("（" + note + "）"));
+				error = Loc.T("没能从发布页解析出最新版本号（可能没有已发布的 Release，或网络被拦截）。") + (string.IsNullOrEmpty(note) ? "" : ("（" + note + "）"));
 				return null;
 			}
 			Version version = ParseVersion(tag);
 			if (version == null)
 			{
-				error = "发布标签格式无法识别：" + tag;
+				error = Loc.T("发布标签格式无法识别：") + tag;
 				return null;
 			}
 			if (version <= CurrentVersion())
@@ -890,7 +908,7 @@ internal static class Updater
 						return text2.Trim();
 					}
 				}
-				note = "接口返回里没有 tag_name";
+				note = Loc.T("接口返回里没有 tag_name");
 				return null;
 			}
 			string text3;
@@ -902,15 +920,15 @@ internal static class Updater
 			int num = (int)response.StatusCode;
 			if (IsAuthRejection(num, text))
 			{
-				note = "令牌无效或没有该仓库的读取权限（HTTP " + num + "），已自动改用匿名方式检查";
+				note = Loc.T("令牌无效或没有该仓库的读取权限（HTTP ") + num + Loc.T("），已自动改用匿名方式检查");
 				return null;
 			}
-			note = "接口返回 HTTP " + num;
+			note = Loc.T("接口返回 HTTP ") + num;
 			return null;
 		}
 		catch (Exception ex)
 		{
-			note = "接口请求失败：" + Describe(ex);
+			note = Loc.T("接口请求失败：") + Describe(ex);
 			Log.Info("api.github.com 请求失败（会改走网页路径）：" + ex.Message);
 			return null;
 		}
@@ -988,28 +1006,38 @@ internal static class Updater
 	}
 
 	/// <summary>下载新版 exe 到 <paramref name="targetPath"/>（先写 .part 再改名，避免半截文件）。</summary>
-	public static bool Download(UpdateInfo info, string targetPath, Action<long, long> progress, out string error)
+	/// <param name="cancel">
+	/// 取消令牌：每读一块检查一次，取消后立刻停止并删掉 .part。
+	/// 注意不能只靠"关闭窗口"来中断——窗口关掉而下载线程还在跑，替换照样会发生。
+	/// </param>
+	public static bool Download(UpdateInfo info, string targetPath, Action<long, long> progress, out string error, CancellationToken cancel = default)
 	{
 		error = string.Empty;
 		string text = targetPath + ".part";
 		try
 		{
-			using HttpResponseMessage response = Http.GetAsync(info.AssetUrl, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+			using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, info.AssetUrl);
+			using HttpResponseMessage response = Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancel).GetAwaiter().GetResult();
 			if (!response.IsSuccessStatusCode)
 			{
-				error = "下载失败：HTTP " + (int)response.StatusCode + "（" + response.ReasonPhrase + "）";
+				error = Loc.T("下载失败：HTTP ") + (int)response.StatusCode + "（" + response.ReasonPhrase + "）";
 				return false;
 			}
 			long? contentLength = response.Content.Headers.ContentLength;
 			long num = contentLength.GetValueOrDefault();
 			long num2 = 0L;
 			byte[] array = new byte[81920];
-			using (Stream stream = response.Content.ReadAsStreamAsync().GetAwaiter().GetResult())
+			using (Stream stream = response.Content.ReadAsStreamAsync(cancel).GetAwaiter().GetResult())
 			using (FileStream fileStream = new FileStream(text, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: false))
 			{
 				int num3;
 				while ((num3 = stream.Read(array, 0, array.Length)) > 0)
 				{
+					// 每块都查一次：点「取消下载」后最迟一块（约 80 KB）就停下来
+					if (cancel.IsCancellationRequested)
+					{
+						throw new OperationCanceledException(cancel);
+					}
 					fileStream.Write(array, 0, num3);
 					num2 += num3;
 					progress?.Invoke(num2, num);
@@ -1018,7 +1046,7 @@ internal static class Updater
 			}
 			if (num2 <= 0)
 			{
-				error = "下载得到 0 字节，可能是被网络中间设备拦截了。";
+				error = Loc.T("下载得到 0 字节，可能是被网络中间设备拦截了。");
 				return false;
 			}
 			if (num > 0 && num2 != num)
@@ -1028,6 +1056,13 @@ internal static class Updater
 			}
 			File.Move(text, targetPath, overwrite: true);
 			return true;
+		}
+		catch (OperationCanceledException)
+		{
+			// 取消不是"失败"：不弹错误框，调用方据 token 自行处理
+			error = Loc.T("已取消下载");
+			Log.Info("更新下载已被用户取消");
+			return false;
 		}
 		catch (Exception ex)
 		{
@@ -1060,7 +1095,7 @@ internal static class Updater
 		string text = innerException.Message;
 		if (innerException is HttpRequestException)
 		{
-			text += "（网络不可达：请检查代理 / 防火墙是否允许访问 github.com）";
+			text += Loc.T("（网络不可达：请检查代理 / 防火墙是否允许访问 github.com）");
 		}
 		return text;
 	}
@@ -1092,15 +1127,15 @@ internal static class Actions
 	{
 		return a switch
 		{
-			"Move" => "移动窗口", 
-			"Resize" => "调整大小", 
-			"Maximize" => "最大化 / 还原", 
-			"Minimize" => "最小化", 
-			"Close" => "关闭窗口", 
-			"Lower" => "置于最底层", 
-			"AlwaysOnTop" => "置顶 / 取消置顶", 
-			"Center" => "在屏幕上居中", 
-			"Nothing" => "不绑定动作", 
+			"Move" => Loc.T("移动窗口"), 
+			"Resize" => Loc.T("调整大小"), 
+			"Maximize" => Loc.T("最大化 / 还原"), 
+			"Minimize" => Loc.T("最小化"), 
+			"Close" => Loc.T("关闭窗口"), 
+			"Lower" => Loc.T("置于最底层"), 
+			"AlwaysOnTop" => Loc.T("置顶 / 取消置顶"), 
+			"Center" => Loc.T("在屏幕上居中"), 
+			"Nothing" => Loc.T("不绑定动作"), 
 			_ => a, 
 		};
 	}
@@ -1206,6 +1241,9 @@ internal sealed class AppConfig
 	/// <summary>上一次已提示过的版本号，用于"每个新版只提示一次"。</summary>
 	public string LastUpdateNotified { get; set; }
 
+	/// <summary>界面语言：zh = 简体中文，en = English（v1.8.1 新增，缺省中文）。</summary>
+	public string Language { get; set; }
+
 	/// <summary>
 	/// GitHub 个人访问令牌（可选，v1.7.0 新增）。
 	/// 填了就带 Authorization 头请求 api.github.com：限额从匿名 60 次/小时提到令牌的 5000 次/小时。
@@ -1252,6 +1290,7 @@ internal sealed class AppConfig
 		SettingsHeight = 0;
 		AutoCheckUpdate = true;
 		LastUpdateNotified = string.Empty;
+		Language = Loc.Zh;
 		GitHubToken = string.Empty;
 	}
 
@@ -1265,6 +1304,7 @@ internal sealed class AppConfig
 
 	public void Normalize()
 	{
+		Language = Loc.Normalize(Language);
 		if (string.IsNullOrEmpty(TriggerKeyId))
 		{
 			TriggerKeyId = "K:0x0D";
@@ -1872,7 +1912,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
 		}
 		finally
 		{
-			NoteHookCost(timestamp, down ? "按键按下" : "按键抬起");
+			NoteHookCost(timestamp, down ? Loc.T("按键按下") : Loc.T("按键抬起"));
 		}
 	}
 
@@ -1885,7 +1925,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
 		}
 		finally
 		{
-			NoteHookCost(timestamp, "鼠标消息");
+			NoteHookCost(timestamp, Loc.T("鼠标消息"));
 		}
 	}
 
@@ -3547,19 +3587,19 @@ internal sealed class DragEngine : IDisposable
 				Native.GetWindowRect(s.Hwnd, out var lpRect2);
 				string[] array = new string[9]
 				{
-					s.Move ? "移动" : "缩放",
-					" 光标=",
+					s.Move ? Loc.T("移动") : Loc.T("缩放"),
+					Loc.T(" 光标="),
 					pt.X.ToString(),
 					",",
 					pt.Y.ToString(),
-					" 期望=",
+					Loc.T(" 期望="),
 					null,
 					null,
 					null
 				};
 				Native.RECT rECT2 = rECT;
 				array[6] = rECT2.ToString();
-				array[7] = " 实际=";
+				array[7] = Loc.T(" 实际=");
 				rECT2 = lpRect2;
 				array[8] = rECT2.ToString();
 				Log.Trace(string.Concat(array));
@@ -4738,12 +4778,12 @@ internal static class FrameColors
 	{
 		if (followAccent)
 		{
-			return "跟随系统强调色";
+			return Loc.T("跟随系统强调色");
 		}
 		if (customArgb != 0 && ((customArgb >> 24) & 0xFF) != 0)
 		{
 			Color color = Color.FromArgb(customArgb);
-			return "自定义 #" + color.R.ToString("X2") + color.G.ToString("X2") + color.B.ToString("X2");
+			return Loc.T("自定义 #") + color.R.ToString("X2") + color.G.ToString("X2") + color.B.ToString("X2");
 		}
 		for (int i = 0; i < All.Length; i++)
 		{
@@ -4824,11 +4864,11 @@ internal static class FrameStyles
 	{
 		return id switch
 		{
-			"Dashed" => "虚线环", 
-			"Hairline" => "细线环", 
-			"Focus" => "焦点环", 
-			"Glow" => "柔光", 
-			"Shadow" => "柔和投影", 
+			"Dashed" => Loc.T("虚线环"), 
+			"Hairline" => Loc.T("细线环"), 
+			"Focus" => Loc.T("焦点环"), 
+			"Glow" => Loc.T("柔光"), 
+			"Shadow" => Loc.T("柔和投影"), 
 			_ => id, 
 		};
 	}
@@ -4837,11 +4877,11 @@ internal static class FrameStyles
 	{
 		return id switch
 		{
-			"Dashed" => "圆头短划、疏密跟着圆角走，日常最耐看", 
-			"Hairline" => "一根细线，最不打扰界面", 
-			"Focus" => "双层描边，最醒目，接近系统焦点框", 
-			"Glow" => "细腻的多层衰减光晕，暗色窗口上尤其好看", 
-			"Shadow" => "真实柔化投影，像窗口浮起来了一层", 
+			"Dashed" => Loc.T("圆头短划、疏密跟着圆角走，日常最耐看"), 
+			"Hairline" => Loc.T("一根细线，最不打扰界面"), 
+			"Focus" => Loc.T("双层描边，最醒目，接近系统焦点框"), 
+			"Glow" => Loc.T("细腻的多层衰减光晕，暗色窗口上尤其好看"), 
+			"Shadow" => Loc.T("真实柔化投影，像窗口浮起来了一层"), 
 			_ => string.Empty, 
 		};
 	}
@@ -6037,33 +6077,34 @@ internal static class KeysUtil
 	{
 		if (string.IsNullOrEmpty(id))
 		{
-			return "（未设置）";
+			return Loc.T("（未设置）");
 		}
 		switch (id)
 		{
 		case "K:LAlt":
-			return "左 Alt";
+			return Loc.T("左 Alt");
 		case "K:RAlt":
-			return "右 Alt（AltGr）";
+			return Loc.T("右 Alt（AltGr）");
 		case "K:LCtrl":
-			return "左 Ctrl";
+			return Loc.T("左 Ctrl");
 		case "K:RCtrl":
-			return "右 Ctrl";
+			return Loc.T("右 Ctrl");
 		case "K:LShift":
-			return "左 Shift";
+			return Loc.T("左 Shift");
 		case "K:RShift":
-			return "右 Shift";
+			return Loc.T("右 Shift");
 		case "M:1":
-			return "鼠标侧键 前进 (X1)";
+			return Loc.T("鼠标侧键 前进 (X1)");
 		case "M:2":
-			return "鼠标侧键 后退 (X2)";
+			return Loc.T("鼠标侧键 后退 (X2)");
 		default:
 		{
 			if (id.Length >= 3 && id[1] == ':' && TryParseHex(id.Substring(2), out var value))
 			{
 				if (Display.TryGetValue(value, out var value2))
 				{
-					return value2;
+					// 表里存的是中文原文，取用时才翻译：静态表只初始化一次，不能把语言烤进去
+					return Loc.T(value2);
 				}
 				if (value >= 112 && value <= 135)
 				{
@@ -6071,24 +6112,24 @@ internal static class KeysUtil
 				}
 				if (value >= 48 && value <= 57)
 				{
-					return "数字 " + (char)value;
+					return Loc.T("数字 ") + (char)value;
 				}
 				if (value >= 65 && value <= 90)
 				{
-					return "字母 " + (char)value;
+					return Loc.T("字母 ") + (char)value;
 				}
 				if (value >= 96 && value <= 105)
 				{
-					return "小键盘 " + (value - 96);
+					return Loc.T("小键盘 ") + (value - 96);
 				}
 				return value switch
 				{
-					106 => "小键盘 *", 
-					107 => "小键盘 +", 
-					109 => "小键盘 -", 
-					110 => "小键盘 .", 
-					111 => "小键盘 /", 
-					_ => "虚拟键 0x" + value.ToString("X2"), 
+					106 => Loc.T("小键盘 *"), 
+					107 => Loc.T("小键盘 +"), 
+					109 => Loc.T("小键盘 -"), 
+					110 => Loc.T("小键盘 ."), 
+					111 => Loc.T("小键盘 /"), 
+					_ => Loc.T("虚拟键 0x") + value.ToString("X2"), 
 				};
 			}
 			return id;
@@ -8388,11 +8429,11 @@ internal abstract class LayeredBitmapOverlay : OverlayWindow
 			{
 				if (_bmp == null)
 				{
-					return "无位图";
+					return Loc.T("无位图");
 				}
 				if (x < 0 || y < 0 || x >= _bmp.Width || y >= _bmp.Height)
 				{
-					return "越界";
+					return Loc.T("越界");
 				}
 				Color pixel = _bmp.GetPixel(x, y);
 				return pixel.R + "," + pixel.G + "," + pixel.B + ",a=" + pixel.A;
@@ -8400,13 +8441,13 @@ internal abstract class LayeredBitmapOverlay : OverlayWindow
 		}
 		catch (Exception ex)
 		{
-			return "异常 " + ex.GetType().Name;
+			return Loc.T("异常 ") + ex.GetType().Name;
 		}
 	}
 
 	internal string ProbeOverlayStateForTest()
 	{
-		return "alpha=" + _constantAlpha + " 位图=" + _bw + "x" + _bh + " cur=" + _curW + "x" + _curH + " memDc=" + (_memDc != IntPtr.Zero) + " hBitmap=" + (_hBitmap != IntPtr.Zero) + " visible=" + IsVisible + " placed=" + (_lastPlacedValid ? (_lastPlacedX + "," + _lastPlacedY) : "无") + " 抬顶=" + RaiseAboveAll;
+		return "alpha=" + _constantAlpha + Loc.T(" 位图=") + _bw + "x" + _bh + " cur=" + _curW + "x" + _curH + " memDc=" + (_memDc != IntPtr.Zero) + " hBitmap=" + (_hBitmap != IntPtr.Zero) + " visible=" + IsVisible + " placed=" + (_lastPlacedValid ? (_lastPlacedX + "," + _lastPlacedY) : Loc.T("无")) + Loc.T(" 抬顶=") + RaiseAboveAll;
 	}
 
 	private void Rebuild(int w, int h)
@@ -8836,6 +8877,12 @@ internal static class Program
 		CoordSpace.Init();
 		Log.Verbose = HasArg(args, "--trace") | flag2 | flag3;
 		Log.Info("==== 启动 ==== 参数: " + ((args.Length != 0) ? string.Join(" ", args) : "(无)"));
+		// 启动器用 --host 告诉我们"用户手里那个 exe"在哪（更新/自启都要用它）
+		AppPaths.HostPath = ArgValue(args, "--host");
+		if (!string.IsNullOrEmpty(AppPaths.HostPath))
+		{
+			Log.Info("外层启动器：" + AppPaths.HostPath);
+		}
 		// 更新接续：新版本启动后清理上一版的 .old 备份（此时旧进程已退出，删除必然成功）。
 		try
 		{
@@ -8847,7 +8894,7 @@ internal static class Program
 			else
 			{
 				// 手动启动时也顺手清一次上次残留的备份
-				Updater.CleanupOldVersion(AppPaths.ExePath + Updater.OldSuffix);
+				Updater.CleanupOldVersion(AppPaths.EntryPath + Updater.OldSuffix);
 			}
 		}
 		catch (Exception ex11)
@@ -8916,10 +8963,10 @@ internal static class Program
 			}
 			string text3 = num3 switch
 			{
-				0 => "不感知(0)★危险", 
-				1 => "系统感知(1)", 
-				2 => "每显示器感知(2)", 
-				_ => "查不到(" + num3 + ")", 
+				0 => Loc.T("不感知(0)★危险"), 
+				1 => Loc.T("系统感知(1)"), 
+				2 => Loc.T("每显示器感知(2)"), 
+				_ => Loc.T("查不到(") + num3 + ")", 
 			};
 			Log.Info("DPI 感知级别 = " + text3 + " | SM_CXSCREEN=" + systemMetrics + "x" + systemMetrics2 + " | 虚拟桌面=" + virtualScreen.Width + "x" + virtualScreen.Height + " | 主屏工作区=" + Screen.PrimaryScreen.WorkingArea.Width + "x" + Screen.PrimaryScreen.WorkingArea.Height);
 		}
@@ -8944,8 +8991,22 @@ internal static class Program
 			StressTest.HardExit(0);
 			return;
 		}
+		if (HasArg(args, "--langshot"))
+		{
+			string langShotLang = ArgValue(args, "--langshot");
+			if (string.IsNullOrEmpty(langShotLang))
+			{
+				langShotLang = Loc.En;
+			}
+			SettingsForm.DumpLanguageShots(Path.Combine(Path.GetTempPath(), "holddrag-langshot"), langShotLang);
+			StressTest.HardExit(0);
+			return;
+		}
 		ConfigStore configStore = new ConfigStore(text2);
 		configStore.Load();
+		// 语言必须在任何界面（含提权提示、托盘、设置窗口）出现之前定好，
+		// 否则第一屏会先闪一段中文再变成英文。
+		Loc.Init(configStore.Current.Language);
 		bool flag7 = IsAdministrator();
 		LaunchedWithoutElevation = !flag7;
 		if (!flag6 && !SmokeMode && configStore.Current.RunAsAdmin && !flag7)
@@ -9092,26 +9153,26 @@ internal static class Program
 		StringBuilder stringBuilder = new StringBuilder();
 		if (!string.IsNullOrEmpty(note))
 		{
-			stringBuilder.AppendLine("说明　　：" + note);
+			stringBuilder.AppendLine(Loc.T("说明　　：") + note);
 		}
 		if (info != null)
 		{
-			stringBuilder.AppendLine("发现新版本 " + info.Tag + "（当前 v" + AppInfo.Version + "）");
-			stringBuilder.AppendLine("下载地址：" + info.AssetUrl);
-			stringBuilder.AppendLine("发布页　：" + info.PageUrl);
+			stringBuilder.AppendLine(Loc.T("发现新版本 ") + info.Tag + Loc.T("（当前 v") + AppInfo.Version + "）");
+			stringBuilder.AppendLine(Loc.T("下载地址：") + info.AssetUrl);
+			stringBuilder.AppendLine(Loc.T("发布页　：") + info.PageUrl);
 			if (!hasToken)
 			{
-				stringBuilder.AppendLine("　　　　　（未填令牌：程序内不会下载，请用上面的地址在浏览器下载）");
+				stringBuilder.AppendLine(Loc.T("　　　　　（未填令牌：程序内不会下载，请用上面的地址在浏览器下载）"));
 			}
 		}
 		else if (upToDate)
 		{
-			stringBuilder.AppendLine("已是最新版本（v" + AppInfo.Version + "）");
+			stringBuilder.AppendLine(Loc.T("已是最新版本（v") + AppInfo.Version + "）");
 		}
 		else
 		{
-			stringBuilder.AppendLine("检查失败：" + error);
-			stringBuilder.AppendLine("发布页　：" + AppInfo.ReleasesUrl);
+			stringBuilder.AppendLine(Loc.T("检查失败：") + error);
+			stringBuilder.AppendLine(Loc.T("发布页　：") + AppInfo.ReleasesUrl);
 		}
 		return stringBuilder.ToString().TrimEnd();
 	}
@@ -9126,7 +9187,7 @@ internal static class Program
 			ConfigStore configStore = new ConfigStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HoldDrag"));
 			configStore.Load();
 			Updater.Token = Updater.NormalizeToken(configStore.Current?.GitHubToken);
-			Console.WriteLine("令牌　　：" + (Updater.HasToken ? ("已配置 " + Updater.MaskToken(Updater.Token)) : "未配置（匿名请求 60 次/小时）"));
+			Console.WriteLine("令牌　　：" + (Updater.HasToken ? "已配置（不显示内容）" : "未配置（匿名请求 60 次/小时）"));
 		}
 		catch (Exception ex)
 		{
@@ -9150,21 +9211,21 @@ internal static class Program
 			Console.WriteLine(DescribeCheckUpdate(updateInfo, upToDate, error, note, Updater.HasToken));
 			if (updateInfo != null)
 			{
-				text = "发现新版本 " + updateInfo.Tag + "（当前 v" + AppInfo.Version + "）";
+				text = Loc.T("发现新版本 ") + updateInfo.Tag + Loc.T("（当前 v") + AppInfo.Version + "）";
 			}
 			else if (upToDate)
 			{
-				text = "已是最新版本（v" + AppInfo.Version + "）";
+				text = Loc.T("已是最新版本（v") + AppInfo.Version + "）";
 			}
 			else
 			{
-				text = "检查失败：" + error;
+				text = Loc.T("检查失败：") + error;
 			}
 			Log.Info("--checkupdate 结果：" + text);
 		}
 		catch (Exception ex)
 		{
-			text = "检查抛异常：" + Updater.Describe(ex);
+			text = Loc.T("检查抛异常：") + Updater.Describe(ex);
 			Console.WriteLine(text);
 			Log.Error(ex);
 		}
@@ -9245,7 +9306,7 @@ internal static class Program
 	{
 		try
 		{
-			if (MessageBox.Show("当前正在以【普通用户权限】运行。\r\n\r\n这个状态下：\r\n  · 日常拖动浏览器、编辑器、资源管理器等都正常；\r\n  · 但拖不动以管理员身份运行的窗口（例如任务管理器、部分安装程序）。\r\n\r\n建议改用管理员权限重新打开。现在重启吗？\r\n（选\"否\"就保持现状继续使用，功能不受影响）", "长按拖窗 · 权限提示", MessageBoxButtons.YesNo, MessageBoxIcon.Asterisk, MessageBoxDefaultButton.Button1) != DialogResult.Yes)
+			if (MessageBox.Show(Loc.T("当前正在以【普通用户权限】运行。\r\n\r\n这个状态下：\r\n  · 日常拖动浏览器、编辑器、资源管理器等都正常；\r\n  · 但拖不动以管理员身份运行的窗口（例如任务管理器、部分安装程序）。\r\n\r\n建议改用管理员权限重新打开。现在重启吗？\r\n（选\"否\"就保持现状继续使用，功能不受影响）"), Loc.T("长按拖窗 · 权限提示"), MessageBoxButtons.YesNo, MessageBoxIcon.Asterisk, MessageBoxDefaultButton.Button1) != DialogResult.Yes)
 			{
 				return false;
 			}
@@ -12686,7 +12747,7 @@ internal static class SelfTest
 			}
 		}
 		// 决策：没令牌只提示（给下载链接），有令牌才自动下载
-		Eq(SettingsForm.DecideUpdateAction(hasToken: false), SettingsForm.UpdateAction.PromptOnly, "★ 没有令牌：只提示新版本（弹下载地址），程序内不下载");
+		Eq(SettingsForm.DecideUpdateAction(hasToken: false), SettingsForm.UpdateAction.PromptOnly, "★ 没有令牌时这条纯函数仍返回 PromptOnly（v1.9 起真正点「立即下载」才下载，不再由它拦截）");
 		Eq(SettingsForm.DecideUpdateAction(hasToken: true), SettingsForm.UpdateAction.AutoDownload, "有令牌：照旧自动下载并替换");
 		string text3 = SettingsForm.BuildNoTokenNotice();
 		Check(text3.Contains("不会下载到本机"), "★ 没令牌的提示正文明确写「不会下载到本机」（用户一眼看懂程序内不下载）", text3);
@@ -14706,7 +14767,7 @@ internal static class SelfTest
 		Check(text.Contains("DeepSeek"), "★ 开发工具 DeepSeek 显示在界面上");
 		Check(text.Contains(AppInfo.ReleaseDate), "★ 更新时间显示在界面上", "期望 " + AppInfo.ReleaseDate);
 		Check(text.Contains("版本") && text.Contains(SettingsForm.AppVersionForTest), "★ 当前版本号显示在界面上（且与程序集版本一致）", "程序集版本=" + SettingsForm.AppVersionForTest);
-		Check(SettingsForm.AppVersionForTest == "1.8.0", "★ 版本号已升到 1.8.0", "实际=" + SettingsForm.AppVersionForTest);
+		Check(SettingsForm.AppVersionForTest == "1.9.1", "★ 版本号已升到 1.9.1", "实际=" + SettingsForm.AppVersionForTest);
 		settingsForm.Close();
 	}
 
@@ -17044,9 +17105,9 @@ internal sealed class SettingsForm : Form
 			Text = title;
 			BackColor = Tokens.Canvas;
 			ForeColor = Tokens.TextPrimary;
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
-			_fontTitle = new Font(DesignFontFamily, 12.75f, FontStyle.Bold, GraphicsUnit.Point);
-			_fontSub = new Font(DesignFontFamily, 9f, FontStyle.Regular, GraphicsUnit.Point);
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
+			_fontTitle = new Font(DesignFontFamily, Sc(17), FontStyle.Bold, GraphicsUnit.Pixel);
+			_fontSub = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel);
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 		}
 
@@ -17173,8 +17234,9 @@ internal sealed class SettingsForm : Form
 				// 这是"滚动/切页发闷"的主要来源。卡片底就是纯色，用同一个颜色零成本。
 				BackColor = Tokens.Surface,
 				ForeColor = color,
-				// Font 的单位是"磅"，设计稿给的是像素：1px = 0.75pt
-				Font = new Font(DesignFontFamily, px * 0.75f, bold ? FontStyle.Bold : FontStyle.Regular, GraphicsUnit.Point),
+				// 设计稿给的是像素：按 DPI 换成**整数像素**字号。
+				// 用磅值会在 125%/150% 下变成 15.83px 这种小数，GDI 取舍不匀，中文笔画就会出现锯齿。
+				Font = new Font(DesignFontFamily, Sc((int)Math.Round(px)), bold ? FontStyle.Bold : FontStyle.Regular, GraphicsUnit.Pixel),
 				TextAlign = ContentAlignment.MiddleLeft
 			};
 			Controls.Add(label);
@@ -17376,7 +17438,7 @@ internal sealed class SettingsForm : Form
 			{
 				if (_lineH <= 0)
 				{
-					_lineH = Math.Max(1, TextRenderer.MeasureText("字", ctl.Font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding).Height);
+					_lineH = Math.Max(1, TextRenderer.MeasureText(Loc.T("字"), ctl.Font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding).Height);
 				}
 				int num = TextRenderer.MeasureText(text, ctl.Font, new Size(Math.Max(20, width), int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height;
 				return Math.Max(1, (int)Math.Round((double)num / (double)_lineH));
@@ -17606,7 +17668,7 @@ internal sealed class SettingsForm : Form
 		private int _hot = -1;
 		private string[] _titles = Array.Empty<string>();
 		private string[] _glyphs = Array.Empty<string>();
-		private string _statusTitle = "正在运行";
+		private string _statusTitle = Loc.T("正在运行");
 		private string _statusDetail = "";
 		private Bitmap _brand;
 		private bool _brandTried;
@@ -17624,12 +17686,12 @@ internal sealed class SettingsForm : Form
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 			BackColor = Tokens.Sidebar;
 			_glow = new Tween[16];
-			_fontBrand = new Font(DesignFontFamily, 10.5f, FontStyle.Bold, GraphicsUnit.Point);
-			_fontBrandSub = new Font(DesignFontFamily, 8.25f, FontStyle.Regular, GraphicsUnit.Point);
-			_fontItem = new Font(DesignFontFamily, 10f, FontStyle.Regular, GraphicsUnit.Point);
+			_fontBrand = new Font(DesignFontFamily, Sc(14), FontStyle.Bold, GraphicsUnit.Pixel);
+			_fontBrandSub = new Font(DesignFontFamily, Sc(11), FontStyle.Regular, GraphicsUnit.Pixel);
+			_fontItem = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 			_fontGlyph = Icons.At(Sc(16));
-			_fontStatus = new Font(DesignFontFamily, 9.4f, FontStyle.Regular, GraphicsUnit.Point);
-			_fontStatusSub = new Font(DesignFontFamily, 8.25f, FontStyle.Regular, GraphicsUnit.Point);
+			_fontStatus = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
+			_fontStatusSub = new Font(DesignFontFamily, Sc(11), FontStyle.Regular, GraphicsUnit.Pixel);
 		}
 
 		protected override void Dispose(bool disposing)
@@ -17863,7 +17925,7 @@ internal sealed class SettingsForm : Form
 				int num3 = rect.Right + Sc(11);
 				Font font2 = _fontBrand;
 				Font font3 = _fontBrandSub;
-				TextRenderer.DrawText(graphics, "长按拖窗", font2, new Rectangle(num3, rect.Top - Sc(2), Math.Max(20, client.Width - num3 - Sc(10)), Sc(20)), Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+				TextRenderer.DrawText(graphics, Loc.T("长按拖窗"), font2, new Rectangle(num3, rect.Top - Sc(2), Math.Max(20, client.Width - num3 - Sc(10)), Sc(20)), Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 				TextRenderer.DrawText(graphics, "HoldDrag · Win11 x64", font3, new Rectangle(num3, rect.Top + Sc(16), Math.Max(20, client.Width - num3 - Sc(10)), Sc(16)), Tokens.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 			}
 			catch (Exception ex)
@@ -17944,7 +18006,7 @@ internal sealed class SettingsForm : Form
 			ItemHeight = Sc(27);
 			BackColor = Tokens.Surface;
 			ForeColor = Tokens.TextPrimary;
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 			SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 		}
 
@@ -18102,7 +18164,7 @@ internal sealed class SettingsForm : Form
 			BorderStyle = BorderStyle.None;
 			BackColor = Tokens.FieldFill;
 			ForeColor = Tokens.TextPrimary;
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 		}
 
 		protected override void OnHandleCreated(EventArgs e)
@@ -18152,7 +18214,7 @@ internal sealed class SettingsForm : Form
 			FlatStyle = FlatStyle.Flat;
 			BackColor = Tokens.Surface;
 			ForeColor = Tokens.TextPrimary;
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 			Cursor = Cursors.Hand;
 			_hoverT = new Tween(this);
 			_checkT = new Tween(this);
@@ -18304,7 +18366,7 @@ internal sealed class SettingsForm : Form
 			FlatStyle = FlatStyle.Flat;
 			BackColor = Tokens.Surface;
 			ForeColor = Tokens.TextPrimary;
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 			Cursor = Cursors.Hand;
 			_hoverT = new Tween(this);
 		}
@@ -18410,7 +18472,7 @@ internal sealed class SettingsForm : Form
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 			BackColor = Tokens.Canvas;
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 		}
 
 		protected override void OnMouseEnter(EventArgs e)
@@ -19102,7 +19164,7 @@ internal sealed class SettingsForm : Form
 			if (!_frameEnabled)
 			{
 				using Font font = new Font(DesignFontFamily, Sc(11), FontStyle.Regular, GraphicsUnit.Pixel);
-				TextRenderer.DrawText(graphics, "外框已关闭", font, clientRectangle, Tokens.TextTertiary, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+				TextRenderer.DrawText(graphics, Loc.T("外框已关闭"), font, clientRectangle, Tokens.TextTertiary, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 				return;
 			}
 			Color color = Color.Gray;
@@ -19495,6 +19557,9 @@ internal sealed class SettingsForm : Form
 	private Label _lblRefreshHint;
 
 	private FlatCombo _cmbAutoStart;
+
+	/// <summary>界面语言下拉框（简体中文 / English）：选完立即保存并重建整个界面。</summary>
+	private FlatCombo _cmbLanguage;
 	private FlatCheck _chkRunAsAdmin;
 	private FlatCheck _chkWarnNonAdmin;
 	private Label _lblAdmin;
@@ -19662,7 +19727,14 @@ internal sealed class SettingsForm : Form
 
 	private static string PickDesignFont()
 	{
-		string[] array = new string[5] { "Segoe UI Variable Text", "Segoe UI Variable Display", "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI" };
+		// 按界面语言选字体族：
+		//   · 中文界面优先「微软雅黑 UI」——专为界面设计，字重均匀，小字号下最稳；
+		//   · 英文界面优先 Segoe UI——Win10/11 自带，字形比雅黑的拉丁部分更现代。
+		// 刻意**不选** "Segoe UI Variable*"：它是可变字体，WinForms 控件走 GDI 渲染，
+		// GDI 只能取默认实例、中文还会逐字回退到别的字体，两套字形混排就是"文字发毛/锯齿"的主因。
+		string[] array = Loc.IsEnglish
+			? new string[2] { "Segoe UI", "Microsoft YaHei UI" }
+			: new string[3] { "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI" };
 		try
 		{
 			HashSet<string> hashSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -19692,8 +19764,16 @@ internal sealed class SettingsForm : Form
 	private void BuildUi()
 	{
 		SuspendLayout();
-		Text = "长按拖窗 · 设置";
-		Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+		Text = Loc.T("长按拖窗 · 设置");
+		// 语言变了字体族也要跟着换（中文雅黑 / 英文 Segoe UI）
+		try
+		{
+			DesignFontFamily = PickDesignFont();
+		}
+		catch
+		{
+		}
+		Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 		AutoScaleMode = AutoScaleMode.None;
 		BackColor = Tokens.Canvas;
 		ForeColor = Tokens.TextPrimary;
@@ -19761,7 +19841,7 @@ internal sealed class SettingsForm : Form
 			AutoSize = false,
 			BackColor = Tokens.Canvas,
 			ForeColor = Tokens.TextPrimary,
-			Font = new Font(DesignFontFamily, 12.75f, FontStyle.Bold, GraphicsUnit.Point),
+			Font = new Font(DesignFontFamily, Sc(17), FontStyle.Bold, GraphicsUnit.Pixel),
 			TextAlign = ContentAlignment.MiddleLeft,
 			Text = ""
 		};
@@ -19770,7 +19850,7 @@ internal sealed class SettingsForm : Form
 			AutoSize = false,
 			BackColor = Tokens.Canvas,
 			ForeColor = Tokens.TextTertiary,
-			Font = new Font(DesignFontFamily, 9f, FontStyle.Regular, GraphicsUnit.Point),
+			Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel),
 			TextAlign = ContentAlignment.MiddleLeft,
 			Text = ""
 		};
@@ -19851,7 +19931,7 @@ internal sealed class SettingsForm : Form
 			AutoEllipsis = true,
 			ForeColor = Tokens.Success,
 			TextAlign = ContentAlignment.MiddleLeft,
-			Font = new Font(DesignFontFamily, 9f, FontStyle.Regular, GraphicsUnit.Point),
+			Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel),
 			BackColor = Tokens.Canvas,
 			Location = new Point(S(24), S(14)),
 			Size = new Size(S(360), S(32)),
@@ -19860,8 +19940,9 @@ internal sealed class SettingsForm : Form
 		_pager.Controls.Add(_lblStatus);
 		_btnDefaultsRef = new FlatButton
 		{
-			Text = "恢复默认值",
-			Size = new Size(S(112), S(34))
+			Text = Loc.T("恢复默认值"),
+			// 英文「Restore defaults」比中文长，按语言给宽度，避免被截成「Restore defau…」
+			Size = new Size(S(Loc.IsEnglish ? 144 : 112), S(34))
 		};
 		_btnDefaultsRef.Click += delegate
 		{
@@ -19871,7 +19952,7 @@ internal sealed class SettingsForm : Form
 		_btnSaveRef = new FlatButton
 		{
 			Primary = true,
-			Text = "保存并生效",
+			Text = Loc.T("保存并生效"),
 			Size = new Size(S(112), S(34))
 		};
 		_btnSaveRef.Click += delegate
@@ -19881,7 +19962,7 @@ internal sealed class SettingsForm : Form
 		_pager.Controls.Add(_btnSaveRef);
 		_btnCancelRef = new FlatButton
 		{
-			Text = "取消",
+			Text = Loc.T("取消"),
 			Size = new Size(S(88), S(34))
 		};
 		_btnCancelRef.Click += delegate
@@ -20026,7 +20107,7 @@ internal sealed class SettingsForm : Form
 
 	private static string[] NavTitles()
 	{
-		return new string[8] { "触发方式", "鼠标键动作", "视觉反馈", "拖动行为", "流畅度", "启动与权限", "帮助", "关于" };
+		return new string[8] { Loc.T("触发方式"), Loc.T("鼠标键动作"), Loc.T("视觉反馈"), Loc.T("拖动行为"), Loc.T("流畅度"), Loc.T("启动与权限"), Loc.T("帮助"), Loc.T("关于") };
 	}
 
 	private static string[] NavGlyphs()
@@ -20099,12 +20180,12 @@ internal sealed class SettingsForm : Form
 			// 一定要显式给前景色：TextBox 默认是系统黑色，深色主题下就是"深底黑字"，完全看不见
 			ForeColor = Tokens.TextPrimary,
 			BackColor = Tokens.FieldFill,
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel),
 			TextAlign = HorizontalAlignment.Center
 		};
 		_btnRecord = new FlatButton
 		{
-			Text = "重新录制"
+			Text = Loc.T("重新录制")
 		};
 		_btnRecord.Click += delegate
 		{
@@ -20113,7 +20194,7 @@ internal sealed class SettingsForm : Form
 		_lblKeyHint = HintLabel();
 		_chkHold = new FlatCheck
 		{
-			Text = "需要长按触发（关闭后按住立即生效）",
+			Text = Loc.T("需要长按触发（关闭后按住立即生效）"),
 			Cursor = Cursors.Hand
 		};
 		_chkHold.CheckedChanged += delegate
@@ -20126,7 +20207,7 @@ internal sealed class SettingsForm : Form
 		_cmbMiddle = NewCombo();
 		_chkFrame = new FlatCheck
 		{
-			Text = "长按到达阈值后，光标所在窗口亮起外框",
+			Text = Loc.T("长按到达阈值后，光标所在窗口亮起外框"),
 			Cursor = Cursors.Hand
 		};
 		_chkFrame.CheckedChanged += delegate
@@ -20141,7 +20222,7 @@ internal sealed class SettingsForm : Form
 		_cmbFrameColor.ClosedPainter = PaintColorEntry;
 		_chkFollowAccent = new FlatCheck
 		{
-			Text = "颜色跟随系统强调色（换 Windows 主题色时外框一起变）",
+			Text = Loc.T("颜色跟随系统强调色（换 Windows 主题色时外框一起变）"),
 			Cursor = Cursors.Hand
 		};
 		_chkFollowAccent.CheckedChanged += delegate
@@ -20151,7 +20232,7 @@ internal sealed class SettingsForm : Form
 		};
 		_btnCustomColor = new FlatButton
 		{
-			Text = "自定义颜色…"
+			Text = Loc.T("自定义颜色…")
 		};
 		_btnCustomColor.Click += delegate
 		{
@@ -20202,23 +20283,23 @@ internal sealed class SettingsForm : Form
 		_lblFrameTip = HintLabel();
 		_pnlPreview = new FramePreviewBox();
 		_numCorner = NewNum(5m, 45m, 1m);
-		_chkDblLeft = Check("双击左键 = 最大化 / 还原");
-		_chkDblRight = Check("双击右键 = 九宫格分区");
-		_chkRestoreMax = Check("允许拖动已最大化的窗口（先还原再拖）");
-		_chkFront = Check("开始拖动时自动把窗口提到最前");
-		_chkFullscreen = Check("允许拖动全屏 / 无边框窗口（有风险）");
-		_chkExitFullscreen = Check("触发时先把全屏/最大化窗口变回普通");
-		_chkShake = Check("选中窗口后晃一晃，其它窗口全部最小化");
+		_chkDblLeft = Check(Loc.T("双击左键 = 最大化 / 还原"));
+		_chkDblRight = Check(Loc.T("双击右键 = 九宫格分区"));
+		_chkRestoreMax = Check(Loc.T("允许拖动已最大化的窗口（先还原再拖）"));
+		_chkFront = Check(Loc.T("开始拖动时自动把窗口提到最前"));
+		_chkFullscreen = Check(Loc.T("允许拖动全屏 / 无边框窗口（有风险）"));
+		_chkExitFullscreen = Check(Loc.T("触发时先把全屏/最大化窗口变回普通"));
+		_chkShake = Check(Loc.T("选中窗口后晃一晃，其它窗口全部最小化"));
 		_txtBlacklist = new TextBox
 		{
 			BorderStyle = BorderStyle.None,
 			ForeColor = Tokens.TextPrimary,
 			BackColor = Tokens.FieldFill,
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point)
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel)
 		};
 		_btnPickExe = new FlatButton
 		{
-			Text = "选择程序…"
+			Text = Loc.T("选择程序…")
 		};
 		_btnPickExe.Click += delegate
 		{
@@ -20226,7 +20307,7 @@ internal sealed class SettingsForm : Form
 		};
 		_btnPickWindow = new FlatButton
 		{
-			Text = "点选窗口"
+			Text = Loc.T("点选窗口")
 		};
 		_btnPickWindow.Click += delegate
 		{
@@ -20240,12 +20321,17 @@ internal sealed class SettingsForm : Form
 		_numRefreshHz = NewNum(0m, 360m, 1m);
 		_lblRefreshHint = HintLabel();
 		_cmbAutoStart = NewCombo();
-		_chkRunAsAdmin = Check("开机时自动申请管理员权限（默认开启）");
-		_chkWarnNonAdmin = Check("没有管理员权限时提示我（可关闭）");
+		_cmbLanguage = NewCombo();
+		_cmbLanguage.SelectedIndexChanged += delegate
+		{
+			OnLanguageSelectionChanged();
+		};
+		_chkRunAsAdmin = Check(Loc.T("开机时自动申请管理员权限（默认开启）"));
+		_chkWarnNonAdmin = Check(Loc.T("没有管理员权限时提示我（可关闭）"));
 		_lblAdmin = HintLabel();
 		_btnRestartAdmin = new FlatButton
 		{
-			Text = "以管理员重启"
+			Text = Loc.T("以管理员重启")
 		};
 		_btnRestartAdmin.Click += delegate
 		{
@@ -20261,7 +20347,7 @@ internal sealed class SettingsForm : Form
 		{
 			OpenUrl(AppInfo.GitHubUrl);
 		};
-		_chkAutoUpdate = Check("自动更新（启动时检查，有新版提示我）");
+		_chkAutoUpdate = Check(Loc.T("自动更新（启动时检查，有新版提示我）"));
 		_chkAutoUpdate.CheckedChanged += delegate
 		{
 			if (!_populating && _edit != null)
@@ -20271,7 +20357,7 @@ internal sealed class SettingsForm : Form
 		};
 		_btnCheckUpdate = new FlatButton
 		{
-			Text = "检查更新"
+			Text = Loc.T("检查更新")
 		};
 		_btnCheckUpdate.Click += delegate
 		{
@@ -20284,8 +20370,8 @@ internal sealed class SettingsForm : Form
 			TextAlign = ContentAlignment.MiddleLeft,
 			BackColor = Color.Transparent,
 			ForeColor = Tokens.Hint,
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
-			Text = "尚未检查"
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel),
+			Text = Loc.T("尚未检查")
 		};
 		// ---------- v1.7.0：GitHub 个人访问令牌 ----------
 		_txtToken = new TextBox
@@ -20293,22 +20379,22 @@ internal sealed class SettingsForm : Form
 			BorderStyle = BorderStyle.None,
 			ForeColor = Tokens.TextPrimary,
 			BackColor = Tokens.FieldFill,
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel),
 			// 令牌是敏感信息：输入即遮住，屏幕录制/旁人路过都看不到明文
 			UseSystemPasswordChar = true,
 			MaxLength = 255,
-			AccessibleName = "GitHub 个人访问令牌",
-			AccessibleDescription = "可选。填写后检查更新会带上该令牌请求 GitHub 接口，接口限额从匿名 60 次/小时提升到 5000 次/小时"
+			AccessibleName = Loc.T("GitHub 个人访问令牌"),
+			AccessibleDescription = Loc.T("可选。填写后检查更新会带上该令牌请求 GitHub 接口，接口限额从匿名 60 次/小时提升到 5000 次/小时")
 		};
 		_txtToken.TextChanged += delegate
 		{
 			RefreshTokenState();
 		};
-		_lblTokenState = HintLabelWith("未填写：只提示、不自动下载");
+		_lblTokenState = HintLabelWith(Loc.T("未填写：检查更新走匿名接口"));
 		_lblTokenState.AutoEllipsis = true;
 		_btnSaveToken = new FlatButton
 		{
-			Text = "保存令牌"
+			Text = Loc.T("保存令牌")
 		};
 		_btnSaveToken.Click += delegate
 		{
@@ -20318,23 +20404,23 @@ internal sealed class SettingsForm : Form
 		// 把"令牌到底有没有用"从猜测变成结论——保存前就能确认，不用等下次检查更新才发现是坏的。
 		_btnVerifyToken = new FlatButton
 		{
-			Text = "验证令牌",
-			AccessibleName = "验证 GitHub 个人访问令牌",
-			AccessibleDescription = "用当前输入框里的令牌向 GitHub 发一次请求，确认令牌有效且能读到本仓库的发布信息"
+			Text = Loc.T("验证令牌"),
+			AccessibleName = Loc.T("验证 GitHub 个人访问令牌"),
+			AccessibleDescription = Loc.T("用当前输入框里的令牌向 GitHub 发一次请求，确认令牌有效且能读到本仓库的发布信息")
 		};
 		_btnVerifyToken.Click += delegate
 		{
 			VerifyTokenNow();
 		};
-		_lblTokenVerify = HintLabelWith("尚未验证");
+		_lblTokenVerify = HintLabelWith(Loc.T("尚未验证"));
 		_lblTokenVerify.AutoEllipsis = true;
 		// 小「?」图标：位置在输入框右侧、与输入框垂直居中（由卡片行布局保证）；
 		// 无障碍：有 AccessibleName/Description，Tab 可聚焦，空格/回车即触发（Button 的默认键盘行为）。
 		_btnTokenHelp = new FlatButton
 		{
 			Text = "?",
-			AccessibleName = "什么是 GitHub 个人访问令牌",
-			AccessibleDescription = "打开 GitHub 官方中文文档，了解个人访问令牌的定义、创建与权限设置方法",
+			AccessibleName = Loc.T("什么是 GitHub 个人访问令牌"),
+			AccessibleDescription = Loc.T("打开 GitHub 官方中文文档，了解个人访问令牌的定义、创建与权限设置方法"),
 			AccessibleRole = AccessibleRole.HelpBalloon,
 			TabStop = true
 		};
@@ -20343,7 +20429,7 @@ internal sealed class SettingsForm : Form
 			OpenUrl(AppInfo.PatDocsUrl);
 		};
 		_tipToken = new ToolTip();
-		_tipToken.SetToolTip(_btnTokenHelp, "什么是 GitHub 个人访问令牌？\r\n点击用浏览器打开 GitHub 官方中文文档");
+		_tipToken.SetToolTip(_btnTokenHelp, Loc.T("什么是 GitHub 个人访问令牌？\r\n点击用浏览器打开 GitHub 官方中文文档"));
 	}
 
 	private static FlatCombo NewCombo()
@@ -20379,7 +20465,7 @@ internal sealed class SettingsForm : Form
 			AutoEllipsis = false,
 			ForeColor = Tokens.Hint,
 			BackColor = Tokens.Surface,
-			Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point),
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel),
 			Size = new Size(100, 20)
 		};
 	}
@@ -20401,7 +20487,7 @@ internal sealed class SettingsForm : Form
 			UseMnemonic = false,
 			BackColor = Tokens.Surface,
 			ForeColor = Tokens.TextTertiary,
-			Font = new Font(DesignFontFamily, 9f, FontStyle.Regular, GraphicsUnit.Point),
+			Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel),
 			TextAlign = ContentAlignment.MiddleLeft
 		};
 	}
@@ -20417,7 +20503,7 @@ internal sealed class SettingsForm : Form
 			AutoEllipsis = true,
 			BackColor = Tokens.Surface,
 			ForeColor = accent ? Tokens.Accent : Tokens.TextPrimary,
-			Font = new Font(DesignFontFamily, 10f, FontStyle.Regular, GraphicsUnit.Point),
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel),
 			TextAlign = ContentAlignment.MiddleRight
 		};
 	}
@@ -20446,107 +20532,109 @@ internal sealed class SettingsForm : Form
 	private void BuildPages()
 	{
 		// ---------- 1. 触发方式 ----------
-		Page page = NewPage("触发方式", "决定什么时候开始接管窗口；短按仍然原样放行");
-		Card card = NewCard(page, "触发键", "按住它，光标下的窗口才开始响应拖动");
+		Page page = NewPage(Loc.T("触发方式"), Loc.T("决定什么时候开始接管窗口；短按仍然原样放行"));
+		Card card = NewCard(page, Loc.T("触发键"), Loc.T("按住它，光标下的窗口才开始响应拖动"));
 		card.RegisterField(_txtKey);
-		card.Setting(_txtKey, 150, _btnRecord, 92, "当前触发键", "点「重新录制」后按任意键或鼠标侧键即可更换");
+		card.Setting(_txtKey, 150, _btnRecord, 92, Loc.T("当前触发键"), Loc.T("点「重新录制」后按任意键或鼠标侧键即可更换"));
 		card.Block(_lblKeyHint, null, 22);
-		Card cardHold = NewCard(page, "长按判定", "区分「长按触发」和「正常打字」就靠这一段时长");
+		Card cardHold = NewCard(page, Loc.T("长按判定"), Loc.T("区分「长按触发」和「正常打字」就靠这一段时长"));
 		cardHold.RegisterField(_numHold);
-		cardHold.Toggle(_chkHold, "需要长按触发", "关掉后按住触发键立即生效，不再等阈值");
-		cardHold.Setting(_numHold, 84, UnitLabel("毫秒"), 34, "长按阈值", "按住多久才算长按；太短容易误触发，太长会显得迟钝");
+		cardHold.Toggle(_chkHold, Loc.T("需要长按触发"), Loc.T("关掉后按住触发键立即生效，不再等阈值"));
+		cardHold.Setting(_numHold, 84, UnitLabel(Loc.T("毫秒")), 34, Loc.T("长按阈值"), Loc.T("按住多久才算长按；太短容易误触发，太长会显得迟钝"));
 
 		// ---------- 2. 鼠标键动作 ----------
-		Page page2 = NewPage("鼠标键动作", "长按触发键之后，三个鼠标键各自做什么");
-		Card card2 = NewCard(page2, "鼠标键动作", "触发期间：左键拖动窗口，右键从边缘缩放，中键执行一次动作");
-		card2.Setting(_cmbLeft, "左键", "按住不放，窗口跟着鼠标走", 200);
-		card2.Setting(_cmbRight, "右键", "按住不放，从被抓的那条边/角缩放", 200);
-		card2.Setting(_cmbMiddle, "中键", "按一下执行一次，不需要按住", 200);
-		Card card3 = NewCard(page2, "双击手势", "触发期间快速连按两次鼠标键");
-		card3.Toggle(_chkDblLeft, "双击左键 = 最大化 / 还原", "不用去够标题栏，在窗口任意位置都行");
-		card3.Toggle(_chkDblRight, "双击右键 = 九宫格分区", "把窗口吸附到屏幕的九个区域之一");
+		Page page2 = NewPage(Loc.T("鼠标键动作"), Loc.T("长按触发键之后，三个鼠标键各自做什么"));
+		Card card2 = NewCard(page2, Loc.T("鼠标键动作"), Loc.T("触发期间：左键拖动窗口，右键从边缘缩放，中键执行一次动作"));
+		card2.Setting(_cmbLeft, Loc.T("左键"), Loc.T("按住不放，窗口跟着鼠标走"), 200);
+		card2.Setting(_cmbRight, Loc.T("右键"), Loc.T("按住不放，从被抓的那条边/角缩放"), 200);
+		card2.Setting(_cmbMiddle, Loc.T("中键"), Loc.T("按一下执行一次，不需要按住"), 200);
+		Card card3 = NewCard(page2, Loc.T("双击手势"), Loc.T("触发期间快速连按两次鼠标键"));
+		card3.Toggle(_chkDblLeft, Loc.T("双击左键 = 最大化 / 还原"), Loc.T("不用去够标题栏，在窗口任意位置都行"));
+		card3.Toggle(_chkDblRight, Loc.T("双击右键 = 九宫格分区"), Loc.T("把窗口吸附到屏幕的九个区域之一"));
 
 		// ---------- 3. 视觉反馈 ----------
-		Page page3 = NewPage("视觉反馈", "外框的颜色、样式与实时预览");
-		Card card4 = NewCard(page3, "外框", "触发期间在窗口四周画一圈提示，让你看清这次会拖动谁");
+		Page page3 = NewPage(Loc.T("视觉反馈"), Loc.T("外框的颜色、样式与实时预览"));
+		Card card4 = NewCard(page3, Loc.T("外框"), Loc.T("触发期间在窗口四周画一圈提示，让你看清这次会拖动谁"));
 		card4.RegisterField(_numFrameThick);
 		card4.RegisterField(_numFrameRadius);
 		card4.RegisterField(_numFrameOpacity);
-		card4.Toggle(_chkFrame, "显示外框", "关掉后触发时没有任何视觉提示");
-		card4.Setting(_cmbFrameColor, "外框颜色", "先选一个预设颜色；下面色板可以直接点", 200);
-		card4.Block(_gridColor, "色板");
-		card4.Toggle(_chkFollowAccent, "颜色跟随系统强调色", "换 Windows 主题色时外框一起变；优先级高于自定义颜色");
-		card4.Setting(_btnCustomColor, 120, _lblCustomColor, 240, "自定义颜色", "打开系统取色器，可以选任意颜色");
-		Card card5 = NewCard(page3, "样式", "外框长什么样：虚线、细线、焦点、柔光、投影");
-		card5.Setting(_cmbFrameStyle, "样式", "选一种画法；下面的缩略图也可以直接点", 200);
-		card5.Block(_galleryStyle, "缩略图");
+		card4.Toggle(_chkFrame, Loc.T("显示外框"), Loc.T("关掉后触发时没有任何视觉提示"));
+		card4.Setting(_cmbFrameColor, Loc.T("外框颜色"), Loc.T("先选一个预设颜色；下面色板可以直接点"), 200);
+		card4.Block(_gridColor, Loc.T("色板"));
+		card4.Toggle(_chkFollowAccent, Loc.T("颜色跟随系统强调色"), Loc.T("换 Windows 主题色时外框一起变；优先级高于自定义颜色"));
+		card4.Setting(_btnCustomColor, 120, _lblCustomColor, 240, Loc.T("自定义颜色"), Loc.T("打开系统取色器，可以选任意颜色"));
+		Card card5 = NewCard(page3, Loc.T("样式"), Loc.T("外框长什么样：虚线、细线、焦点、柔光、投影"));
+		card5.Setting(_cmbFrameStyle, Loc.T("样式"), Loc.T("选一种画法；下面的缩略图也可以直接点"), 200);
+		card5.Block(_galleryStyle, Loc.T("缩略图"));
 		card5.Block(_lblStyleHint, null, 22);
-		card5.Setting(_numFrameThick, 72, UnitLabel("px"), 26, "粗细", "线有多粗；虚线 / 焦点环靠它区分轻重");
-		card5.Setting(_numFrameRadius, 72, UnitLabel("px"), 26, "圆角", "外框跟着窗口的圆角走，改这里能立刻在下面的预览里看到");
-		card5.Setting(_numFrameOpacity, 72, UnitLabel("%"), 26, "不透明度", "调低会变成半透明，暗色桌面上更柔和");
-		Card card6 = NewCard(page3, "预览", "和真正拖动时用的是同一段绘制代码，看到什么就是什么");
+		card5.Setting(_numFrameThick, 72, UnitLabel("px"), 26, Loc.T("粗细"), Loc.T("线有多粗；虚线 / 焦点环靠它区分轻重"));
+		card5.Setting(_numFrameRadius, 72, UnitLabel("px"), 26, Loc.T("圆角"), Loc.T("外框跟着窗口的圆角走，改这里能立刻在下面的预览里看到"));
+		card5.Setting(_numFrameOpacity, 72, UnitLabel("%"), 26, Loc.T("不透明度"), Loc.T("调低会变成半透明，暗色桌面上更柔和"));
+		Card card6 = NewCard(page3, Loc.T("预览"), Loc.T("和真正拖动时用的是同一段绘制代码，看到什么就是什么"));
 		card6.Block(_pnlPreview, null, 170);
 		card6.Block(_lblFrameTip, null, 22);
 
 		// ---------- 4. 拖动行为 ----------
-		Page page4 = NewPage("拖动行为", "双击手势、全屏窗口与黑名单");
-		Card card7 = NewCard(page4, "拖动与缩放", "触发期间的拖动、缩放细节");
+		Page page4 = NewPage(Loc.T("拖动行为"), Loc.T("双击手势、全屏窗口与黑名单"));
+		Card card7 = NewCard(page4, Loc.T("拖动与缩放"), Loc.T("触发期间的拖动、缩放细节"));
 		card7.RegisterField(_numCorner);
-		card7.Setting(_numCorner, 72, UnitLabel("%"), 26, "缩放角区", "鼠标离角多近才算抓住角；越大越好抓，但容易误触");
-		card7.Toggle(_chkRestoreMax, "允许拖动已最大化的窗口", "会先把窗口还原成普通大小，再开始拖");
-		Card card8 = NewCard(page4, "窗口层级与全屏", "全屏 / 无边框窗口容易被拖成一片黑");
-		card8.Toggle(_chkFront, "开始拖动时把窗口提到最前", "不用先点一下激活它");
-		card8.Toggle(_chkFullscreen, "允许拖动全屏 / 无边框窗口（有风险）", "部分游戏和视频窗口拖完会显示异常");
-		card8.Toggle(_chkExitFullscreen, "触发时先把全屏 / 最大化窗口变回普通", "推荐开着：拖动和缩放都从正常尺寸开始");
-		Card card9 = NewCard(page4, "晃窗最小化", "选中窗口后左右晃一晃");
-		card9.Toggle(_chkShake, "晃窗把其它窗口最小化", "再晃一次还原；判定要求多次往复且净位移接近 0，正常拖动不会误触发");
-		Card card10 = NewCard(page4, "不生效的窗口", "命中黑名单的窗口完全不接管");
+		card7.Setting(_numCorner, 72, UnitLabel("%"), 26, Loc.T("缩放角区"), Loc.T("鼠标离角多近才算抓住角；越大越好抓，但容易误触"));
+		card7.Toggle(_chkRestoreMax, Loc.T("允许拖动已最大化的窗口"), Loc.T("会先把窗口还原成普通大小，再开始拖"));
+		Card card8 = NewCard(page4, Loc.T("窗口层级与全屏"), Loc.T("全屏 / 无边框窗口容易被拖成一片黑"));
+		card8.Toggle(_chkFront, Loc.T("开始拖动时把窗口提到最前"), Loc.T("不用先点一下激活它"));
+		card8.Toggle(_chkFullscreen, Loc.T("允许拖动全屏 / 无边框窗口（有风险）"), Loc.T("部分游戏和视频窗口拖完会显示异常"));
+		card8.Toggle(_chkExitFullscreen, Loc.T("触发时先把全屏 / 最大化窗口变回普通"), Loc.T("推荐开着：拖动和缩放都从正常尺寸开始"));
+		Card card9 = NewCard(page4, Loc.T("晃窗最小化"), Loc.T("选中窗口后左右晃一晃"));
+		card9.Toggle(_chkShake, Loc.T("晃窗把其它窗口最小化"), Loc.T("再晃一次还原；判定要求多次往复且净位移接近 0，正常拖动不会误触发"));
+		Card card10 = NewCard(page4, Loc.T("不生效的窗口"), Loc.T("命中黑名单的窗口完全不接管"));
 		card10.RegisterField(_txtBlacklist);
-		card10.Setting(_txtBlacklist, "关键字", "窗口标题 / 程序名 / 类名，逗号分隔；命中就完全不接管");
-		card10.Setting(_btnPickExe, 96, _btnPickWindow, 92, "快速添加", "不知道填什么时，用「选择程序」挑 exe，或「点选窗口」直接在屏幕上点那扇窗");
+		card10.Setting(_txtBlacklist, Loc.T("关键字"), Loc.T("窗口标题 / 程序名 / 类名，逗号分隔；命中就完全不接管"));
+		card10.Setting(_btnPickExe, 96, _btnPickWindow, 92, Loc.T("快速添加"), Loc.T("不知道填什么时，用「选择程序」挑 exe，或「点选窗口」直接在屏幕上点那扇窗"));
 
 		// ---------- 5. 流畅度 ----------
-		Page page5 = NewPage("流畅度", "拖动过程中的刷新节流");
-		Card card11 = NewCard(page5, "刷新模式", "刷新越快越跟手，但也更吃 CPU");
-		card11.Setting(_cmbRefreshMode, "刷新模式", "「自动」会按当前显示器的刷新率决定", 200);
-		Card card11b = NewCard(page5, "固定值", "只在「固定值」模式下用得上");
+		Page page5 = NewPage(Loc.T("流畅度"), Loc.T("拖动过程中的刷新节流"));
+		Card card11 = NewCard(page5, Loc.T("刷新模式"), Loc.T("刷新越快越跟手，但也更吃 CPU"));
+		card11.Setting(_cmbRefreshMode, Loc.T("刷新模式"), Loc.T("「自动」会按当前显示器的刷新率决定"), 200);
+		Card card11b = NewCard(page5, Loc.T("固定值"), Loc.T("只在「固定值」模式下用得上"));
 		card11b.RegisterField(_numRefreshHz);
-		card11b.Setting(_numRefreshHz, 72, UnitLabel("Hz"), 26, "刷新频率", "0 = 不限制；非 0 时下限钳到 20");
+		card11b.Setting(_numRefreshHz, 72, UnitLabel("Hz"), 26, Loc.T("刷新频率"), Loc.T("0 = 不限制；非 0 时下限钳到 20"));
 		card11b.Block(_lblRefreshHint, null, 22);
 
 		// ---------- 6. 启动与权限 ----------
-		Page page6 = NewPage("启动与权限", "开机自启与管理员权限");
-		Card card12 = NewCard(page6, "开机自启", "登录 Windows 后自动在托盘运行");
-		card12.Setting(_cmbAutoStart, "开机自启", "显示的是系统里的真实状态（会去查计划任务与注册表）", 200);
-		Card card12b = NewCard(page6, "管理员权限", "管理员权限能拖动更多程序，代价是每次启动弹一次 UAC");
-		card12b.Toggle(_chkRunAsAdmin, "开机时自动申请管理员权限", "默认开启；关掉后遇到管理员程序可能拖不动");
-		card12b.Toggle(_chkWarnNonAdmin, "没有管理员权限时提示我", "不提示的话，拖不动会很像程序坏了");
+		Page page6 = NewPage(Loc.T("启动与权限"), Loc.T("语言、开机自启与管理员权限"));
+		Card cardLang = NewCard(page6, Loc.T("语言 / Language"), Loc.T("界面文案用哪种语言显示；切换后立即生效并写入配置"));
+		cardLang.Setting(_cmbLanguage, Loc.T("界面语言"), Loc.T("简体中文 / English。选中即保存，整个界面马上换成该语言，下次启动沿用"), 220);
+		Card card12 = NewCard(page6, Loc.T("开机自启"), Loc.T("登录 Windows 后自动在托盘运行"));
+		card12.Setting(_cmbAutoStart, Loc.T("开机自启"), Loc.T("显示的是系统里的真实状态（会去查计划任务与注册表）"), 200);
+		Card card12b = NewCard(page6, Loc.T("管理员权限"), Loc.T("管理员权限能拖动更多程序，代价是每次启动弹一次 UAC"));
+		card12b.Toggle(_chkRunAsAdmin, Loc.T("开机时自动申请管理员权限"), Loc.T("默认开启；关掉后遇到管理员程序可能拖不动"));
+		card12b.Toggle(_chkWarnNonAdmin, Loc.T("没有管理员权限时提示我"), Loc.T("不提示的话，拖不动会很像程序坏了"));
 		card12b.Block(_lblAdmin, null, 22);
-		card12b.Setting(_btnRestartAdmin, "立即生效", "改完权限相关设置后，用这个按钮重启一次", 128);
+		card12b.Setting(_btnRestartAdmin, Loc.T("立即生效"), Loc.T("改完权限相关设置后，用这个按钮重启一次"), 128);
 
 		// ---------- 7. 帮助 ----------
-		Page page7 = NewPage("帮助", "每一项功能的实际行为说明");
-		Card card13 = NewCard(page7, "功能说明", "点一下标题，就能展开对应功能的说明");
+		Page page7 = NewPage(Loc.T("帮助"), Loc.T("每一项功能的实际行为说明"));
+		Card card13 = NewCard(page7, Loc.T("功能说明"), Loc.T("点一下标题，就能展开对应功能的说明"));
 		card13.Block(_helpPanel);
 
 		// ---------- 8. 关于 ----------
-		Page page8 = NewPage("关于", "版本、开发者与更新");
-		Card card14 = NewCard(page8, "关于", "长按拖窗 HoldDrag · 长按触发键，随手拖动 / 缩放任意窗口");
-		card14.Setting(ValueLabel("QQQOrange"), "开发者", null, 140);
-		card14.Setting(ValueLabel("DeepSeek"), "开发工具", null, 140);
-		card14.Setting(ValueLabel("v" + AppInfo.Version, accent: true), "当前版本", null, 140);
-		card14.Setting(ValueLabel(AppInfo.ReleaseDate), "更新时间", null, 140);
-		card14.Setting(_btnGitHub, "项目主页", "github.com/QQQOrange/holddrag", 250);
-		card14.Toggle(_chkAutoUpdate, "自动更新", "启动时检查一次，有新版本会提示");
-		card14.Setting(_btnCheckUpdate, 104, _lblUpdateStatus, 240, "检查更新");
+		Page page8 = NewPage(Loc.T("关于"), Loc.T("版本、开发者与更新"));
+		Card card14 = NewCard(page8, Loc.T("关于"), Loc.T("长按拖窗 HoldDrag · 长按触发键，随手拖动 / 缩放任意窗口"));
+		card14.Setting(ValueLabel("QQQOrange"), Loc.T("开发者"), null, 140);
+		card14.Setting(ValueLabel("DeepSeek"), Loc.T("开发工具"), null, 140);
+		card14.Setting(ValueLabel("v" + AppInfo.Version, accent: true), Loc.T("当前版本"), null, 140);
+		card14.Setting(ValueLabel(AppInfo.ReleaseDate), Loc.T("更新时间"), null, 140);
+		card14.Setting(_btnGitHub, Loc.T("项目主页"), "github.com/QQQOrange/holddrag", 250);
+		card14.Toggle(_chkAutoUpdate, Loc.T("自动更新"), Loc.T("启动时检查一次，有新版本会提示"));
+		card14.Setting(_btnCheckUpdate, 104, _lblUpdateStatus, 240, Loc.T("检查更新"));
 
 		// v1.7.0：GitHub 个人访问令牌。它同时是「自动下载」的开关：
 		// 填了 → 带令牌请求接口（5000 次/小时）并自动下载；没填 → 只提示新版本 + 给出可点击的下载地址。
-		Card card15 = NewCard(page8, "GitHub 访问令牌", "可选。填了就带令牌请求 GitHub 接口（限额 60 → 5000 次/小时）并自动下载新版本；没填时只提示、不自动下载");
+		Card card15 = NewCard(page8, Loc.T("GitHub 访问令牌"), Loc.T("可选。填了就带令牌请求 GitHub 接口（限额 60 → 5000 次/小时）；无论填不填，下载前都会先弹窗问一次"));
 		card15.RegisterField(_txtToken);
-		card15.Setting(_txtToken, 240, _btnTokenHelp, 32, "个人访问令牌", "只需要公开仓库的读取权限，不需要写权限；令牌明文保存在本机 config.json 里");
-		card15.Setting(_btnSaveToken, 104, _lblTokenState, 250, "保存令牌", "点一下立即生效，不必再点底部的「保存并生效」");
-		card15.Setting(_btnVerifyToken, 104, _lblTokenVerify, 250, "验证令牌", "真的向 GitHub 发一次请求：确认令牌有效、能读到本仓库的发布信息（不改配置）");
+		card15.Setting(_txtToken, 240, _btnTokenHelp, 32, Loc.T("个人访问令牌"), Loc.T("只需要公开仓库的读取权限，不需要写权限；令牌明文保存在本机 config.json 里"));
+		card15.Setting(_btnSaveToken, 104, _lblTokenState, 250, Loc.T("保存令牌"), Loc.T("点一下立即生效，不必再点底部的「保存并生效」"));
+		card15.Setting(_btnVerifyToken, 104, _lblTokenVerify, 250, Loc.T("验证令牌"), Loc.T("真的向 GitHub 发一次请求：确认令牌有效、能读到本仓库的发布信息（不改配置）"));
 	}
 
 	private static List<HelpPanel.Entry> BuildHelpEntries()
@@ -20556,38 +20644,38 @@ internal sealed class SettingsForm : Form
 			new HelpPanel.Entry
 			{
 				Icon = Glyph.Keyboard,
-				Title = "触发方式",
-				Body = "按住触发键（默认 Enter，可改成任意键或鼠标侧键）达到设定时长后生效，光标下那扇窗口四周会亮起外框；松开触发键即退出。短按会原样放行，不影响正常打字。"
+				Title = Loc.T("触发方式"),
+				Body = Loc.T("按住触发键（默认 Enter，可改成任意键或鼠标侧键）达到设定时长后生效，光标下那扇窗口四周会亮起外框；松开触发键即退出。短按会原样放行，不影响正常打字。")
 			},
 			new HelpPanel.Entry
 			{
 				Icon = Glyph.Move,
-				Title = "鼠标键动作",
-				Body = "触发后：左键拖动窗口、右键缩放窗口、中键执行一次性动作。三个键都能自定义成移动 / 缩放 / 最大化 / 最小化 / 关闭 / 置底 / 置顶 / 居中。双击左键可最大化，双击右键按九宫格吸附。"
+				Title = Loc.T("鼠标键动作"),
+				Body = Loc.T("触发后：左键拖动窗口、右键缩放窗口、中键执行一次性动作。三个键都能自定义成移动 / 缩放 / 最大化 / 最小化 / 关闭 / 置底 / 置顶 / 居中。双击左键可最大化，双击右键按九宫格吸附。")
 			},
 			new HelpPanel.Entry
 			{
 				Icon = Glyph.Color,
-				Title = "外框外观",
-				Body = "外框颜色、样式、粗细、圆角、不透明度都可以调，页面里就是实时预览，和真正拖窗口时用的是同一段绘制代码。窗口贴近屏幕边缘时外框几何保持不变。"
+				Title = Loc.T("外框外观"),
+				Body = Loc.T("外框颜色、样式、粗细、圆角、不透明度都可以调，页面里就是实时预览，和真正拖窗口时用的是同一段绘制代码。窗口贴近屏幕边缘时外框几何保持不变。")
 			},
 			new HelpPanel.Entry
 			{
 				Icon = Glyph.Shield,
-				Title = "全屏与最大化窗口",
-				Body = "默认开启「触发时先把全屏 / 最大化窗口变回普通窗口」：这样拖动和缩放都从一个正常的窗口尺寸开始，不会出现全屏窗口拖完一片黑、或者缩放抓不到边的情况。"
+				Title = Loc.T("全屏与最大化窗口"),
+				Body = Loc.T("默认开启「触发时先把全屏 / 最大化窗口变回普通窗口」：这样拖动和缩放都从一个正常的窗口尺寸开始，不会出现全屏窗口拖完一片黑、或者缩放抓不到边的情况。")
 			},
 			new HelpPanel.Entry
 			{
 				Icon = Glyph.Speed,
-				Title = "晃窗最小化其它窗口",
-				Body = "触发后选中窗口，左右来回晃一晃，其它窗口会全部最小化；再晃一次即可还原。判定要求「多次往复 + 净位移接近 0」，正常拖动窗口不会被误触发。"
+				Title = Loc.T("晃窗最小化其它窗口"),
+				Body = Loc.T("触发后选中窗口，左右来回晃一晃，其它窗口会全部最小化；再晃一次即可还原。判定要求「多次往复 + 净位移接近 0」，正常拖动窗口不会被误触发。")
 			},
 			new HelpPanel.Entry
 			{
 				Icon = Glyph.Shield,
-				Title = "不生效的窗口",
-				Body = "把窗口标题 / 程序名 / 窗口类名的关键字填进黑名单（逗号分隔），命中就完全不接管。不知道填什么可以用「选择程序」挑 exe，或用「点选窗口」直接在屏幕上点那扇窗。"
+				Title = Loc.T("不生效的窗口"),
+				Body = Loc.T("把窗口标题 / 程序名 / 窗口类名的关键字填进黑名单（逗号分隔），命中就完全不接管。不知道填什么可以用「选择程序」挑 exe，或用「点选窗口」直接在屏幕上点那扇窗。")
 			}
 		};
 	}
@@ -20843,7 +20931,7 @@ internal sealed class SettingsForm : Form
 				_cmbFrameColor.Items.Add(new ColorItem
 				{
 					Value = entry.Id,
-					Text = entry.Name,
+					Text = Loc.T(entry.Name),
 					Color = FrameColors.Resolve(entry.Id)
 				});
 			}
@@ -20869,7 +20957,7 @@ internal sealed class SettingsForm : Form
 			list.Add(new SwatchGrid.Entry
 			{
 				Id = FrameColors.All[l].Id,
-				Name = FrameColors.All[l].Name,
+				Name = Loc.T(FrameColors.All[l].Name),
 				Color = FrameColors.Resolve(FrameColors.All[l].Id)
 			});
 		}
@@ -20897,33 +20985,46 @@ internal sealed class SettingsForm : Form
 		_cmbRefreshMode.Items.Add(new IdItem
 		{
 			Value = "Auto",
-			Text = "跟随屏幕"
+			Text = Loc.T("跟随屏幕")
 		});
 		_cmbRefreshMode.Items.Add(new IdItem
 		{
 			Value = "Custom",
-			Text = "固定值"
+			Text = Loc.T("固定值")
 		});
 		SelectId(_cmbRefreshMode, _edit.DragRefreshMode);
 		_numRefreshHz.Value = Clamp(_edit.DragRefreshHz, (int)_numRefreshHz.Minimum, (int)_numRefreshHz.Maximum);
 		SyncRefreshEnabled();
 		int refreshRate = Native.GetRefreshRate();
-		_lblRefreshHint.Text = "跟随屏幕：按实测刷新率节流（本机 " + ((refreshRate > 0) ? (refreshRate + "Hz") : "未知") + "）。\r\n固定值：自定义频率，0 = 不限制。";
+		_lblRefreshHint.Text = Loc.T("跟随屏幕：按实测刷新率节流（本机 ") + ((refreshRate > 0) ? (refreshRate + "Hz") : Loc.T("未知")) + Loc.T("）。\r\n固定值：自定义频率，0 = 不限制。");
+		// 语言下拉：只有两项，显示各自的母语写法（English / 简体中文），换哪种语言都认得出
+		_cmbLanguage.Items.Clear();
+		_cmbLanguage.Items.Add(new IdItem
+		{
+			Value = Loc.Zh,
+			Text = Loc.DisplayName(Loc.Zh)
+		});
+		_cmbLanguage.Items.Add(new IdItem
+		{
+			Value = Loc.En,
+			Text = Loc.DisplayName(Loc.En)
+		});
+		SelectId(_cmbLanguage, Loc.Current);
 		_cmbAutoStart.Items.Clear();
 		_cmbAutoStart.Items.Add(new IdItem
 		{
 			Value = "TaskScheduler",
-			Text = "计划任务（最高权限、登录时静默启动，推荐）"
+			Text = Loc.T("计划任务（最高权限、登录时静默启动，推荐）")
 		});
 		_cmbAutoStart.Items.Add(new IdItem
 		{
 			Value = "Registry",
-			Text = "注册表 Run 项（每次登录会弹一次 UAC）"
+			Text = Loc.T("注册表 Run 项（每次登录会弹一次 UAC）")
 		});
 		_cmbAutoStart.Items.Add(new IdItem
 		{
 			Value = "None",
-			Text = "不开机启动"
+			Text = Loc.T("不开机启动")
 		});
 		SelectId(_cmbAutoStart, _edit.AutoStart);
 		_chkRunAsAdmin.Checked = _edit.RunAsAdmin;
@@ -20980,9 +21081,9 @@ internal sealed class SettingsForm : Form
 		_pnlPreview.FrameEnabled = frameEnabled;
 		_pnlPreview.Refresh_();
 		_gridColor.SelectedId = text;
-		_lblColorName.Text = "当前颜色：" + FrameColors.NameOf(text, followAccent, _customColorArgb) + " " + FrameColors.HexOf(color);
-		_lblCustomColor.Text = ((_customColorArgb != 0) ? ("已设自定义色 " + FrameColors.HexOf(Color.FromArgb(_customColorArgb))) : "还没有设置自定义颜色");
-		_lblStyleHeader.Text = "样式（当前粗细 " + thickness + " px・圆角 " + radius + " px）";
+		_lblColorName.Text = Loc.T("当前颜色：") + FrameColors.NameOf(text, followAccent, _customColorArgb) + " " + FrameColors.HexOf(color);
+		_lblCustomColor.Text = ((_customColorArgb != 0) ? (Loc.T("已设自定义色 ") + FrameColors.HexOf(Color.FromArgb(_customColorArgb))) : Loc.T("还没有设置自定义颜色"));
+		_lblStyleHeader.Text = Loc.T("样式（当前粗细 ") + thickness + Loc.T(" px・圆角 ") + radius + " px）";
 		_lblStyleHint.Text = FrameStyles.HintFor(text2);
 		_galleryStyle.SelectedId = text2;
 		_galleryStyle.ColorId = text;
@@ -21003,13 +21104,13 @@ internal sealed class SettingsForm : Form
 		string text2 = SelectedId(_cmbFrameStyle, FrameStyles.DefaultId);
 		bool flag = text != _edit.FrameColorId || text2 != _edit.FrameStyleId || (int)_numFrameThick.Value != _edit.FrameThickness || (int)_numFrameRadius.Value != _edit.FrameRadius || _chkFrame.Checked != _edit.ShowActivationFrame || _chkFollowAccent.Checked != _edit.FrameColorFollowAccent || _customColorArgb != _edit.FrameCustomColor;
 		_lblFrameTip.ForeColor = (flag ? Tokens.WarnText : Tokens.Hint);
-		_lblFrameTip.Text = (flag ? "外观已改动，点「保存并生效」才会画到实际外框上。" : "颜色与样式即点即换，预览与外框同一段代码。");
+		_lblFrameTip.Text = (flag ? Loc.T("外观已改动，点「保存并生效」才会画到实际外框上。") : Loc.T("颜色与样式即点即换，预览与外框同一段代码。"));
 	}
 
 	private void UpdateAdminLabel()
 	{
 		bool flag = Program.IsAdministrator();
-		_lblAdmin.Text = (flag ? "当前权限：管理员（可拖动任务管理器这类提权窗口）" : "当前权限：普通用户（日常窗口没问题，提权窗口拖不动）");
+		_lblAdmin.Text = (flag ? Loc.T("当前权限：管理员（可拖动任务管理器这类提权窗口）") : Loc.T("当前权限：普通用户（日常窗口没问题，提权窗口拖不动）"));
 		_btnRestartAdmin.Enabled = !flag;
 	}
 
@@ -21019,7 +21120,7 @@ internal sealed class SettingsForm : Form
 		if (_nav != null)
 		{
 			// 侧栏底部状态卡：一眼看到"正在运行"和当前触发键
-			_nav.SetStatus("正在运行", KeysUtil.DisplayName(_edit.TriggerKeyId) + " + 左键拖动");
+			_nav.SetStatus(Loc.T("正在运行"), KeysUtil.DisplayName(_edit.TriggerKeyId) + Loc.T(" + 左键拖动"));
 		}
 	}
 
@@ -21102,7 +21203,7 @@ internal sealed class SettingsForm : Form
 		{
 			if (FrameColors.All[i].Id == id)
 			{
-				return FrameColors.All[i].Name;
+				return Loc.T(FrameColors.All[i].Name);
 			}
 		}
 		return id;
@@ -21112,9 +21213,9 @@ internal sealed class SettingsForm : Form
 	{
 		_recording = true;
 		_coord.SuppressTrigger = true;
-		_txtKey.Text = "请按下要用的按键…";
+		_txtKey.Text = Loc.T("请按下要用的按键…");
 		_txtKey.BackColor = Color.FromArgb(255, 244, 214);
-		_lblKeyHint.Text = "正在录制：按任意键或鼠标侧键，Esc 取消。";
+		_lblKeyHint.Text = Loc.T("正在录制：按任意键或鼠标侧键，Esc 取消。");
 		_lblKeyHint.ForeColor = Tokens.WarnText;
 		Focus();
 	}
@@ -21127,19 +21228,19 @@ internal sealed class SettingsForm : Form
 		UpdateKeyText();
 		if (!applied)
 		{
-			_lblKeyHint.Text = "已取消录制。";
+			_lblKeyHint.Text = Loc.T("已取消录制。");
 			return;
 		}
 		string text = string.Empty;
 		if (KeysUtil.IsToggleKey(_edit.TriggerKeyId))
 		{
-			text = "注意：这是切换型按键，本程序会压制它，因此它不会再切换大小写/数字锁定。";
+			text = Loc.T("注意：这是切换型按键，本程序会压制它，因此它不会再切换大小写/数字锁定。");
 		}
 		else if (KeysUtil.IsWindowsKey(_edit.TriggerKeyId))
 		{
-			text = "注意：Win 键被作为触发键期间，Win 组合键（Win+E、Win+D 等）无法使用。";
+			text = Loc.T("注意：Win 键被作为触发键期间，Win 组合键（Win+E、Win+D 等）无法使用。");
 		}
-		_lblKeyHint.Text = ((text.Length > 0) ? text : ("已绑定：" + KeysUtil.DisplayName(_edit.TriggerKeyId)));
+		_lblKeyHint.Text = ((text.Length > 0) ? text : (Loc.T("已绑定：") + KeysUtil.DisplayName(_edit.TriggerKeyId)));
 		_lblKeyHint.ForeColor = ((text.Length > 0) ? Tokens.WarnText : Tokens.Hint);
 	}
 
@@ -21157,14 +21258,14 @@ internal sealed class SettingsForm : Form
 			{
 				// 纯修饰键（Ctrl/Shift/Alt/Win）被 KeyCode 掩码掩掉后就是 Keys.None；
 				// 放任不管会走默认分支绑成 "K:0x00"（vk=0 永远匹配不上任何真实按键），触发键就此失效。
-				_lblKeyHint.Text = "修饰键（Ctrl / Shift / Alt / Win）不能单独作为触发键，请再按一个主键。";
+				_lblKeyHint.Text = Loc.T("修饰键（Ctrl / Shift / Alt / Win）不能单独作为触发键，请再按一个主键。");
 				_lblKeyHint.ForeColor = Tokens.WarnText;
 				return true;
 			}
 			string text = ResolveRecordedKey(keys);
 			if (text == null)
 			{
-				_lblKeyHint.Text = "左键 / 右键 / 中键不能作为触发键，请用键盘按键或鼠标侧键。";
+				_lblKeyHint.Text = Loc.T("左键 / 右键 / 中键不能作为触发键，请用键盘按键或鼠标侧键。");
 				_lblKeyHint.ForeColor = Tokens.WarnText;
 				return true;
 			}
@@ -21188,7 +21289,7 @@ internal sealed class SettingsForm : Form
 			}
 			if (e.Button == MouseButtons.Left || e.Button == MouseButtons.Right || e.Button == MouseButtons.Middle)
 			{
-				_lblKeyHint.Text = "左键 / 右键 / 中键不能作为触发键，请用键盘按键或鼠标侧键。";
+				_lblKeyHint.Text = Loc.T("左键 / 右键 / 中键不能作为触发键，请用键盘按键或鼠标侧键。");
 				_lblKeyHint.ForeColor = Tokens.WarnText;
 				return;
 			}
@@ -21253,24 +21354,78 @@ internal sealed class SettingsForm : Form
 		{
 			// 保存失败时绝不能再显示"已保存并立即生效"：设置没有落盘，重启就会丢
 			_lblStatus.ForeColor = Tokens.Danger;
-			_lblStatus.Text = "保存失败：" + saveError + "（本次修改没有写入磁盘，重启后会丢失；请检查配置目录权限或磁盘空间）";
+			_lblStatus.Text = Loc.T("保存失败：") + saveError + Loc.T("（本次修改没有写入磁盘，重启后会丢失；请检查配置目录权限或磁盘空间）");
 			return;
 		}
 		string message;
-		if (AutoStart.Apply(_edit.AutoStart, AppPaths.ExePath, out message))
+		if (AutoStart.Apply(_edit.AutoStart, AppPaths.EntryPath, out message))
 		{
 			_lblStatus.ForeColor = Tokens.Success;
-			_lblStatus.Text = "已保存并立即生效";
+			_lblStatus.Text = Loc.T("已保存并立即生效");
 		}
 		else
 		{
 			_lblStatus.ForeColor = Tokens.Danger;
-			_lblStatus.Text = "配置已保存，但开机自启设置失败";
-			MessageBox.Show(message, "开机自启设置失败", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+			_lblStatus.Text = Loc.T("配置已保存，但开机自启设置失败");
+			MessageBox.Show(message, Loc.T("开机自启设置失败"), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 		}
-		if (_edit.RunAsAdmin && !Program.IsAdministrator() && MessageBox.Show("已保存。\r\n\r\n管理员权限只在【启动的时候】申请，所以要重启程序才会生效。\r\n现在以管理员身份重启吗？（选\"否\"就等下次启动再提权）", "长按拖窗 · 权限变更", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+		if (_edit.RunAsAdmin && !Program.IsAdministrator() && MessageBox.Show(Loc.T("已保存。\r\n\r\n管理员权限只在【启动的时候】申请，所以要重启程序才会生效。\r\n现在以管理员身份重启吗？（选\"否\"就等下次启动再提权）"), Loc.T("长按拖窗 · 权限变更"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
 		{
 			RestartAsAdmin();
+		}
+	}
+
+	/// <summary>
+	/// 语言下拉框：选中即保存并立刻重建界面，不需要再点「保存并生效」。
+	/// 只改配置里的 Language 一项（克隆当前已落盘的配置再写），
+	/// 避免把界面上其它还没确认的半成品改动一起提交。
+	/// </summary>
+	private void OnLanguageSelectionChanged()
+	{
+		if (_populating)
+		{
+			return;
+		}
+		string text = SelectedId(_cmbLanguage, Loc.Current);
+		if (string.Equals(Loc.Normalize(text), Loc.Current, StringComparison.Ordinal))
+		{
+			return;
+		}
+		try
+		{
+			AppConfig appConfig = _store.Current?.Clone() ?? new AppConfig();
+			appConfig.Language = Loc.Normalize(text);
+			if (!_store.Apply(appConfig, out string error))
+			{
+				if (_lblStatus != null)
+				{
+					_lblStatus.ForeColor = Tokens.Danger;
+					_lblStatus.Text = Loc.T("语言没能写入配置：") + error;
+				}
+				return;
+			}
+			if (_edit != null)
+			{
+				_edit.Language = appConfig.Language;
+			}
+			Loc.Set(appConfig.Language);
+			// 重建必须推迟到消息循环的下一轮：此刻还在 ComboBox 自己的事件里，
+			// 立刻 Dispose 掉它会连正在派发事件的控件一起拔掉。
+			BeginInvoke(delegate
+			{
+				try
+				{
+					RebuildUi();
+				}
+				catch (Exception ex2)
+				{
+					Log.Error(ex2);
+				}
+			});
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
 		}
 	}
 
@@ -21304,6 +21459,7 @@ internal sealed class SettingsForm : Form
 		target.RunAsAdmin = _chkRunAsAdmin.Checked;
 		target.WarnNonAdmin = _chkWarnNonAdmin.Checked;
 		target.AutoCheckUpdate = _chkAutoUpdate.Checked;
+		target.Language = SelectedId(_cmbLanguage, target.Language);
 		target.GitHubToken = Updater.NormalizeToken(_txtToken.Text);
 		CaptureSizeInto(target);
 	}
@@ -21313,8 +21469,8 @@ internal sealed class SettingsForm : Form
 		try
 		{
 			using OpenFileDialog openFileDialog = new OpenFileDialog();
-			openFileDialog.Title = "选择要排除的程序（它的窗口将不再被接管）";
-			openFileDialog.Filter = "可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*";
+			openFileDialog.Title = Loc.T("选择要排除的程序（它的窗口将不再被接管）");
+			openFileDialog.Filter = Loc.T("可执行文件 (*.exe)|*.exe|所有文件 (*.*)|*.*");
 			openFileDialog.CheckFileExists = true;
 			openFileDialog.Multiselect = false;
 			if (openFileDialog.ShowDialog(this) == DialogResult.OK)
@@ -21326,7 +21482,7 @@ internal sealed class SettingsForm : Form
 				}
 				if (string.IsNullOrEmpty(text))
 				{
-					Status("没从文件名里取到关键字", error: true);
+					Status(Loc.T("没从文件名里取到关键字"), error: true);
 				}
 				else
 				{
@@ -21337,7 +21493,7 @@ internal sealed class SettingsForm : Form
 		catch (Exception ex)
 		{
 			Log.Error(ex);
-			Status("打开文件对话框失败：" + ex.Message, error: true);
+			Status(Loc.T("打开文件对话框失败：") + ex.Message, error: true);
 		}
 	}
 
@@ -21371,7 +21527,7 @@ internal sealed class SettingsForm : Form
 		catch (Exception ex)
 		{
 			Log.Error(ex);
-			Status("打开取色器失败：" + ex.Message, error: true);
+			Status(Loc.T("打开取色器失败：") + ex.Message, error: true);
 		}
 	}
 
@@ -21422,7 +21578,7 @@ internal sealed class SettingsForm : Form
 					return;
 				}
 				done = true;
-				Status("已取消窗口点选", error: false);
+				Status(Loc.T("已取消窗口点选"), error: false);
 				try
 				{
 					mask.Close();
@@ -21431,13 +21587,13 @@ internal sealed class SettingsForm : Form
 				{
 				}
 			};
-			Status("请点击要排除的窗口（按 Esc 取消）", error: false);
+			Status(Loc.T("请点击要排除的窗口（按 Esc 取消）"), error: false);
 			mask.ShowDialog(this);
 		}
 		catch (Exception ex)
 		{
 			Log.Error(ex);
-			Status("窗口点选失败：" + ex.Message, error: true);
+			Status(Loc.T("窗口点选失败：") + ex.Message, error: true);
 		}
 	}
 
@@ -21452,7 +21608,7 @@ internal sealed class SettingsForm : Form
 			}
 			if (num == IntPtr.Zero)
 			{
-				Status("没找到窗口，请对着目标窗口的标题栏再点一次", error: true);
+				Status(Loc.T("没找到窗口，请对着目标窗口的标题栏再点一次"), error: true);
 				return;
 			}
 			string text = WindowActions.ProcessExeName(num);
@@ -21469,7 +21625,7 @@ internal sealed class SettingsForm : Form
 			}
 			if (string.IsNullOrEmpty(text2))
 			{
-				Status("这扇窗口取不到可用的标识，请改用「选择程序…」", error: true);
+				Status(Loc.T("这扇窗口取不到可用的标识，请改用「选择程序…」"), error: true);
 				return;
 			}
 			AppendBlacklistKeyword(text2);
@@ -21478,12 +21634,12 @@ internal sealed class SettingsForm : Form
 			{
 				text3 = text3.Substring(0, 18) + "…";
 			}
-			Status("已排除：" + text2 + (string.IsNullOrEmpty(text3) ? "" : ("（" + text3 + "）")), error: false);
+			Status(Loc.T("已排除：") + text2 + (string.IsNullOrEmpty(text3) ? "" : ("（" + text3 + "）")), error: false);
 		}
 		catch (Exception ex)
 		{
 			Log.Error(ex);
-			Status("点选失败：" + ex.Message, error: true);
+			Status(Loc.T("点选失败：") + ex.Message, error: true);
 		}
 	}
 
@@ -21551,6 +21707,8 @@ internal sealed class SettingsForm : Form
 		appConfig.SettingsHeight = _edit.SettingsHeight;
 		appConfig.AutoCheckUpdate = _edit.AutoCheckUpdate;
 		appConfig.LastUpdateNotified = _edit.LastUpdateNotified;
+		// 语言属「环境类」设置：恢复默认值不该把用户选的语言改回中文
+		appConfig.Language = _edit.Language;
 		// 令牌属「环境类」设置：恢复默认值不该把用户的令牌抹掉
 		appConfig.GitHubToken = _edit.GitHubToken;
 		_edit = appConfig;
@@ -21560,7 +21718,7 @@ internal sealed class SettingsForm : Form
 		}
 		Populate();
 		_lblStatus.ForeColor = Tokens.Hint;
-		_lblStatus.Text = "已载入默认值，点「保存并生效」后写入";
+		_lblStatus.Text = Loc.T("已载入默认值，点「保存并生效」后写入");
 	}
 
 	private void RestartAsAdmin()
@@ -21568,6 +21726,8 @@ internal sealed class SettingsForm : Form
 		ProcessStartInfo startInfo = new ProcessStartInfo
 		{
 			FileName = AppPaths.ExePath,
+			// 提权重启后仍要知道外层 exe 在哪，否则新进程的更新会打到 %LOCALAPPDATA% 的副本上
+			Arguments = "--host " + Updater.QuoteArg(AppPaths.EntryPath),
 			UseShellExecute = true,
 			Verb = "runas"
 		};
@@ -21602,7 +21762,7 @@ internal sealed class SettingsForm : Form
 			try
 			{
 				Clipboard.SetText(url);
-				SetUpdateStatus("打不开浏览器，链接已复制到剪贴板：" + url, Tokens.WarnText);
+				SetUpdateStatus(Loc.T("打不开浏览器，链接已复制到剪贴板：") + url, Tokens.WarnText);
 			}
 			catch
 			{
@@ -21647,12 +21807,12 @@ internal sealed class SettingsForm : Form
 		if (string.IsNullOrEmpty(token))
 		{
 			_lblTokenVerify.ForeColor = Tokens.WarnText;
-			_lblTokenVerify.Text = "先填令牌再验证";
+			_lblTokenVerify.Text = Loc.T("先填令牌再验证");
 			return;
 		}
 		_btnVerifyToken.Enabled = false;
 		_lblTokenVerify.ForeColor = Tokens.Hint;
-		_lblTokenVerify.Text = "正在向 GitHub 验证…";
+		_lblTokenVerify.Text = Loc.T("正在向 GitHub 验证…");
 		ThreadPool.QueueUserWorkItem(delegate
 		{
 			string message;
@@ -21677,7 +21837,7 @@ internal sealed class SettingsForm : Form
 					// 验证通过但还没落盘：明说一句，免得用户以为已经生效
 					if (result == Updater.TokenCheckResult.Valid && !string.Equals(token, Updater.NormalizeToken(_store.Current?.GitHubToken), StringComparison.Ordinal))
 					{
-						text += "（还没保存：点「保存令牌」才会生效）";
+						text += Loc.T("（还没保存：点「保存令牌」才会生效）");
 					}
 					_lblTokenVerify.ForeColor = TokenCheckColor(result);
 					_lblTokenVerify.Text = text;
@@ -21719,7 +21879,7 @@ internal sealed class SettingsForm : Form
 			if (!_store.Apply(appConfig, out string error))
 			{
 				_lblTokenState.ForeColor = Tokens.Danger;
-				_lblTokenState.Text = "保存失败：" + error;
+				_lblTokenState.Text = Loc.T("保存失败：") + error;
 				return;
 			}
 			if (_edit != null)
@@ -21729,13 +21889,13 @@ internal sealed class SettingsForm : Form
 			// 立刻生效，不等下一次启动：后台检查更新读的就是这个静态值
 			Updater.Token = token;
 			RefreshTokenState();
-			Log.Info("GitHub 令牌已" + (string.IsNullOrEmpty(token) ? "清除" : "保存") + "（" + Updater.MaskToken(token) + "）");
+			Log.Info("GitHub 令牌已" + (string.IsNullOrEmpty(token) ? "清除" : "保存") + "（长度 " + token.Length + "，不记录内容）");
 		}
 		catch (Exception ex)
 		{
 			Log.Error(ex);
 			_lblTokenState.ForeColor = Tokens.Danger;
-			_lblTokenState.Text = "保存令牌失败：" + ex.Message;
+			_lblTokenState.Text = Loc.T("保存令牌失败：") + ex.Message;
 		}
 	}
 
@@ -21754,17 +21914,19 @@ internal sealed class SettingsForm : Form
 			if (_lblTokenVerify != null && !_lblTokenVerify.IsDisposed && !string.Equals(text, _verifiedToken, StringComparison.Ordinal))
 			{
 				_lblTokenVerify.ForeColor = Tokens.Hint;
-				_lblTokenVerify.Text = (_verifiedToken == null) ? "尚未验证" : "令牌已改动，请重新验证";
+				_lblTokenVerify.Text = (_verifiedToken == null) ? Loc.T("尚未验证") : Loc.T("令牌已改动，请重新验证");
 			}
 			bool flag = string.Equals(text, text2, StringComparison.Ordinal);
 			if (string.IsNullOrEmpty(text))
 			{
 				_lblTokenState.ForeColor = flag ? Tokens.WarnText : Tokens.Hint;
-				_lblTokenState.Text = (flag ? "未填写：只提示、不自动下载" : "已清空，点「保存令牌」生效");
+				_lblTokenState.Text = (flag ? Loc.T("未填写：检查更新走匿名接口") : Loc.T("已清空，点「保存令牌」生效"));
 				return;
 			}
 			_lblTokenState.ForeColor = flag ? Tokens.Success : Tokens.Hint;
-			_lblTokenState.Text = (flag ? "已生效：" : "待保存：") + Updater.MaskToken(text) + "（5000 次/小时）";
+			// 不显示令牌的任何字符（哪怕只露前 4 后 4）：旁人扫一眼屏幕就能记下片段，
+			// 这里只说"生效没生效"。
+			_lblTokenState.Text = (flag ? Loc.T("已生效（接口限额 5000 次/小时）") : Loc.T("待保存：点「保存令牌」后生效"));
 		}
 		catch (Exception ex)
 		{
@@ -21778,12 +21940,12 @@ internal sealed class SettingsForm : Form
 		{
 			if (userInitiated)
 			{
-				SetUpdateStatus("正在检查，请稍候…", Tokens.Hint);
+				SetUpdateStatus(Loc.T("正在检查，请稍候…"), Tokens.Hint);
 			}
 			return;
 		}
 		_updateBusy = true;
-		SetUpdateStatus("正在检查更新…", Tokens.Hint);
+		SetUpdateStatus(Loc.T("正在检查更新…"), Tokens.Hint);
 		ThreadPool.QueueUserWorkItem(delegate
 		{
 			string error;
@@ -21800,17 +21962,17 @@ internal sealed class SettingsForm : Form
 				}
 				if (upToDate)
 				{
-					SetUpdateStatus("已是最新版本（v" + AppInfo.Version + "）" + NoteSuffix(note), Tokens.Success);
+					SetUpdateStatus(Loc.T("已是最新版本（v") + AppInfo.Version + "）" + NoteSuffix(note), Tokens.Success);
 					if (userInitiated)
 					{
-						MessageBox.Show(this, "当前已是最新版本 v" + AppInfo.Version + "。" + NoteSuffix(note), "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
+						MessageBox.Show(this, Loc.T("当前已是最新版本 v") + AppInfo.Version + "。" + NoteSuffix(note), Loc.T("检查更新"), MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 					}
 					return;
 				}
-				SetUpdateStatus("检查失败：" + error, Tokens.Danger);
+				SetUpdateStatus(Loc.T("检查失败：") + error, Tokens.Danger);
 				if (userInitiated)
 				{
-					MessageBox.Show(this, "检查更新失败：\r\n\r\n" + error + "\r\n\r\n你也可以手动打开发布页查看：\r\n" + AppInfo.ReleasesUrl, "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+					MessageBox.Show(this, Loc.T("检查更新失败：\r\n\r\n") + error + Loc.T("\r\n\r\n你也可以手动打开发布页查看：\r\n") + AppInfo.ReleasesUrl, Loc.T("检查更新"), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 				}
 			});
 		});
@@ -21842,8 +22004,9 @@ internal sealed class SettingsForm : Form
 	}
 
 	/// <summary>
-	/// v1.7.0：没填令牌 → 只提示，不自动下载；填了令牌 → 自动下载。
-	/// 抽成纯函数是为了让自检能断言这条业务规则（真正的 UI 分支没法在自检里点击）。
+	/// v1.7.0 的旧规则：没填令牌 → 只提示；填了令牌 → 自动下载。
+	/// v1.9.0 起下载一律先弹 UpdatePromptForm 让用户点「立即下载」，本函数不再决定 UI 走向，
+	/// 保留它是为了自检仍能断言"令牌有无"这条纯逻辑，也方便将来回退。
 	/// </summary>
 	internal static UpdateAction DecideUpdateAction(bool hasToken)
 	{
@@ -21863,20 +22026,37 @@ internal sealed class SettingsForm : Form
 
 	private void OnUpdateFound(UpdateInfo info, string note)
 	{
-		// v1.7.0：没填令牌 → 只提示、不自动下载。匿名下载容易被限流/中断，
-		// 与其让用户在设置页里看着进度条失败，不如直接给出可点击的 GitHub 下载地址。
-		if (DecideUpdateAction(Updater.HasToken) == UpdateAction.PromptOnly)
+		SetUpdateStatus(Loc.T("发现新版本 ") + info.Tag + Loc.T("（当前 v") + AppInfo.Version + "）" + NoteSuffix(note), Tokens.WarnText);
+		// v1.8.1：统一走「弹窗 → 下载窗口」这条路径。
+		// 没填令牌也允许下载：发布资产直链不吃接口限额，用户点「立即下载」就是明确同意。
+		PromptAndDownload(info);
+	}
+
+	/// <summary>
+	/// 弹「发现新版本」窗口；用户点「立即下载」才进下载窗口。
+	/// 这个窗口是独立的（ShowInTaskbar = true），不会像气泡那样几秒就消失，
+	/// 用户切到别的窗口后还能在任务栏里找回来。
+	/// </summary>
+	private void PromptAndDownload(UpdateInfo info)
+	{
+		bool flag;
+		try
 		{
-			SetUpdateStatus("发现新版本 " + info.Tag + "（未填令牌：只提示，不自动下载）", Tokens.WarnText);
-			ShowUpdateLinkDialog(info);
+			using UpdatePromptForm updatePromptForm = new UpdatePromptForm(info);
+			updatePromptForm.ShowDialog(this);
+			flag = updatePromptForm.DownloadRequested;
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			flag = false;
+		}
+		if (!flag)
+		{
+			SetUpdateStatus(Loc.T("已跳过 ") + info.Tag + Loc.T("；需要时再点「检查更新」即可"), Tokens.Hint);
 			return;
 		}
-		SetUpdateStatus("发现新版本 " + info.Tag + "（当前 v" + AppInfo.Version + "）" + NoteSuffix(note), Tokens.WarnText);
-		DialogResult dialogResult = MessageBox.Show(this, "发现新版本！\r\n\r\n当前版本：v" + AppInfo.Version + "\r\n最新版本：" + info.Tag + "\r\n\r\n现在下载并更新吗？\r\n（下载完成后会自动替换并重启程序）", "发现新版本", MessageBoxButtons.OKCancel, MessageBoxIcon.Asterisk);
-		if (dialogResult == DialogResult.OK)
-		{
-			DownloadAndApply(info);
-		}
+		DownloadAndApply(info);
 	}
 
 	/// <summary>
@@ -21885,7 +22065,7 @@ internal sealed class SettingsForm : Form
 	/// </summary>
 	internal static string BuildNoTokenNotice()
 	{
-		return "还没有填写 GitHub 个人访问令牌，所以这次只是在程序里提示，不会下载到本机。\r\n点下面的链接用浏览器下载；想以后自动下载并替换，就到「关于 → GitHub 访问令牌」填好令牌再点「检查更新」。";
+		return Loc.T("还没有填写 GitHub 个人访问令牌，所以这次只是在程序里提示，不会下载到本机。\r\n点下面的链接用浏览器下载；想以后自动下载并替换，就到「关于 → GitHub 访问令牌」填好令牌再点「检查更新」。");
 	}
 
 	/// <summary>
@@ -21896,7 +22076,7 @@ internal sealed class SettingsForm : Form
 	internal void ShowUpdateLinkDialog(UpdateInfo info)
 	{
 		using Form form = new Form();
-		form.Text = "发现新版本";
+		form.Text = Loc.T("发现新版本");
 		form.FormBorderStyle = FormBorderStyle.FixedDialog;
 		form.StartPosition = FormStartPosition.CenterParent;
 		form.MinimizeBox = false;
@@ -21904,7 +22084,7 @@ internal sealed class SettingsForm : Form
 		form.ShowInTaskbar = false;
 		form.BackColor = Tokens.Surface;
 		form.ForeColor = Tokens.TextPrimary;
-		form.Font = new Font(DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+		form.Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 		form.AutoScaleMode = AutoScaleMode.Dpi;
 		int num = Sc(20);
 		int num2 = Sc(520);
@@ -21913,8 +22093,8 @@ internal sealed class SettingsForm : Form
 			AutoSize = false,
 			BackColor = Color.Transparent,
 			ForeColor = Tokens.TextPrimary,
-			Font = new Font(DesignFontFamily, 11f, FontStyle.Bold, GraphicsUnit.Point),
-			Text = "发现新版本 " + info.Tag + "（当前 v" + AppInfo.Version + "）"
+			Font = new Font(DesignFontFamily, Sc(15), FontStyle.Bold, GraphicsUnit.Pixel),
+			Text = Loc.T("发现新版本 ") + info.Tag + Loc.T("（当前 v") + AppInfo.Version + "）"
 		};
 		Label label2 = new Label
 		{
@@ -21928,7 +22108,7 @@ internal sealed class SettingsForm : Form
 			AutoSize = false,
 			BackColor = Color.Transparent,
 			ForeColor = Tokens.Hint,
-			Text = "下载地址（点击或按回车打开）"
+			Text = Loc.T("下载地址（点击或按回车打开）")
 		};
 		LinkLabel linkLabel = new LinkLabel
 		{
@@ -21939,8 +22119,8 @@ internal sealed class SettingsForm : Form
 			ActiveLinkColor = Tokens.AccentPressed,
 			VisitedLinkColor = Tokens.Accent,
 			Text = info.AssetUrl,
-			AccessibleName = "GitHub 下载地址",
-			AccessibleDescription = "在浏览器中打开该链接，下载新版本 " + info.Tag
+			AccessibleName = Loc.T("GitHub 下载地址"),
+			AccessibleDescription = Loc.T("在浏览器中打开该链接，下载新版本 ") + info.Tag
 		};
 		linkLabel.LinkClicked += delegate
 		{
@@ -21954,8 +22134,8 @@ internal sealed class SettingsForm : Form
 			LinkColor = Tokens.TextTertiary,
 			ActiveLinkColor = Tokens.Accent,
 			VisitedLinkColor = Tokens.TextTertiary,
-			Text = "发布页：" + info.PageUrl,
-			AccessibleName = "GitHub 发布页地址"
+			Text = Loc.T("发布页：") + info.PageUrl,
+			AccessibleName = Loc.T("GitHub 发布页地址")
 		};
 		linkLabel2.LinkClicked += delegate
 		{
@@ -21963,14 +22143,14 @@ internal sealed class SettingsForm : Form
 		};
 		FlatButton flatButton = new FlatButton
 		{
-			Text = "复制链接"
+			Text = Loc.T("复制链接")
 		};
 		flatButton.Click += delegate
 		{
 			try
 			{
 				Clipboard.SetText(info.AssetUrl);
-				flatButton.Text = "已复制";
+				flatButton.Text = Loc.T("已复制");
 			}
 			catch (Exception ex)
 			{
@@ -21979,7 +22159,7 @@ internal sealed class SettingsForm : Form
 		};
 		FlatButton flatButton2 = new FlatButton
 		{
-			Text = "用浏览器打开",
+			Text = Loc.T("用浏览器打开"),
 			Primary = true
 		};
 		flatButton2.Click += delegate
@@ -21988,7 +22168,7 @@ internal sealed class SettingsForm : Form
 		};
 		FlatButton flatButton3 = new FlatButton
 		{
-			Text = "关闭"
+			Text = Loc.T("关闭")
 		};
 		flatButton3.Click += delegate
 		{
@@ -22018,68 +22198,42 @@ internal sealed class SettingsForm : Form
 
 	private void DownloadAndApply(UpdateInfo info)
 	{
-		// 硬护栏（v1.7.0）：没填令牌就绝不下载——不管是从哪个入口走到这里，
-		// 一律退回"只提示 + 浏览器下载链接"，避免将来新加的调用路径绕过 OnUpdateFound 的判断。
-		if (DecideUpdateAction(Updater.HasToken) == UpdateAction.PromptOnly)
-		{
-			SetUpdateStatus("未填令牌：不会在程序内下载，请用浏览器下载 " + info.Tag, Tokens.WarnText);
-			ShowUpdateLinkDialog(info);
-			return;
-		}
 		_updateBusy = true;
-		SetUpdateStatus("正在下载 " + info.Tag + "…", Tokens.Hint);
 		_btnCheckUpdate.Enabled = false;
-		string exePath = AppPaths.ExePath;
-		string text = Path.GetDirectoryName(exePath);
-		ThreadPool.QueueUserWorkItem(delegate
+		SetUpdateStatus(Loc.T("正在下载 ") + info.Tag + "…", Tokens.Hint);
+		try
 		{
-			long num = Environment.TickCount64;
-			string error;
-			bool flag = Updater.Download(info, Path.Combine(text, Updater.TempDownloadName), delegate(long done, long total)
+			using DownloadForm downloadForm = new DownloadForm(info);
+			downloadForm.ShowDialog(this);
+			switch (downloadForm.Result)
 			{
-				long num2 = Environment.TickCount64;
-				if (num2 - num >= 120)
-				{
-					num = num2;
-					PostUpdateAction(delegate
-					{
-						SetUpdateStatus(FormatDownloadProgress(done, total), Tokens.Hint);
-					});
-				}
-			}, out error);
-			if (!flag)
-			{
-				PostUpdateAction(delegate
-				{
-					_updateBusy = false;
-					_btnCheckUpdate.Enabled = true;
-					SetUpdateStatus("下载失败：" + error, Tokens.Danger);
-					MessageBox.Show(this, "下载失败：\r\n\r\n" + error + "\r\n\r\n可手动到发布页下载：\r\n" + info.PageUrl, "更新失败", MessageBoxButtons.OK, MessageBoxIcon.Hand);
-				});
-				return;
+			case DownloadForm.Outcome.Cancelled:
+				SetUpdateStatus(Loc.T("已取消下载，仍是 v") + AppInfo.Version, Tokens.Hint);
+				break;
+			case DownloadForm.Outcome.Failed:
+				SetUpdateStatus(Loc.T("下载失败"), Tokens.Danger);
+				break;
+			case DownloadForm.Outcome.Applied:
+				SetUpdateStatus(Loc.T("更新已就绪，程序即将退出并自动替换"), Tokens.Success);
+				break;
+			default:
+				SetUpdateStatus(Loc.T("下载窗口已关闭"), Tokens.Hint);
+				break;
 			}
-			PostUpdateAction(delegate
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			SetUpdateStatus(Loc.T("下载失败：") + ex.Message, Tokens.Danger);
+		}
+		finally
+		{
+			_updateBusy = false;
+			if (_btnCheckUpdate != null && !_btnCheckUpdate.IsDisposed)
 			{
-				SetUpdateStatus("下载完成，正在替换并重启…", Tokens.Success);
-			});
-			string error2;
-			bool flag2 = Updater.ApplyAndRestart(Path.Combine(text, Updater.TempDownloadName), exePath, out error2);
-			PostUpdateAction(delegate
-			{
-				_updateBusy = false;
 				_btnCheckUpdate.Enabled = true;
-				string text2 = Path.Combine(text, Updater.TempDownloadName);
-				if (flag2)
-				{
-					SetUpdateStatus("更新已就绪，程序即将退出并自动替换", Tokens.Success);
-					MessageBox.Show(this, "更新已下载完成。\r\n\r\n点击「确定」后程序将退出，自动替换为新版本并重新启动。", "更新就绪", MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
-					TrayContext.RequestExitForUpdate();
-					return;
-				}
-				SetUpdateStatus("替换失败：" + error2, Tokens.Danger);
-				MessageBox.Show(this, "已下载新版本，但自动替换失败：\r\n\r\n" + error2 + "\r\n\r\n新版本已保存在：\r\n" + text2 + "\r\n\r\n可手动改名覆盖，或到发布页重新下载：\r\n" + info.PageUrl, "更新失败", MessageBoxButtons.OK, MessageBoxIcon.Hand);
-			});
-		});
+			}
+		}
 	}
 
 	internal static string FormatDownloadProgress(long done, long total)
@@ -22518,7 +22672,7 @@ internal sealed class SettingsForm : Form
 			return "(none)";
 		}
 		PageHost host = settingsForm._pages[settingsForm._activePage].Host;
-		return "页=" + settingsForm._activePage + " 偏移=" + host.Offset + " 内容高=" + ((host.Canvas != null) ? host.Canvas.Height : 0) + " 视口=" + host.ClientSize.Height + " 可滚=" + host.MaxScroll;
+		return Loc.T("页=") + settingsForm._activePage + Loc.T(" 偏移=") + host.Offset + Loc.T(" 内容高=") + ((host.Canvas != null) ? host.Canvas.Height : 0) + Loc.T(" 视口=") + host.ClientSize.Height + Loc.T(" 可滚=") + host.MaxScroll;
 	}
 
 	internal static int ProbeScrollTo(Form f, int y)
@@ -22538,7 +22692,7 @@ internal sealed class SettingsForm : Form
 		{
 			return "(none)";
 		}
-		return "侧栏高亮=" + ProbeSidebarActive(f) + " 当前页=" + settingsForm._activePage + " " + ProbeScrollInfo(f);
+		return Loc.T("侧栏高亮=") + ProbeSidebarActive(f) + Loc.T(" 当前页=") + settingsForm._activePage + " " + ProbeScrollInfo(f);
 	}
 
 	internal static bool ProbeOnActivePage(Form f, Control c)
@@ -22643,14 +22797,14 @@ internal sealed class SettingsForm : Form
 					{
 						groupClipReport.Clipped++;
 						GroupClipReport groupClipReport2 = groupClipReport;
-						groupClipReport2.Detail = groupClipReport2.Detail + "「" + (string.IsNullOrEmpty(control2.Text) ? control2.GetType().Name : ShortText(control2.Text)) + "」L=" + control2.Left + " T=" + control2.Top + " W=" + control2.Width + " H=" + control2.Height + " 越界=" + num + "px  ";
+						groupClipReport2.Detail = groupClipReport2.Detail + "「" + (string.IsNullOrEmpty(control2.Text) ? control2.GetType().Name : ShortText(control2.Text)) + "」L=" + control2.Left + " T=" + control2.Top + " W=" + control2.Width + " H=" + control2.Height + Loc.T(" 越界=") + num + "px  ";
 					}
 				}
 			}
 		}
 		catch (Exception ex)
 		{
-			groupClipReport.Detail = groupClipReport.Detail + "异常 " + ex.GetType().Name + " ";
+			groupClipReport.Detail = groupClipReport.Detail + Loc.T("异常 ") + ex.GetType().Name + " ";
 		}
 		return groupClipReport;
 	}
@@ -22696,7 +22850,7 @@ internal sealed class SettingsForm : Form
 					{
 						stringBuilder.Append("「").Append(ShortText(array[j].Text ?? array[j].GetType().Name)).Append("」×「")
 							.Append(ShortText(array[k].Text ?? array[k].GetType().Name))
-							.Append("」交 ")
+							.Append(Loc.T("」交 "))
 							.Append(rectangle.Width)
 							.Append("x")
 							.Append(rectangle.Height)
@@ -22708,7 +22862,7 @@ internal sealed class SettingsForm : Form
 		}
 		catch (Exception ex)
 		{
-			return "异常 " + ex.GetType().Name;
+			return Loc.T("异常 ") + ex.GetType().Name;
 		}
 	}
 
@@ -22724,7 +22878,7 @@ internal sealed class SettingsForm : Form
 			return "";
 		}
 		Control control = list[index];
-		return "z=" + index + " " + control.GetType().Name + " vis=" + control.Visible + " L=" + control.Left + " T=" + control.Top + " W=" + control.Width + " H=" + control.Height + " 右=" + control.Right + " 底=" + control.Bottom;
+		return "z=" + index + " " + control.GetType().Name + " vis=" + control.Visible + " L=" + control.Left + " T=" + control.Top + " W=" + control.Width + " H=" + control.Height + Loc.T(" 右=") + control.Right + Loc.T(" 底=") + control.Bottom;
 	}
 
 	internal static int ProbeGroupTop(Form f, int index)
@@ -22777,14 +22931,14 @@ internal sealed class SettingsForm : Form
 					}
 					if ((size2.Width > num && size2.Height > control2.Height) || (size.Width > num && size2.Height > control2.Height))
 					{
-						stringBuilder.AppendLine("「" + ShortText(control2.Text) + "」W=" + control2.Width + " H=" + control2.Height + " 文本可用=" + num + " 单行需=" + size.Width + " 折行需高=" + size2.Height);
+						stringBuilder.AppendLine("「" + ShortText(control2.Text) + "」W=" + control2.Width + " H=" + control2.Height + Loc.T(" 文本可用=") + num + Loc.T(" 单行需=") + size.Width + Loc.T(" 折行需高=") + size2.Height);
 					}
 				}
 			}
 		}
 		catch (Exception ex)
 		{
-			stringBuilder.AppendLine("异常 " + ex.GetType().Name);
+			stringBuilder.AppendLine(Loc.T("异常 ") + ex.GetType().Name);
 		}
 		return stringBuilder.ToString();
 	}
@@ -22925,11 +23079,11 @@ internal sealed class SettingsForm : Form
 	{
 		try
 		{
-			return "色板 " + _gridColor.CellCount + " 格 " + _gridColor.ColumnsFor(_gridColor.Width) + " 列 选中=" + (_gridColor.SelectedId ?? "(null)") + " 尺寸=" + _gridColor.Width + "x" + _gridColor.Height + " | 画廊 " + _galleryStyle.ItemsForTest.Count + " 项 " + _galleryStyle.ColumnsFor(_galleryStyle.Width) + " 列 选中=" + (_galleryStyle.SelectedId ?? "(null)") + " 尺寸=" + _galleryStyle.Width + "x" + _galleryStyle.Height;
+			return Loc.T("色板 ") + _gridColor.CellCount + Loc.T(" 格 ") + _gridColor.ColumnsFor(_gridColor.Width) + Loc.T(" 列 选中=") + (_gridColor.SelectedId ?? "(null)") + Loc.T(" 尺寸=") + _gridColor.Width + "x" + _gridColor.Height + Loc.T(" | 画廊 ") + _galleryStyle.ItemsForTest.Count + Loc.T(" 项 ") + _galleryStyle.ColumnsFor(_galleryStyle.Width) + Loc.T(" 列 选中=") + (_galleryStyle.SelectedId ?? "(null)") + Loc.T(" 尺寸=") + _galleryStyle.Width + "x" + _galleryStyle.Height;
 		}
 		catch (Exception ex)
 		{
-			return "异常 " + ex.GetType().Name;
+			return Loc.T("异常 ") + ex.GetType().Name;
 		}
 	}
 
@@ -22946,7 +23100,7 @@ internal sealed class SettingsForm : Form
 		{
 			try
 			{
-				Card card = ProbeCardByTitle(this, "关于") as Card;
+				Card card = ProbeCardByTitle(this, Loc.T("关于")) as Card;
 				if (card == null)
 				{
 					return "";
@@ -22973,6 +23127,9 @@ internal sealed class SettingsForm : Form
 	internal Button ProbeCheckUpdateButton => _btnCheckUpdate;
 
 	internal CheckBox ProbeAutoUpdateCheck => _chkAutoUpdate;
+
+	/// <summary>自检/调试：语言下拉框（用来模拟用户切换语言）。</summary>
+	internal ComboBox ProbeLanguageCombo => _cmbLanguage;
 
 	internal Label ProbeUpdateStatusLabel => _lblUpdateStatus;
 
@@ -23117,7 +23274,7 @@ internal sealed class SettingsForm : Form
 			SettingsForm.ProbeSelectPage(settingsForm, 0);
 			LayoutWithContentOf(settingsForm);
 			int width2 = CardBoxOf(settingsForm).Width;
-			LastStretchDetail = "卡片宽 " + width + "->" + cardBox.Width + "->" + width2 + " | 每行张数 " + num + "->" + num2 + " | 宽窗口下卡片 " + cardBox2.ToString();
+			LastStretchDetail = Loc.T("卡片宽 ") + width + "->" + cardBox.Width + "->" + width2 + Loc.T(" | 每行张数 ") + num + "->" + num2 + Loc.T(" | 宽窗口下卡片 ") + cardBox2.ToString();
 			return width2 == width && cardBox.Width > width && cardBox.Width <= Sc(Tokens.CardMaxW) + Sc(2) && num == 1 && num2 == 2;
 		}
 		catch
@@ -23167,7 +23324,7 @@ internal sealed class SettingsForm : Form
 		// 与卡片排版同一把尺子：折行总高 ÷ 单行高（带硬换行也算得对）
 		try
 		{
-			int num = TextRenderer.MeasureText("字", ctl.Font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding).Height;
+			int num = TextRenderer.MeasureText(Loc.T("字"), ctl.Font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding).Height;
 			int num2 = TextRenderer.MeasureText(text, ctl.Font, new Size(Math.Max(20, width), int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height;
 			return Math.Max(1, (int)Math.Round((double)num2 / (double)Math.Max(1, num)));
 		}
@@ -23247,7 +23404,7 @@ internal sealed class SettingsForm : Form
 			int width3 = settingsForm._gridColor.Width;
 			int width4 = settingsForm._cmbLeft.Width;
 			int num2 = CardBoxOf(settingsForm).Right - settingsForm._cmbLeft.Right;
-			LastStretchDetail = "色板 " + width + "->" + width3 + " | 下拉框 " + width2 + "->" + width4 + " | 右间距 " + num + "->" + num2;
+			LastStretchDetail = Loc.T("色板 ") + width + "->" + width3 + Loc.T(" | 下拉框 ") + width2 + "->" + width4 + Loc.T(" | 右间距 ") + num + "->" + num2;
 			return width3 > width && width4 == width2 && num == num2;
 		}
 		catch
@@ -23597,7 +23754,7 @@ internal sealed class SettingsForm : Form
 		{
 			using FlatButton flatButton = new FlatButton
 			{
-				Text = "悬停探针"
+				Text = Loc.T("悬停探针")
 			};
 			flatButton.KickHoverForTest();
 			start = flatButton.HoverValueForTest;
@@ -23623,14 +23780,14 @@ internal sealed class SettingsForm : Form
 		{
 			if (!(f is SettingsForm settingsForm))
 			{
-				return "异常(no-form)";
+				return Loc.T("异常(no-form)");
 			}
 			FlatCheck chkHold = settingsForm._chkHold;
 			chkHold.SnapCheckForTest(on);
 			Application.DoEvents();
 			if (chkHold.Width <= 0 || chkHold.Height <= 0)
 			{
-				return "异常(zero-size)";
+				return Loc.T("异常(zero-size)");
 			}
 			using Bitmap bitmap = new Bitmap(chkHold.Width, chkHold.Height);
 			chkHold.DrawToBitmap(bitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
@@ -23643,11 +23800,11 @@ internal sealed class SettingsForm : Form
 			int g2 = 0;
 			int b2 = 0;
 			Sample(bitmap, knobCenter.X, knobCenter.Y, ref r2, ref g2, ref b2);
-			return "轨道=" + r + "," + g + "," + b + " 滑块=" + r2 + "," + g2 + "," + b2 + " 尺寸=" + bitmap.Width + "x" + bitmap.Height;
+			return Loc.T("轨道=") + r + "," + g + "," + b + Loc.T(" 滑块=") + r2 + "," + g2 + "," + b2 + Loc.T(" 尺寸=") + bitmap.Width + "x" + bitmap.Height;
 		}
 		catch (Exception ex)
 		{
-			return "异常 " + ex.GetType().Name;
+			return Loc.T("异常 ") + ex.GetType().Name;
 		}
 	}
 
@@ -23673,7 +23830,7 @@ internal sealed class SettingsForm : Form
 			StyleGallery galleryStyle = settingsForm._galleryStyle;
 			int columns = galleryStyle.ColumnsFor(galleryStyle.Width);
 			int num = (galleryStyle.ItemsForTest.Count + columns - 1) / columns;
-			return "画廊 " + galleryStyle.ItemsForTest.Count + " 项 " + columns + " 列 " + num + " 行 格高=" + galleryStyle.CellH + " 控件高=" + galleryStyle.Height + " 需要=" + (num * (galleryStyle.CellH + galleryStyle.Gap) - galleryStyle.Gap) + " 选中=" + (galleryStyle.SelectedId ?? "(null)");
+			return Loc.T("画廊 ") + galleryStyle.ItemsForTest.Count + Loc.T(" 项 ") + columns + Loc.T(" 列 ") + num + Loc.T(" 行 格高=") + galleryStyle.CellH + Loc.T(" 控件高=") + galleryStyle.Height + Loc.T(" 需要=") + (num * (galleryStyle.CellH + galleryStyle.Gap) - galleryStyle.Gap) + Loc.T(" 选中=") + (galleryStyle.SelectedId ?? "(null)");
 		}
 		catch
 		{
@@ -23714,7 +23871,7 @@ internal sealed class SettingsForm : Form
 			SwatchGrid gridColor = settingsForm._gridColor;
 			int columns = gridColor.ColumnsFor(gridColor.Width);
 			int num = (gridColor.CellCount + columns - 1) / columns;
-			return "色板 " + gridColor.CellCount + " 格 " + columns + " 列 " + num + " 行 格高=" + gridColor.Cell + " 控件高=" + gridColor.Height + " 需要=" + (num * (gridColor.Cell + gridColor.Gap) - gridColor.Gap) + " 选中=" + (gridColor.SelectedId ?? "(null)");
+			return Loc.T("色板 ") + gridColor.CellCount + Loc.T(" 格 ") + columns + Loc.T(" 列 ") + num + Loc.T(" 行 格高=") + gridColor.Cell + Loc.T(" 控件高=") + gridColor.Height + Loc.T(" 需要=") + (num * (gridColor.Cell + gridColor.Gap) - gridColor.Gap) + Loc.T(" 选中=") + (gridColor.SelectedId ?? "(null)");
 		}
 		catch
 		{
@@ -23757,7 +23914,7 @@ internal sealed class SettingsForm : Form
 				return;
 			}
 			Control control = list[groupIndex];
-			sb.AppendLine("分组[" + groupIndex + "] 「" + control.Text + "」 L=" + control.Left + " T=" + control.Top + " W=" + control.Width + " H=" + control.Height + " 客户区=" + control.ClientSize.Width + "x" + control.ClientSize.Height);
+			sb.AppendLine(Loc.T("分组[") + groupIndex + "] 「" + control.Text + "」 L=" + control.Left + " T=" + control.Top + " W=" + control.Width + " H=" + control.Height + Loc.T(" 客户区=") + control.ClientSize.Width + "x" + control.ClientSize.Height);
 			for (int i = 0; i < control.Controls.Count; i++)
 			{
 				Control control2 = control.Controls[i];
@@ -23766,7 +23923,7 @@ internal sealed class SettingsForm : Form
 		}
 		catch (Exception ex)
 		{
-			sb.AppendLine("异常 " + ex.GetType().Name);
+			sb.AppendLine(Loc.T("异常 ") + ex.GetType().Name);
 		}
 	}
 
@@ -23804,7 +23961,7 @@ internal sealed class SettingsForm : Form
 				settingsForm.SelectPage(2);
 				Application.DoEvents();
 				int width = settingsForm.ClientSize.Width;
-				sb.Append("══ 客户区宽=").Append(width).Append("（设计稿 ").Append(designWidths[i]).Append("px）════")
+				sb.Append(Loc.T("══ 客户区宽=")).Append(width).Append(Loc.T("（设计稿 ")).Append(designWidths[i]).Append("px）════")
 					.AppendLine();
 				List<Card> list = AllCards(settingsForm);
 				for (int j = 0; j < list.Count; j++)
@@ -23822,9 +23979,9 @@ internal sealed class SettingsForm : Form
 						.Append(control.Width)
 						.Append(" H=")
 						.Append(control.Height)
-						.Append(" 右=")
+						.Append(Loc.T(" 右="))
 						.Append(control.Right)
-						.Append(" 底=")
+						.Append(Loc.T(" 底="))
 						.Append(control.Bottom)
 						.AppendLine();
 				}
@@ -23837,16 +23994,16 @@ internal sealed class SettingsForm : Form
 					.Append(pnlPreview.Width)
 					.Append(" H=")
 					.Append(pnlPreview.Height)
-					.Append(" 右=")
+					.Append(Loc.T(" 右="))
 					.Append(pnlPreview.Right)
-					.Append(" 底=")
+					.Append(Loc.T(" 底="))
 					.Append(pnlPreview.Bottom)
 					.AppendLine();
 			}
 		}
 		catch (Exception ex)
 		{
-			sb.AppendLine("异常 " + ex.GetType().Name + ": " + ex.Message);
+			sb.AppendLine(Loc.T("异常 ") + ex.GetType().Name + ": " + ex.Message);
 		}
 		finally
 		{
@@ -23859,6 +24016,110 @@ internal sealed class SettingsForm : Form
 			{
 			}
 		}
+	}
+
+	/// <summary>
+	/// 调试/自检用：按指定语言逐页截图设置窗口。
+	/// 目的很具体——译文一变长，就可能溢出胶囊、按钮或折行错位，光看代码看不出来，必须真画一遍。
+	/// 用法：HoldDrag.exe --langshot en
+	/// </summary>
+	internal static void DumpLanguageShots(string outDir, string lang)
+	{
+		// 刻意从中文起步，再走"设置里改下拉框"这条真实路径切到目标语言：
+		// 这样截出来的图验证的是**运行时切换**（含重建界面 + 写配置），而不只是启动时读配置。
+		Loc.Init(Loc.Zh);
+		Directory.CreateDirectory(outDir);
+		string text = Path.Combine(Path.GetTempPath(), "holddrag-langshot-cfg-" + Loc.Normalize(lang));
+		try
+		{
+			Directory.CreateDirectory(text);
+		}
+		catch
+		{
+		}
+		ConfigStore configStore = new ConfigStore(text);
+		try
+		{
+			configStore.Load();
+		}
+		catch
+		{
+		}
+		configStore.Current.Language = Loc.Normalize(lang);
+		Coordinator coord = new Coordinator(configStore);
+		using SettingsForm settingsForm = new SettingsForm(configStore, coord);
+		settingsForm.StartPosition = FormStartPosition.Manual;
+		settingsForm.Location = new Point(20, 20);
+		settingsForm.ClientSize = new Size(1080, 760);
+		settingsForm.Show();
+		Application.DoEvents();
+		if (Loc.Normalize(lang) != Loc.Zh)
+		{
+			try
+			{
+				settingsForm.ProbeLanguageCombo.SelectedIndex = 1;
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+			// 切换是"保存 → 重建"两步，重建排在消息循环下一轮，得多泵几轮
+			for (int k = 0; k < 12; k++)
+			{
+				Application.DoEvents();
+				Thread.Sleep(60);
+			}
+		}
+		int count = settingsForm._pages.Count;
+		for (int i = 0; i < count; i++)
+		{
+			settingsForm.SelectPage(i);
+			Application.DoEvents();
+			Thread.Sleep(120);
+			Application.DoEvents();
+			using Bitmap bitmap = new Bitmap(settingsForm.Width, settingsForm.Height);
+			settingsForm.DrawToBitmap(bitmap, new Rectangle(0, 0, settingsForm.Width, settingsForm.Height));
+			bitmap.Save(Path.Combine(outDir, "page" + i + "-" + Loc.Normalize(lang) + ".png"), ImageFormat.Png);
+		}
+		// 更新相关窗口也一并截图：它们是独立 Form，藏在设置页里面，肉眼核对不到
+		try
+		{
+			UpdateInfo updateInfo = new UpdateInfo
+			{
+				Tag = "v9.9.9",
+				Version = "9.9.9",
+				AssetUrl = "https://example.com/HoldDrag.exe",
+				PageUrl = "https://example.com/releases"
+			};
+			using (UpdatePromptForm updatePromptForm = new UpdatePromptForm(updateInfo))
+			{
+				updatePromptForm.StartPosition = FormStartPosition.Manual;
+				updatePromptForm.Location = new Point(20, 20);
+				updatePromptForm.Show();
+				Application.DoEvents();
+				using Bitmap bitmap = new Bitmap(updatePromptForm.Width, updatePromptForm.Height);
+				updatePromptForm.DrawToBitmap(bitmap, new Rectangle(0, 0, updatePromptForm.Width, updatePromptForm.Height));
+				bitmap.Save(Path.Combine(outDir, "dialog-prompt-" + Loc.Normalize(lang) + ".png"), ImageFormat.Png);
+				updatePromptForm.Close();
+			}
+			// 下载窗口用 previewOnly 构造：会真的显示出来排版，但绝不发起下载
+			using (DownloadForm downloadForm = new DownloadForm(updateInfo, previewOnly: true))
+			{
+				downloadForm.StartPosition = FormStartPosition.Manual;
+				downloadForm.Location = new Point(20, 20);
+				downloadForm.Show();
+				Application.DoEvents();
+				using Bitmap bitmap2 = new Bitmap(downloadForm.Width, downloadForm.Height);
+				downloadForm.DrawToBitmap(bitmap2, new Rectangle(0, 0, downloadForm.Width, downloadForm.Height));
+				bitmap2.Save(Path.Combine(outDir, "dialog-download-" + Loc.Normalize(lang) + ".png"), ImageFormat.Png);
+				downloadForm.Close();
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+		Log.Info("语言截图已输出：" + outDir + "（" + Loc.Normalize(lang) + "，" + count + " 页）");
 	}
 
 	internal static void DumpPreviewStyles(string outDir)
@@ -23892,7 +24153,7 @@ internal sealed class SettingsForm : Form
 			settingsForm.SelectPage(2);
 			Application.DoEvents();
 			StringBuilder stringBuilder = new StringBuilder();
-			stringBuilder.AppendLine("=== 路径 A：直接设 StyleId 字段 ===");
+			stringBuilder.AppendLine(Loc.T("=== 路径 A：直接设 StyleId 字段 ==="));
 			string[] all = FrameStyles.All;
 			foreach (string text2 in all)
 			{
@@ -23922,11 +24183,11 @@ internal sealed class SettingsForm : Form
 						}
 					}
 				}
-				stringBuilder.AppendLine("  " + text2 + " size=" + bitmap.Width + "x" + bitmap.Height + " 像素和=" + num + " 非白像素=" + num2 + " 文件=" + Path.GetFileName(text3));
+				stringBuilder.AppendLine("  " + text2 + " size=" + bitmap.Width + "x" + bitmap.Height + Loc.T(" 像素和=") + num + Loc.T(" 非白像素=") + num2 + Loc.T(" 文件=") + Path.GetFileName(text3));
 			}
 			stringBuilder.AppendLine();
-			stringBuilder.AppendLine("=== 路径 B：改下拉框 SelectedIndex（模拟用户点选）===");
-			stringBuilder.AppendLine("  下拉框里共 " + settingsForm._cmbFrameStyle.Items.Count + " 项");
+			stringBuilder.AppendLine(Loc.T("=== 路径 B：改下拉框 SelectedIndex（模拟用户点选）==="));
+			stringBuilder.AppendLine(Loc.T("  下拉框里共 ") + settingsForm._cmbFrameStyle.Items.Count + Loc.T(" 项"));
 			for (int l = 0; l < settingsForm._cmbFrameStyle.Items.Count; l++)
 			{
 				settingsForm._cmbFrameStyle.SelectedIndex = l;
@@ -23953,21 +24214,21 @@ internal sealed class SettingsForm : Form
 						}
 					}
 				}
-				stringBuilder.AppendLine("  index=" + l + " 下拉项文字=\"" + ((obj != null) ? obj.ToString() : "(null)") + "\" → 预览 StyleId=\"" + styleId + "\" 像素和=" + num3 + " 非白像素=" + num4 + ((styleId == settingsForm._pnlPreview.StyleId) ? "" : "  ← ★ 不一致！"));
+				stringBuilder.AppendLine("  index=" + l + Loc.T(" 下拉项文字=\"") + ((obj != null) ? obj.ToString() : "(null)") + Loc.T("\" → 预览 StyleId=\"") + styleId + Loc.T("\" 像素和=") + num3 + Loc.T(" 非白像素=") + num4 + ((styleId == settingsForm._pnlPreview.StyleId) ? "" : Loc.T("  ← ★ 不一致！")));
 			}
 			stringBuilder.AppendLine();
-			stringBuilder.AppendLine("★ 路径 A 各行 [像素和] 全不同 → 样式确实画出了不同结果；");
-			stringBuilder.AppendLine("★ 路径 B 各行 [像素和] 全不同 → 下拉框连线正常，改选项能刷新预览；");
-			stringBuilder.AppendLine("  若路径 B 有任意两行相同，就是[选了形状但预览不变]的真 bug。");
+			stringBuilder.AppendLine(Loc.T("★ 路径 A 各行 [像素和] 全不同 → 样式确实画出了不同结果；"));
+			stringBuilder.AppendLine(Loc.T("★ 路径 B 各行 [像素和] 全不同 → 下拉框连线正常，改选项能刷新预览；"));
+			stringBuilder.AppendLine(Loc.T("  若路径 B 有任意两行相同，就是[选了形状但预览不变]的真 bug。"));
 			stringBuilder.AppendLine();
-			stringBuilder.AppendLine("=== 路径 C：加载真实配置后的预览状态 ===");
+			stringBuilder.AppendLine(Loc.T("=== 路径 C：加载真实配置后的预览状态 ==="));
 			try
 			{
 				ConfigStore configStore2 = new ConfigStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HoldDrag"));
 				configStore2.Load();
 				Coordinator coord2 = new Coordinator(configStore2);
 				AppConfig current = configStore2.Current;
-				stringBuilder.AppendLine("  配置：颜色=" + current.FrameColorId + " 样式=" + current.FrameStyleId + " 粗细=" + current.FrameThickness + " 圆角=" + current.FrameRadius + " 外框开关=" + current.ShowActivationFrame);
+				stringBuilder.AppendLine(Loc.T("  配置：颜色=") + current.FrameColorId + Loc.T(" 样式=") + current.FrameStyleId + Loc.T(" 粗细=") + current.FrameThickness + Loc.T(" 圆角=") + current.FrameRadius + Loc.T(" 外框开关=") + current.ShowActivationFrame);
 				SettingsForm settingsForm2 = new SettingsForm(configStore2, coord2);
 				settingsForm2.StartPosition = FormStartPosition.Manual;
 				settingsForm2.Location = new Point(20, 20);
@@ -23980,8 +24241,8 @@ internal sealed class SettingsForm : Form
 					Application.DoEvents();
 					Thread.Sleep(80);
 				}
-				stringBuilder.AppendLine("  下拉框选中项：颜色=\"" + ((settingsForm2._cmbFrameColor.SelectedItem != null) ? settingsForm2._cmbFrameColor.SelectedItem.ToString() : "(null)") + "\" 样式=\"" + ((settingsForm2._cmbFrameStyle.SelectedItem != null) ? settingsForm2._cmbFrameStyle.SelectedItem.ToString() : "(null)") + "\"");
-				stringBuilder.AppendLine("  预览控件字段：ColorId=\"" + settingsForm2._pnlPreview.ColorId + "\" StyleId=\"" + settingsForm2._pnlPreview.StyleId + "\" Thickness=" + settingsForm2._pnlPreview.Thickness + " Radius=" + settingsForm2._pnlPreview.Radius + " Enabled=" + settingsForm2._pnlPreview.FrameEnabled);
+				stringBuilder.AppendLine(Loc.T("  下拉框选中项：颜色=\"") + ((settingsForm2._cmbFrameColor.SelectedItem != null) ? settingsForm2._cmbFrameColor.SelectedItem.ToString() : "(null)") + Loc.T("\" 样式=\"") + ((settingsForm2._cmbFrameStyle.SelectedItem != null) ? settingsForm2._cmbFrameStyle.SelectedItem.ToString() : "(null)") + "\"");
+				stringBuilder.AppendLine(Loc.T("  预览控件字段：ColorId=\"") + settingsForm2._pnlPreview.ColorId + "\" StyleId=\"" + settingsForm2._pnlPreview.StyleId + "\" Thickness=" + settingsForm2._pnlPreview.Thickness + " Radius=" + settingsForm2._pnlPreview.Radius + " Enabled=" + settingsForm2._pnlPreview.FrameEnabled);
 				FramePreviewBox pnlPreview3 = settingsForm2._pnlPreview;
 				using (Bitmap bitmap3 = new Bitmap(pnlPreview3.Width, pnlPreview3.Height))
 				{
@@ -23995,7 +24256,7 @@ internal sealed class SettingsForm : Form
 							num6++;
 						}
 					}
-					stringBuilder.AppendLine("  中线非透明像素=" + num6 + " / " + bitmap3.Width);
+					stringBuilder.AppendLine(Loc.T("  中线非透明像素=") + num6 + " / " + bitmap3.Width);
 				}
 				try
 				{
@@ -24008,7 +24269,7 @@ internal sealed class SettingsForm : Form
 			}
 			catch (Exception ex2)
 			{
-				stringBuilder.AppendLine("  路径 C 失败：" + ex2.Message);
+				stringBuilder.AppendLine(Loc.T("  路径 C 失败：") + ex2.Message);
 			}
 			File.WriteAllText(Path.Combine(outDir, "previewtest.txt"), stringBuilder.ToString(), Encoding.UTF8);
 		}
@@ -24885,6 +25146,9 @@ internal sealed class TrayContext : ApplicationContext
 
 	private bool _cleaned;
 
+	/// <summary>托盘菜单里那几个字段项的 Click 是否已接线（重建菜单时不能重复 +=）。</summary>
+	private bool _menuHandlersWired;
+
 	/// <summary>当前存活的托盘实例。设置窗口通过它请求"真正退出整个进程"（更新替换必须）。</summary>
 	internal static TrayContext Current;
 
@@ -24948,6 +25212,8 @@ internal sealed class TrayContext : ApplicationContext
 		ApplyConfig(initial: true);
 		_marshal = new Control();
 		_marshal.CreateControl();
+		// 语言切换后托盘菜单要整份重建（菜单项文字是创建时取的译文）
+		Loc.Changed += OnLanguageChanged;
 		if (showEvent != null)
 		{
 			try
@@ -24982,11 +25248,11 @@ internal sealed class TrayContext : ApplicationContext
 		}
 		if (!flag2)
 		{
-			ShowBalloon("钩子安装失败", "无法安装全局键鼠钩子（错误码 " + _hooks.LastError + "），程序将无法工作。常见原因是被杀软/安全软件拦截，请把本程序加入信任列表后重启。", ToolTipIcon.Error);
+			ShowBalloon(Loc.T("钩子安装失败"), Loc.T("无法安装全局键鼠钩子（错误码 ") + _hooks.LastError + Loc.T("），程序将无法工作。常见原因是被杀软/安全软件拦截，请把本程序加入信任列表后重启。"), ToolTipIcon.Error);
 		}
 		else if (flag)
 		{
-			ShowBalloon("长按拖窗已启动", "长按 " + KeysUtil.DisplayName(_store.Current.TriggerKeyId) + " " + _store.Current.HoldMs + " 毫秒后：左键拖动移动窗口、右键拖动调整大小、中键最大化/还原。双击托盘图标可打开设置。", ToolTipIcon.Info);
+			ShowBalloon(Loc.T("长按拖窗已启动"), Loc.T("长按 ") + KeysUtil.DisplayName(_store.Current.TriggerKeyId) + " " + _store.Current.HoldMs + Loc.T(" 毫秒后：左键拖动移动窗口、右键拖动调整大小、中键最大化/还原。双击托盘图标可打开设置。"), ToolTipIcon.Info);
 		}
 		// 启动自动检查更新（用户可在「关于」里关掉）。放在最后，不挡住钩子安装与托盘显示。
 		StartAutoUpdateCheck();
@@ -25026,7 +25292,56 @@ internal sealed class TrayContext : ApplicationContext
 						Log.Info("已提示过 " + updateInfo.Tag + "，本次不再弹窗");
 						return;
 					}
-					ShowUpdateBalloon(updateInfo);
+					ShowUpdatePrompt(updateInfo);
+				}
+				catch (Exception ex)
+				{
+					Log.Error(ex);
+				}
+			});
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	/// <summary>
+	/// 启动检查发现新版本：弹一个**独立窗口**（任务栏里也有），而不是托盘气泡。
+	/// 气泡几秒就消失、也点不了按钮，用户常常根本没看见；这里改成明确的「立即下载 / 稍后」。
+	/// 「同一版本只提示一次」的记账写在真正弹出之前，避免用户关掉窗口后又反复被打断。
+	/// </summary>
+	private void ShowUpdatePrompt(UpdateInfo info)
+	{
+		try
+		{
+			if (_marshal == null || _marshal.IsDisposed || !_marshal.IsHandleCreated)
+			{
+				return;
+			}
+			_marshal.BeginInvoke(delegate
+			{
+				try
+				{
+					AppConfig appConfig = _store.Current;
+					if (appConfig != null && !string.Equals(appConfig.LastUpdateNotified, info.Tag, StringComparison.OrdinalIgnoreCase))
+					{
+						appConfig.LastUpdateNotified = info.Tag;
+						_store.Save(out _);
+					}
+					bool flag;
+					using (UpdatePromptForm updatePromptForm = new UpdatePromptForm(info))
+					{
+						updatePromptForm.ShowDialog();
+						flag = updatePromptForm.DownloadRequested;
+					}
+					Log.Info("启动更新提示：" + info.Tag + (flag ? "，用户选择下载" : "，用户选择稍后"));
+					if (!flag)
+					{
+						return;
+					}
+					using DownloadForm downloadForm = new DownloadForm(info);
+					downloadForm.ShowDialog();
 				}
 				catch (Exception ex)
 				{
@@ -25063,8 +25378,8 @@ internal sealed class TrayContext : ApplicationContext
 						_store.Save(out _);
 					}
 					_balloonUpdateUrl = info.AssetUrl;
-					_tray.BalloonTipTitle = "长按拖窗：发现新版本 " + info.Tag;
-					_tray.BalloonTipText = Updater.HasToken ? ("当前 v" + AppInfo.Version + "。双击托盘图标打开设置，点「检查更新」即可下载并自动替换。") : ("当前 v" + AppInfo.Version + "。点这个气泡用浏览器打开下载页（未填令牌，不会自动下载）。");
+					_tray.BalloonTipTitle = Loc.T("长按拖窗：发现新版本 ") + info.Tag;
+					_tray.BalloonTipText = Updater.HasToken ? (Loc.T("当前 v") + AppInfo.Version + Loc.T("。双击托盘图标打开设置，点「检查更新」即可下载并自动替换。")) : (Loc.T("当前 v") + AppInfo.Version + Loc.T("。点这个气泡用浏览器打开下载页（未填令牌，不会自动下载）。"));
 					_tray.BalloonTipIcon = ToolTipIcon.Info;
 					_tray.ShowBalloonTip(6000);
 					Log.Info("已提示新版本 " + info.Tag + "（当前 " + AppInfo.Version + "）");
@@ -25120,7 +25435,7 @@ internal sealed class TrayContext : ApplicationContext
 	private void BuildTray()
 	{
 		_tray.Icon = _iconNormal;
-		_tray.Text = "长按拖窗";
+		_tray.Text = Loc.T("长按拖窗");
 		_tray.Visible = true;
 		_tray.DoubleClick += (object? s, EventArgs e) =>
 		{
@@ -25146,54 +25461,98 @@ internal sealed class TrayContext : ApplicationContext
 				Log.Error(ex);
 			}
 		};
-		_menu.Items.Add(new ToolStripMenuItem("设置…", null, (object? s, EventArgs e) =>
-		{
-			ShowSettings();
-		}));
-		_miPause.Click += (object? s, EventArgs e) =>
-		{
-			TogglePause();
-		};
-		_menu.Items.Add(_miPause);
-		_miAutoStart.Click += (object? s, EventArgs e) =>
-		{
-			ToggleAutoStart();
-		};
-		_menu.Items.Add(_miAutoStart);
-		_miElevate.Click += (object? s, EventArgs e) =>
-		{
-			RestartAsAdmin();
-		};
-		_menu.Items.Add(_miElevate);
-		_menu.Items.Add(new ToolStripSeparator());
-		_menu.Items.Add(_miStatus);
-		_menu.Items.Add(new ToolStripMenuItem("打开配置文件夹", null, (object? s, EventArgs e) =>
-		{
-			OpenPath(_dir);
-		}));
-		_menu.Items.Add(new ToolStripMenuItem("查看日志", null, (object? s, EventArgs e) =>
-		{
-			OpenPath(Log.Path);
-		}));
-		_menu.Items.Add(new ToolStripMenuItem("检查更新…", null, (object? s, EventArgs e) =>
-		{
-			OpenSettingsAndCheckUpdate();
-		}));
-		_menu.Items.Add(new ToolStripMenuItem("项目主页（GitHub）", null, (object? s, EventArgs e) =>
-		{
-			OpenUrlStatic(AppInfo.GitHubUrl);
-		}));
-		_menu.Items.Add(new ToolStripSeparator());
-		_menu.Items.Add(new ToolStripMenuItem("退出", null, (object? s, EventArgs e) =>
-		{
-			ExitApp();
-		}));
 		_menu.Opening += (object? s, CancelEventArgs e) =>
 		{
 			UpdateStatusText();
 		};
 		_tray.ContextMenuStrip = _menu;
+		RebuildTrayMenu();
+	}
+
+	/// <summary>
+	/// 重建托盘菜单项。
+	/// 菜单项的文字是在**创建那一刻**取译文的，所以切语言必须整份重建；
+	/// 只清空 Items 不去 Dispose 字段项（_miPause 等），勾选状态与事件接线都保留。
+	/// </summary>
+	private void RebuildTrayMenu()
+	{
+		_menu.Items.Clear();
+		_menu.Items.Add(new ToolStripMenuItem(Loc.T("设置…"), null, (object? s, EventArgs e) =>
+		{
+			ShowSettings();
+		}));
+		// 字段项（暂停/自启/提权）只接线一次，重建时仅重新挂回 Items，避免重复叠加处理器
+		if (!_menuHandlersWired)
+		{
+			_menuHandlersWired = true;
+			_miPause.Click += (object? s, EventArgs e) =>
+			{
+				TogglePause();
+			};
+			_miAutoStart.Click += (object? s, EventArgs e) =>
+			{
+				ToggleAutoStart();
+			};
+			_miElevate.Click += (object? s, EventArgs e) =>
+			{
+				RestartAsAdmin();
+			};
+		}
+		_menu.Items.Add(_miPause);
+		_menu.Items.Add(_miAutoStart);
+		_menu.Items.Add(_miElevate);
+		_menu.Items.Add(new ToolStripSeparator());
+		_menu.Items.Add(_miStatus);
+		_menu.Items.Add(new ToolStripMenuItem(Loc.T("打开配置文件夹"), null, (object? s, EventArgs e) =>
+		{
+			OpenPath(_dir);
+		}));
+		_menu.Items.Add(new ToolStripMenuItem(Loc.T("查看日志"), null, (object? s, EventArgs e) =>
+		{
+			OpenPath(Log.Path);
+		}));
+		_menu.Items.Add(new ToolStripMenuItem(Loc.T("检查更新…"), null, (object? s, EventArgs e) =>
+		{
+			OpenSettingsAndCheckUpdate();
+		}));
+		_menu.Items.Add(new ToolStripMenuItem(Loc.T("项目主页（GitHub）"), null, (object? s, EventArgs e) =>
+		{
+			OpenUrlStatic(AppInfo.GitHubUrl);
+		}));
+		_menu.Items.Add(new ToolStripSeparator());
+		_menu.Items.Add(new ToolStripMenuItem(Loc.T("退出"), null, (object? s, EventArgs e) =>
+		{
+			ExitApp();
+		}));
+		UpdateMenuState();
 		UpdateStatusText();
+	}
+
+	/// <summary>语言变更（设置窗口里切了语言）：托盘菜单与图标提示要在 UI 线程重建。</summary>
+	private void OnLanguageChanged()
+	{
+		try
+		{
+			if (_marshal == null || _marshal.IsDisposed || !_marshal.IsHandleCreated)
+			{
+				return;
+			}
+			_marshal.BeginInvoke(delegate
+			{
+				try
+				{
+					RebuildTrayMenu();
+				}
+				catch (Exception ex)
+				{
+					Log.Error(ex);
+				}
+			});
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
 	}
 
 	private void UpdateStatusText()
@@ -25201,7 +25560,7 @@ internal sealed class TrayContext : ApplicationContext
 		_miStatus.Enabled = false;
 		if (_watchdog == null)
 		{
-			_miStatus.Text = "钩子状态：—";
+			_miStatus.Text = Loc.T("钩子状态：—");
 			return;
 		}
 		int checks = _watchdog.Checks;
@@ -25213,12 +25572,12 @@ internal sealed class TrayContext : ApplicationContext
 	{
 		AppConfig current = _store.Current;
 		_miPause.Checked = _coord.Paused;
-		_miPause.Text = (_coord.Paused ? "恢复使用" : "暂停使用");
+		_miPause.Text = (_coord.Paused ? Loc.T("恢复使用") : Loc.T("暂停使用"));
 		_miAutoStart.Checked = current.AutoStart != "None";
 		_miAutoStart.Text = ((current.AutoStart == "Registry") ? "开机启动（注册表）" : "开机启动（计划任务）");
 		_miElevate.Visible = Program.LaunchedWithoutElevation;
 		_tray.Icon = (_coord.Paused ? _iconPaused : _iconNormal);
-		_tray.Text = (_coord.Paused ? "长按拖窗（已暂停）" : ("长按拖窗：" + KeysUtil.DisplayName(current.TriggerKeyId)));
+		_tray.Text = (_coord.Paused ? Loc.T("长按拖窗（已暂停）") : (Loc.T("长按拖窗：") + KeysUtil.DisplayName(current.TriggerKeyId)));
 	}
 
 	private void TogglePause()
@@ -25226,7 +25585,7 @@ internal sealed class TrayContext : ApplicationContext
 		bool flag = !_coord.Paused;
 		_coord.SetPaused(flag);
 		UpdateMenuState();
-		ShowBalloon(flag ? "已暂停使用" : "已恢复使用", flag ? "拖拽功能已停止，触发键恢复成它本来的用法。右键托盘图标点「恢复使用」即可重新开启。" : ("长按 " + KeysUtil.DisplayName(_store.Current.TriggerKeyId) + " 后可以再用鼠标拖窗口了。"), ToolTipIcon.Info);
+		ShowBalloon(flag ? Loc.T("已暂停使用") : Loc.T("已恢复使用"), flag ? Loc.T("拖拽功能已停止，触发键恢复成它本来的用法。右键托盘图标点「恢复使用」即可重新开启。") : (Loc.T("长按 ") + KeysUtil.DisplayName(_store.Current.TriggerKeyId) + Loc.T(" 后可以再用鼠标拖窗口了。")), ToolTipIcon.Info);
 	}
 
 	private void ToggleAutoStart()
@@ -25239,14 +25598,14 @@ internal sealed class TrayContext : ApplicationContext
 			// 留着翻转后的值会让之后任何一次成功保存把"用户没确认过的切换"写进磁盘。
 			current.AutoStart = ((mode == "None") ? "TaskScheduler" : "None");
 			UpdateMenuState();
-			ShowBalloon("开机自启切换失败", "配置没能写入磁盘：" + saveError + "（本次切换没有生效，重启后会恢复原样；请检查配置目录权限或磁盘空间）", ToolTipIcon.Warning);
+			ShowBalloon(Loc.T("开机自启切换失败"), Loc.T("配置没能写入磁盘：") + saveError + Loc.T("（本次切换没有生效，重启后会恢复原样；请检查配置目录权限或磁盘空间）"), ToolTipIcon.Warning);
 			return;
 		}
 		ApplyConfig(initial: false);
-		AutoStart.Apply(mode, AppPaths.ExePath, out var message);
+		AutoStart.Apply(mode, AppPaths.EntryPath, out var message);
 		if (!string.IsNullOrEmpty(message))
 		{
-			ShowBalloon("开机自启", message, ToolTipIcon.Info);
+			ShowBalloon(Loc.T("开机自启"), message, ToolTipIcon.Info);
 		}
 	}
 
@@ -25257,6 +25616,8 @@ internal sealed class TrayContext : ApplicationContext
 			Process.Start(new ProcessStartInfo
 			{
 				FileName = AppPaths.ExePath,
+				// 提权重启后仍要知道外层 exe 在哪
+				Arguments = "--host " + Updater.QuoteArg(AppPaths.EntryPath),
 				UseShellExecute = true,
 				Verb = "runas"
 			});
@@ -25967,16 +26328,16 @@ internal static class WindowActions
 			nint hit = Native.WindowFromPoint(pt);
 			if (hit == IntPtr.Zero)
 			{
-				return "无命中";
+				return Loc.T("无命中");
 			}
 			nint root = Native.GetAncestor(hit, 2u);
-			return Native.GetClassName(hit) + " 句柄=" + ((IntPtr)hit).ToInt64().ToString("X")
-				+ " 根=" + ((IntPtr)root).ToInt64().ToString("X");
+			return Native.GetClassName(hit) + Loc.T(" 句柄=") + ((IntPtr)hit).ToInt64().ToString("X")
+				+ Loc.T(" 根=") + ((IntPtr)root).ToInt64().ToString("X");
 		}
 		catch (Exception ex)
 		{
 			Log.Error(ex);
-			return "查询失败";
+			return Loc.T("查询失败");
 		}
 	}
 
@@ -26290,7 +26651,7 @@ internal static class WindowActions
 		{
 			Log.Error(ex);
 		}
-		how = ((found != IntPtr.Zero) ? "EnumWindowsZOrder" : "三种策略全部失败");
+		how = ((found != IntPtr.Zero) ? "EnumWindowsZOrder" : Loc.T("三种策略全部失败"));
 		return found;
 	}
 
@@ -26299,7 +26660,7 @@ internal static class WindowActions
 		try
 		{
 			nint num = HitTestTopWindow(pt, out var how);
-			string text = " [命中方式=" + how + "]";
+			string text = Loc.T(" [命中方式=") + how + "]";
 			if (num == IntPtr.Zero)
 			{
 				string text2 = "";
@@ -26307,12 +26668,12 @@ internal static class WindowActions
 				{
 					Rectangle virtualScreen = SystemInformation.VirtualScreen;
 					bool flag = pt.X >= virtualScreen.Left && pt.X < virtualScreen.Right && pt.Y >= virtualScreen.Top && pt.Y < virtualScreen.Bottom;
-					text2 = " 虚拟桌面=" + virtualScreen.Left + "," + virtualScreen.Top + " " + virtualScreen.Width + "x" + virtualScreen.Height + " 该点在桌面内=" + flag + (flag ? "" : " ←★坐标空间不一致，疑似 DPI 虚拟化");
+					text2 = Loc.T(" 虚拟桌面=") + virtualScreen.Left + "," + virtualScreen.Top + " " + virtualScreen.Width + "x" + virtualScreen.Height + Loc.T(" 该点在桌面内=") + flag + (flag ? "" : Loc.T(" ←★坐标空间不一致，疑似 DPI 虚拟化"));
 				}
 				catch
 				{
 				}
-				return "三种命中策略全部返回空（桌面/无窗口区域）" + text + text2;
+				return Loc.T("三种命中策略全部返回空（桌面/无窗口区域）") + text + text2;
 			}
 			nint num2 = IntPtr.Zero;
 			for (int i = 0; i < 32; i++)
@@ -26324,7 +26685,7 @@ internal static class WindowActions
 				num2 = Native.GetAncestor(num, 2u);
 				if (num2 == IntPtr.Zero)
 				{
-					return "取不到根窗口" + text;
+					return Loc.T("取不到根窗口") + text;
 				}
 				Native.GetWindowThreadProcessId(num2, out var lpdwProcessId);
 				if (lpdwProcessId != (uint)OwnPid || (AllowDragOwnWindows && IsOwnProcessTarget(num2)))
@@ -26336,53 +26697,53 @@ internal static class WindowActions
 			}
 			if (num2 == IntPtr.Zero)
 			{
-				return "命中的全是本进程窗口（浮层/设置窗口），往下找不到别人的窗口" + text;
+				return Loc.T("命中的全是本进程窗口（浮层/设置窗口），往下找不到别人的窗口") + text;
 			}
 			string className = Native.GetClassName(num2);
 			Native.GetWindowThreadProcessId(num2, out var _);
 			string text3 = SafeTitle(num2);
 			if (!Native.IsWindow(num2))
 			{
-				return "窗口已销毁 类名=" + className;
+				return Loc.T("窗口已销毁 类名=") + className;
 			}
 			if (!Native.IsWindowVisible(num2))
 			{
-				return "窗口不可见（隐藏）类名=" + className + " 标题=" + text3;
+				return Loc.T("窗口不可见（隐藏）类名=") + className + Loc.T(" 标题=") + text3;
 			}
 			if (IsExcludedClass(className))
 			{
-				return "类名被排除（桌面/任务栏等）类名=" + className;
+				return Loc.T("类名被排除（桌面/任务栏等）类名=") + className;
 			}
 			long windowLong = Native.GetWindowLong(num2, -16);
 			if ((windowLong & 0x10000000) == 0L)
 			{
-				return "窗口没有 WS_VISIBLE 类名=" + className;
+				return Loc.T("窗口没有 WS_VISIBLE 类名=") + className;
 			}
 			if ((windowLong & 0x20000000) != 0L)
 			{
-				return "窗口已最小化 类名=" + className;
+				return Loc.T("窗口已最小化 类名=") + className;
 			}
 			if (IsBlacklisted(num2))
 			{
-				return "命中黑名单（不生效的窗口）标题=" + text3;
+				return Loc.T("命中黑名单（不生效的窗口）标题=") + text3;
 			}
 			if (!Native.GetWindowRect(num2, out var lpRect))
 			{
-				return "取不到窗口矩形 类名=" + className;
+				return Loc.T("取不到窗口矩形 类名=") + className;
 			}
 			if (lpRect.Width <= 0 || lpRect.Height <= 0)
 			{
-				return "窗口尺寸为 0（" + lpRect.Width + "x" + lpRect.Height + "）类名=" + className;
+				return Loc.T("窗口尺寸为 0（") + lpRect.Width + "x" + lpRect.Height + Loc.T("）类名=") + className;
 			}
 			if (!allowFullscreen && IsFullscreen(num2, lpRect))
 			{
-				return "窗口占满整个显示器（真全屏）—— 可在设置里勾选【允许全屏窗口】";
+				return Loc.T("窗口占满整个显示器（真全屏）—— 可在设置里勾选【允许全屏窗口】");
 			}
-			return "未知原因（判定逻辑可能有遗漏）类名=" + className + " 标题=" + text3;
+			return Loc.T("未知原因（判定逻辑可能有遗漏）类名=") + className + Loc.T(" 标题=") + text3;
 		}
 		catch (Exception ex)
 		{
-			return "诊断本身出错: " + ex.Message;
+			return Loc.T("诊断本身出错: ") + ex.Message;
 		}
 	}
 
@@ -26393,7 +26754,7 @@ internal static class WindowActions
 			string text = Native.GetWindowTitle(h);
 			if (string.IsNullOrEmpty(text))
 			{
-				return "(无标题)";
+				return Loc.T("(无标题)");
 			}
 			if (text.Length > 30)
 			{
@@ -26403,7 +26764,7 @@ internal static class WindowActions
 		}
 		catch
 		{
-			return "(取标题失败)";
+			return Loc.T("(取标题失败)");
 		}
 	}
 
