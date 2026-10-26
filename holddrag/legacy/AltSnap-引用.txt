@@ -1,1 +1,0 @@
-﻿AltSnap upstream: https://github.com/RamonUnch/AltSnap.git  HEAD 54cbcd0  (2026-10-11 克隆于 WorkBuddy 会话)
