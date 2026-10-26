@@ -9,8 +9,9 @@
 按 `Enter`（可改成任意键或鼠标侧键）不要松手，光标底下那扇窗四周就会亮起一圈外框；
 这时按住鼠标左键就能把它拖走 —— **不用去找标题栏，全屏窗口也能拖**。
 
-> 上游来源：本仓库是 [stefansundin/altdrag](https://github.com/stefansundin/altdrag)（AltDrag）的 fork。
-> 上游的 C 源码按原样保留在仓库根目录；本产品是**独立的 C# / .NET 10 实现**，位于 [`holddrag/`](holddrag/)。
+> 上游来源：本项目派生自 [stefansundin/altdrag](https://github.com/stefansundin/altdrag)（AltDrag，GPL-3.0）。
+> 上游的 C 源码**不在当前仓库里**（只在提交历史中可查）；这里只保留**独立的 C# / .NET 10 实现**
+> [`holddrag/src/`](holddrag/src/) 与启动器 [`launcher/`](launcher/)。
 
 ---
 
