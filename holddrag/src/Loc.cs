@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace HoldDrag
@@ -85,6 +85,21 @@ namespace HoldDrag
 		public static string DisplayName(string id)
 		{
 			return string.Equals(Normalize(id), En, StringComparison.Ordinal) ? "English" : "简体中文";
+		}
+
+		/// <summary>
+		/// 左括号（跟随语言）。界面上的句子常常是「固定文案 + 变量 + 括号说明」拼出来的，
+		/// 括号若写死在代码里，英文界面就会出现「You're up to date (v1.10.0）」这种中英混排。
+		/// </summary>
+		public static string Open => IsEnglish ? " (" : "（";
+
+		/// <summary>右括号（跟随语言）。</summary>
+		public static string Close => IsEnglish ? ")" : "）";
+
+		/// <summary>把一段说明包进括号；空字符串返回空串（不产生「（）」）。</summary>
+		public static string InParens(string text)
+		{
+			return string.IsNullOrEmpty(text) ? string.Empty : Open + text + Close;
 		}
 
 		/// <summary>简体中文 → English。键必须与源码里的中文字面量**完全一致**（含空格与标点）。</summary>
@@ -241,7 +256,7 @@ namespace HoldDrag
 			["下载地址："] = "Download URL: ",
 			["　　　　　（未填令牌：程序内不会下载，请用上面的地址在浏览器下载）"] = "          (no token: nothing is downloaded in the app — open the URL above in your browser)",
 			["检查抛异常："] = "Check threw an exception: ",
-			["当前正在以【普通用户权限】运行。\r\n\r\n这个状态下：\r\n  · 日常拖动浏览器、编辑器、资源管理器等都正常；\r\n  · 但拖不动以管理员身份运行的窗口（例如任务管理器、部分安装程序）。\r\n\r\n建议改用管理员权限重新打开。现在重启吗？\r\n（选\"否\"就保持现状继续使用，功能不受影响）"] = "HoldDrag is running with normal user rights.\r\n\r\nIn this state:\r\n  · dragging browsers, editors and Explorer works as usual;\r\n  · windows running as administrator (Task Manager, some installers) cannot be dragged.\r\n\r\nRestarting with administrator rights is recommended. Restart now?\r\n(Choose \\\"No\\\" to keep running as is — everything else still works)",
+			["当前正在以【普通用户权限】运行。\r\n\r\n这个状态下：\r\n  · 日常拖动浏览器、编辑器、资源管理器等都正常；\r\n  · 但拖不动以管理员身份运行的窗口（例如任务管理器、部分安装程序）。\r\n\r\n建议改用管理员权限重新打开。现在重启吗？\r\n（选\"否\"就保持现状继续使用，功能不受影响）"] = "HoldDrag is running with normal user rights.\r\n\r\nIn this state:\r\n  · dragging browsers, editors and Explorer works as usual;\r\n  · windows running as administrator (Task Manager, some installers) cannot be dragged.\r\n\r\nRestarting with administrator rights is recommended. Restart now?\r\n(Choose \"No\" to keep running as is — everything else still works)",
 			["长按拖窗 · 权限提示"] = "HoldDrag · Permission",
 			["长按拖窗"] = "HoldDrag",
 			["外框已关闭"] = "Frame is off",
@@ -418,7 +433,7 @@ namespace HoldDrag
 			["已保存并立即生效"] = "Saved and applied",
 			["配置已保存，但开机自启设置失败"] = "Settings saved, but configuring startup failed",
 			["开机自启设置失败"] = "Startup configuration failed",
-			["已保存。\r\n\r\n管理员权限只在【启动的时候】申请，所以要重启程序才会生效。\r\n现在以管理员身份重启吗？（选\"否\"就等下次启动再提权）"] = "Saved.\r\n\r\nAdministrator rights are only requested at launch, so a restart is needed to apply them.\r\nRestart as administrator now? (Choose \\\"No\\\" to elevate on the next launch instead)",
+			["已保存。\r\n\r\n管理员权限只在【启动的时候】申请，所以要重启程序才会生效。\r\n现在以管理员身份重启吗？（选\"否\"就等下次启动再提权）"] = "Saved.\r\n\r\nAdministrator rights are only requested at launch, so a restart is needed to apply them.\r\nRestart as administrator now? (Choose \"No\" to elevate on the next launch instead)",
 			["长按拖窗 · 权限变更"] = "HoldDrag · Permission changed",
 			["语言没能写入配置："] = "Could not save the language: ",
 			["选择要排除的程序（它的窗口将不再被接管）"] = "Choose the program to exclude (its windows will no longer be taken over)",
@@ -548,6 +563,35 @@ namespace HoldDrag
 			["已下载新版本，但自动替换失败："] = "The new version was downloaded, but the automatic replacement failed: ",
 			["新版本已保存在："] = "The new version was saved to: ",
 			["可手动改名覆盖，或到发布页重新下载："] = "Rename it over the old file manually, or download it again from the release page: ",
+			// ---------------- v1.10.0 新增 ----------------
+			["钩子状态：正常（已检查 {0} 次）"] = "Hook status: OK ({0} checks)",
+			["钩子状态：已自动恢复 {0} 次（检查 {1} 次）"] = "Hook status: recovered automatically {0} times ({1} checks)",
+			["开机启动（注册表）"] = "Start with Windows (registry)",
+			["开机启动（计划任务）"] = "Start with Windows (scheduled task)",
+			["没有可保存的配置。"] = "There is no configuration to save.",
+			["命令超时（8 秒）："] = "Command timed out (8 s): ",
+			["无法启动 "] = "Could not start ",
+			["计划任务没能删掉（多半是它以管理员权限创建，而现在程序不是管理员）。请右键以管理员身份运行后重试。"] = "The scheduled task could not be removed — it was probably created with administrator rights. Run HoldDrag as administrator and try again.",
+			["注册表自启项没能删掉，可能被安全软件拦截。"] = "The registry startup entry could not be removed; security software may be blocking it.",
+			["文件不存在："] = "The file does not exist: ",
+			["文件太小，不像一个完整的程序："] = "The file is too small to be a complete program: ",
+			[" 字节"] = " bytes",
+			["字节。"] = " bytes.",
+			["下载到的内容不是 Windows 程序（文件头不是 MZ），可能被网络中途替换成了网页。"] = "The download is not a Windows program (no MZ header) — a proxy or captive portal probably replaced it with a web page.",
+			["下载到的程序文件头损坏（PE 偏移越界）。"] = "The downloaded program has a damaged header (PE offset out of range).",
+			["下载到的程序文件头损坏（缺少 PE 签名）。"] = "The downloaded program has a damaged header (missing PE signature).",
+			["校验下载文件时出错："] = "Could not validate the downloaded file: ",
+			["下载不完整：期望 "] = "Incomplete download: expected ",
+			[" 字节，实际 "] = " bytes, received ",
+			["新版本已替换，但没能自动启动，已恢复为原来的版本。请到发布页手动下载："] = "The new version was copied in but could not start, so the previous version was restored. Please download it manually from the release page: ",
+			["正在下载… {0}%（{1:F1} / {2:F1} MB）"] = "Downloading… {0}% ({1:F1} / {2:F1} MB)",
+			["正在下载… 已接收 {0:F1} MB"] = "Downloading… {0:F1} MB received",
+			["更新已就绪，点击「确定」后立即替换并重启。"] = "The update is ready. Click OK to replace the files and restart now.",
+			["无法缩放这个窗口（它没有可调整的边框），已保持不变。"] = "This window cannot be resized (it has no resizable border); nothing was changed.",
+			["触发模式"] = "Trigger mode",
+			["长按"] = "Hold",
+			["点按切换"] = "Click toggle",
+			["长按：按住才接管、松手即退出；点按：点一下抓住、再点一下放下（此时触发键不再输入字符）"] = "Hold: the window follows while you hold the key and is released when you let go. Click toggle: click once to grab, click again to release (the trigger key no longer types).",
 		};
 	}
 }

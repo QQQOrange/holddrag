@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
@@ -31,6 +31,13 @@ namespace HoldDragLauncher
 
 		/// <summary>要检测的共享框架目录名（桌面运行时 = Microsoft.WindowsDesktop.App）。</summary>
 		private const string DesktopFramework = "Microsoft.WindowsDesktop.App";
+
+		/// <summary>
+		/// 桌面运行时的"装完整了"标志文件。注意：**没有** Microsoft.WindowsDesktop.App.dll 这个文件，
+		/// 框架本体是 deps.json + runtimeconfig.json + 63 个 dll；拿一个不存在的文件名去判断，
+		/// 会让每一台装了运行时的机器都误报"缺少 .NET 10"。
+		/// </summary>
+		private const string DesktopMarker = "Microsoft.WindowsDesktop.App.deps.json";
 
 		/// <summary>要检测的主版本号。</summary>
 		private const string RequiredMajor = "10.";
@@ -102,7 +109,18 @@ namespace HoldDragLauncher
 					string[] dirs = Directory.GetDirectories(shared);
 					for (int i = 0; i < dirs.Length; i++)
 					{
-						if (Path.GetFileName(dirs[i]).StartsWith(RequiredMajor, StringComparison.OrdinalIgnoreCase))
+						string name = Path.GetFileName(dirs[i]);
+						// 排除 10.0.0-preview.* 这类预览版：正式版应用不会向上滚动到它们
+						if (name.IndexOf('-') >= 0)
+						{
+							continue;
+						}
+						if (!name.StartsWith(RequiredMajor, StringComparison.OrdinalIgnoreCase))
+						{
+							continue;
+						}
+						// 目录存在不等于装好了（卸载残留会留下空目录）：必须能看见运行时本体
+						if (File.Exists(Path.Combine(dirs[i], DesktopMarker)))
 						{
 							return true;
 						}
@@ -117,18 +135,28 @@ namespace HoldDragLauncher
 		}
 
 		/// <summary>
-		/// 可能装 .NET 的位置：DOTNET_ROOT（用户自定义安装）→ 注册表记录的安装位置 → 默认的 Program Files。
-		/// 只认 x64：主程序是 x64，32 位的运行时对它没用。
+		/// 可能装 .NET 的位置（只认 x64：主程序是 x64，32 位运行时对它没用）：
+		/// DOTNET_ROOT / DOTNET_ROOT_X64（用户自定义安装）→ 机器级注册表 → 用户级注册表
+		/// → 默认的 Program Files → 用户级安装目录（dotnet-install.ps1 / winget 的默认位置）。
 		/// </summary>
 		private static System.Collections.Generic.List<string> CandidateDotnetRoots()
 		{
 			System.Collections.Generic.List<string> list = new System.Collections.Generic.List<string>();
 			AddUnique(list, Environment.GetEnvironmentVariable("DOTNET_ROOT"));
-			AddUnique(list, ReadInstallLocation(@"SOFTWARE\dotnet\Setup\InstalledVersions\x64"));
-			AddUnique(list, ReadInstallLocation(@"SOFTWARE\WOW6432Node\dotnet\Setup\InstalledVersions\x64"));
+			AddUnique(list, Environment.GetEnvironmentVariable("DOTNET_ROOT_X64"));
+			AddUnique(list, ReadInstallLocation(Registry.LocalMachine, @"SOFTWARE\dotnet\Setup\InstalledVersions\x64"));
+			AddUnique(list, ReadInstallLocation(Registry.LocalMachine, @"SOFTWARE\WOW6432Node\dotnet\Setup\InstalledVersions\x64"));
+			AddUnique(list, ReadInstallLocation(Registry.CurrentUser, @"SOFTWARE\dotnet\Setup\InstalledVersions\x64"));
 			try
 			{
 				AddUnique(list, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet"));
+			}
+			catch (Exception)
+			{
+			}
+			try
+			{
+				AddUnique(list, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "dotnet"));
 			}
 			catch (Exception)
 			{
@@ -152,18 +180,24 @@ namespace HoldDragLauncher
 			list.Add(value);
 		}
 
-		private static string ReadInstallLocation(string keyPath)
+		private static string ReadInstallLocation(RegistryKey root, string keyPath)
 		{
 			try
 			{
-				using (RegistryKey key = Registry.LocalMachine.OpenSubKey(keyPath))
+				using (RegistryKey key = root.OpenSubKey(keyPath))
 				{
 					if (key == null)
 					{
 						return null;
 					}
 					object value = key.GetValue("InstallLocation");
-					return value as string;
+					string text = value as string;
+					if (string.IsNullOrEmpty(text))
+					{
+						return null;
+					}
+					// 统一去掉结尾的斜杠，避免出现 "C:\Program Files\dotnet\\shared"
+					return text.TrimEnd('\\', '/');
 				}
 			}
 			catch (Exception)
@@ -182,7 +216,11 @@ namespace HoldDragLauncher
 			try
 			{
 				ProcessStartInfo info = new ProcessStartInfo(appPath);
-				info.UseShellExecute = true;
+				// 必须关掉 ShellExecute：
+				//  1) 目标可能是 .tmp（同版本缓存被占用时的兜底文件名）——外壳按扩展名找不到关联，
+				//     Process.Start 会**返回 null 且不抛异常**，表现为"双击没反应、连报错都没有"；
+				//  2) 只有直接 CreateProcess 才能拿到子进程句柄，进而把退出码带回去。
+				info.UseShellExecute = false;
 				info.WorkingDirectory = dir;
 				string forwarded = HostArg + " " + QuoteArg(selfPath);
 				if (args != null && args.Length > 0)
@@ -190,7 +228,23 @@ namespace HoldDragLauncher
 					forwarded = forwarded + " " + JoinArgs(args);
 				}
 				info.Arguments = forwarded;
-				Process.Start(info);
+				Process process = Process.Start(info);
+				if (process == null)
+				{
+					MessageBox.Show(
+						IsChinese()
+							? "无法启动主程序（系统没有返回进程）。\r\n\r\n文件位置：" + appPath
+							: "Could not start the application (no process was created).\r\n\r\nPath: " + appPath,
+						"HoldDrag", MessageBoxButtons.OK, MessageBoxIcon.Error);
+					return 3;
+				}
+				// 诊断类参数（--selftest / --stress / --checkupdate …）本来就是"跑完看退出码"，
+				// 启动器要等它结束并把退出码原样返回，否则 README 里"退出码 0 = 全通过"永远成立不了。
+				if (IsDiagnosticRun(args))
+				{
+					process.WaitForExit();
+					return process.ExitCode;
+				}
 				return 0;
 			}
 			catch (Exception ex)
@@ -204,18 +258,76 @@ namespace HoldDragLauncher
 			}
 		}
 
-		/// <summary>单个参数按需加引号。</summary>
-		private static string QuoteArg(string value)
+		/// <summary>这些参数是一次性诊断/冒烟运行：调用方（脚本、CI、排障的人）需要拿到真实退出码。</summary>
+		internal static bool IsDiagnosticRun(string[] args)
 		{
-			if (string.IsNullOrEmpty(value))
+			if (args == null)
+			{
+				return false;
+			}
+			string[] names = { "--selftest", "--stress", "--dragbench", "--probe", "--smoke", "--checkupdate", "--visualcheck", "--previewtest", "--langshot" };
+			for (int i = 0; i < args.Length; i++)
+			{
+				for (int j = 0; j < names.Length; j++)
+				{
+					if (string.Equals(args[i], names[j], StringComparison.OrdinalIgnoreCase))
+					{
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
+		/// <summary>
+		/// 按 Windows 命令行解析规则（MSVCRT / CommandLineToArgvW）转义单个参数：
+		/// 反斜杠只在引号前需要成倍转义、末尾反斜杠也要成倍——否则 "C:\My Docs\" 会把结尾的引号吃掉，
+		/// 后面所有参数连成一串。
+		/// </summary>
+		internal static string QuoteArg(string value)
+		{
+			if (value == null)
 			{
 				return "\"\"";
 			}
-			if (value.IndexOf(' ') >= 0 || value.IndexOf('\t') >= 0)
+			if (value.Length == 0)
 			{
-				return "\"" + value + "\"";
+				return "\"\"";
 			}
-			return value;
+			bool needQuotes = value.IndexOf(' ') >= 0 || value.IndexOf('\t') >= 0 || value.IndexOf('"') >= 0;
+			if (!needQuotes)
+			{
+				return value;
+			}
+			System.Text.StringBuilder builder = new System.Text.StringBuilder(value.Length + 8);
+			builder.Append('"');
+			for (int i = 0; i < value.Length; i++)
+			{
+				int backslashes = 0;
+				while (i < value.Length && value[i] == '\\')
+				{
+					backslashes++;
+					i++;
+				}
+				if (i == value.Length)
+				{
+					// 结尾的反斜杠：必须成倍，否则会转义掉收尾的引号
+					builder.Append('\\', backslashes * 2);
+					break;
+				}
+				if (value[i] == '"')
+				{
+					builder.Append('\\', backslashes * 2 + 1);
+					builder.Append('"');
+				}
+				else
+				{
+					builder.Append('\\', backslashes);
+					builder.Append(value[i]);
+				}
+			}
+			builder.Append('"');
+			return builder.ToString();
 		}
 
 		/// <summary>给每个参数按需加引号：路径带空格时不加会被拆成多个参数。</summary>
@@ -228,19 +340,7 @@ namespace HoldDragLauncher
 				{
 					builder.Append(' ');
 				}
-				string arg = args[i] ?? string.Empty;
-				if (arg.Length == 0)
-				{
-					builder.Append("\"\"");
-				}
-				else if (arg.IndexOf(' ') >= 0 || arg.IndexOf('\t') >= 0)
-				{
-					builder.Append('"').Append(arg).Append('"');
-				}
-				else
-				{
-					builder.Append(arg);
-				}
+				builder.Append(QuoteArg(args[i]));
 			}
 			return builder.ToString();
 		}
@@ -432,31 +532,59 @@ namespace HoldDragLauncher
 				}
 
 				Directory.CreateDirectory(dir);
-				string temp = target + ".tmp";
-				stream.Position = 0;
-				using (FileStream fileStream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
-				{
-					stream.CopyTo(fileStream);
-				}
+				// 临时名带进程号：两个实例同时首次启动时不会互相抢同一个 .tmp（那样必有一个报"写不进去"），
+				// 也不会出现"我刚写好的文件被另一个实例删掉"的情况。
+				string temp = target + "." + Process.GetCurrentProcess().Id + ".tmp";
 				try
 				{
-					if (File.Exists(target))
+					stream.Position = 0;
+					using (FileStream fileStream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
 					{
-						File.Delete(target);
+						stream.CopyTo(fileStream);
+						fileStream.Flush(true);
 					}
-					File.Move(temp, target);
+					for (int attempt = 0; attempt < 3; attempt++)
+					{
+						try
+						{
+							if (File.Exists(target))
+							{
+								// 已存在就用替换（比"先删再移动"安全：删掉的那一刻另一个实例可能正要启动它）
+								File.Replace(temp, target, null);
+							}
+							else
+							{
+								File.Move(temp, target);
+							}
+							CleanupOldPayloads(root, hash);
+							return target;
+						}
+						catch (IOException)
+						{
+							// 目标被占用（例如上一版还在跑）：稍等重试
+							System.Threading.Thread.Sleep(120 * (attempt + 1));
+						}
+					}
 				}
-				catch (Exception)
+				finally
 				{
-					// 目标被占用（例如上一个版本还在跑）：直接用临时文件启动，别把用户卡住
-					if (File.Exists(temp))
+					try
 					{
-						return temp;
+						if (File.Exists(temp))
+						{
+							File.Delete(temp);
+						}
 					}
-					throw;
+					catch (Exception)
+					{
+					}
 				}
-				CleanupOldPayloads(root, hash);
-				return target;
+				// 重试用尽：只要目标已经在了就直接用它（可能是并发实例刚写好的），别把用户卡死在"解包失败"上
+				if (File.Exists(target))
+				{
+					return target;
+				}
+				throw new IOException("无法写入解包目录：" + target);
 			}
 		}
 

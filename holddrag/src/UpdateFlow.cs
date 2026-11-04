@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.IO;
 using System.Threading;
@@ -475,12 +475,22 @@ namespace HoldDrag
 			_bar.Value = 1000;
 			_lblTitle.Text = Loc.T("下载完成，正在替换并重启…");
 			_lblDetail.Text = Loc.T("新版本已就位，程序将退出后自动启动新版本。");
+			// 顺序很关键：**先问用户，再替换**。
+			// 旧顺序是"替换 + 拉起新进程"之后才弹「点击确定后退出」——
+			// 用户若在这个对话框上停留超过 30 秒，新进程会因为等不到单实例锁而让位，
+			// 随后旧进程退出，结果更新完托盘里一个进程都不剩。
+			// 现在只有用户点了确定，旧进程才立刻替换并退出，新进程几乎不会等待。
+			if (MessageBox.Show(this, Loc.T("更新已下载完成。") + "\r\n\r\n" + Loc.T("点击「确定」后程序将退出，自动替换为新版本并重新启动。"), Loc.T("更新就绪"), MessageBoxButtons.OKCancel, MessageBoxIcon.Asterisk) != DialogResult.OK)
+			{
+				Result = Outcome.Cancelled;
+				Log.Info("用户暂不立即更新，已下载的新版本保留：" + downloadedPath);
+				Close();
+				return;
+			}
 			string error;
-			bool flag = Updater.ApplyAndRestart(downloadedPath, exePath, out error);
-			if (flag)
+			if (Updater.ApplyAndRestart(downloadedPath, exePath, out error))
 			{
 				Result = Outcome.Applied;
-				MessageBox.Show(this, Loc.T("更新已下载完成。") + "\r\n\r\n" + Loc.T("点击「确定」后程序将退出，自动替换为新版本并重新启动。"), Loc.T("更新就绪"), MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 				TrayContext.RequestExitForUpdate();
 				return;
 			}
