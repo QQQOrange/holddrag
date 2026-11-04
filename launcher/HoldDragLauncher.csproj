@@ -24,9 +24,9 @@
     <ApplicationIcon>..\holddrag\src\app.ico</ApplicationIcon>
     <!-- 启动器自己的清单：DPI 感知 + longPathAware（见 launcher\app.manifest 里的说明） -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.11.0</Version>
-    <FileVersion>1.11.0.0</FileVersion>
-    <AssemblyVersion>1.11.0.0</AssemblyVersion>
+    <Version>1.11.1</Version>
+    <FileVersion>1.11.1.0</FileVersion>
+    <AssemblyVersion>1.11.1.0</AssemblyVersion>
     <Product>长按拖窗</Product>
     <Company>QQQOrange</Company>
     <Description>启动器：检查 .NET 10 桌面运行时，解包并启动主程序。</Description>

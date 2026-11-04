@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.IO;
 using System.Threading;
@@ -17,12 +17,12 @@ namespace HoldDrag
 	{
 		public static Font BodyFont()
 		{
-			return new Font(SettingsForm.DesignFontFamily, 9.5f, FontStyle.Regular, GraphicsUnit.Point);
+			return AuroraTheme.Font(13f);
 		}
 
 		public static Font TitleFont()
 		{
-			return new Font(SettingsForm.DesignFontFamily, 11.5f, FontStyle.Bold, GraphicsUnit.Point);
+			return AuroraTheme.Font(17f, bold: true);
 		}
 
 		/// <summary>自动折行的多行标签：宽度上限固定，高度随内容长。</summary>
@@ -33,7 +33,8 @@ namespace HoldDrag
 				AutoSize = true,
 				MaximumSize = new Size(maxWidth, 0),
 				Font = font ?? BodyFont(),
-				ForeColor = color ?? SystemColors.ControlText,
+				ForeColor = color ?? AuroraTheme.TextPrimary,
+				BackColor = Color.Transparent,
 				Text = text ?? string.Empty,
 				Margin = new Padding(0, 0, 0, 10)
 			};
@@ -48,7 +49,8 @@ namespace HoldDrag
 				AutoSizeMode = AutoSizeMode.GrowAndShrink,
 				ColumnCount = 1,
 				Dock = DockStyle.Fill,
-				Padding = new Padding(18, 16, 18, 16)
+				Padding = new Padding(24, 22, 24, 18),
+				BackColor = Color.Transparent
 			};
 			tableLayoutPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 			return tableLayoutPanel;
@@ -71,7 +73,7 @@ namespace HoldDrag
 				Button button = buttons[i];
 				button.AutoSize = true;
 				button.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-				button.MinimumSize = new Size(96, 30);
+				button.MinimumSize = new Size(96, 34);
 				button.Margin = new Padding(8, 0, 0, 0);
 				button.Padding = new Padding(10, 0, 10, 0);
 				button.Font = BodyFont();
@@ -109,7 +111,8 @@ namespace HoldDrag
 			AutoSize = true;
 			AutoSizeMode = AutoSizeMode.GrowAndShrink;
 			Font = UpdateUi.BodyFont();
-			BackColor = SystemColors.Window;
+			BackColor = AuroraTheme.Surface;
+			ForeColor = AuroraTheme.TextPrimary;
 			try
 			{
 				Icon icon = Icon.ExtractAssociatedIcon(AppPaths.ExePath);
@@ -128,23 +131,24 @@ namespace HoldDrag
 				Loc.T("当前版本：v") + AppInfo.Version + "\r\n" +
 				Loc.T("最新版本：") + info.Tag + "\r\n\r\n" +
 				Loc.T("现在下载并更新吗？下载完成后会自动替换并重启程序。"), 430));
-			tableLayoutPanel.Controls.Add(UpdateUi.Wrap(Loc.T("也可以在浏览器里手动下载：") + info.PageUrl, 430, UpdateUi.BodyFont(), SystemColors.GrayText));
+			tableLayoutPanel.Controls.Add(UpdateUi.Wrap(Loc.T("也可以在浏览器里手动下载：") + info.PageUrl, 430, UpdateUi.BodyFont(), AuroraTheme.TextTertiary));
 
-			Button download = new Button
+			AuroraButton download = new AuroraButton
 			{
-				Text = Loc.T("立即下载")
+				Text = Loc.T("立即下载"),
+				Primary = true
 			};
 			download.Click += delegate
 			{
 				DownloadRequested = true;
 				Close();
 			};
-			Button later = new Button
+			AuroraButton later = new AuroraButton
 			{
 				Text = Loc.T("稍后"),
 				DialogResult = DialogResult.Cancel
 			};
-			Button openPage = new Button
+			AuroraButton openPage = new AuroraButton
 			{
 				Text = Loc.T("打开发布页")
 			};
@@ -169,7 +173,21 @@ namespace HoldDrag
 			CancelButton = later;
 		}
 
-		protected override void OnShown(EventArgs e)
+			protected override void OnHandleCreated(EventArgs e)
+		{
+			base.OnHandleCreated(e);
+			try
+			{
+				// 深色主题下把系统标题栏也刷成深色，否则顶上一条白杠，和内容完全割裂
+				Native.SetDarkTitleBar(Handle, AuroraTheme.IsDark);
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+		}
+
+	protected override void OnShown(EventArgs e)
 		{
 			base.OnShown(e);
 			try
@@ -249,7 +267,8 @@ namespace HoldDrag
 			AutoSize = true;
 			AutoSizeMode = AutoSizeMode.GrowAndShrink;
 			Font = UpdateUi.BodyFont();
-			BackColor = SystemColors.Window;
+			BackColor = AuroraTheme.Surface;
+			ForeColor = AuroraTheme.TextPrimary;
 			try
 			{
 				Icon icon = Icon.ExtractAssociatedIcon(AppPaths.ExePath);
@@ -308,7 +327,21 @@ namespace HoldDrag
 			CancelButton = _btnCancel;
 		}
 
-		protected override void OnShown(EventArgs e)
+			protected override void OnHandleCreated(EventArgs e)
+		{
+			base.OnHandleCreated(e);
+			try
+			{
+				// 深色主题下把系统标题栏也刷成深色，否则顶上一条白杠，和内容完全割裂
+				Native.SetDarkTitleBar(Handle, AuroraTheme.IsDark);
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+		}
+
+	protected override void OnShown(EventArgs e)
 		{
 			base.OnShown(e);
 			try

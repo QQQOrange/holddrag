@@ -61,7 +61,7 @@ internal static class AppInfo
 	public const string PatDocsUrl = "https://docs.github.com/zh/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens";
 
 	/// <summary>程序集版本读不到时的兜底版本号。升级版本时这里与 AssemblyInfo 必须同步改。</summary>
-	public const string FallbackVersion = "1.11.0";
+	public const string FallbackVersion = "1.11.1";
 
 	public static string Version
 	{

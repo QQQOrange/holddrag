@@ -140,6 +140,28 @@ internal sealed class TrayContext : ApplicationContext
 		_iconPaused = CreatePausedIcon();
 		_tray = new NotifyIcon();
 		_menu = new ContextMenuStrip();
+		// 原生菜单是系统浅灰、方角、SystemFonts —— 和设置页完全两个世界。
+		// 这里换自绘渲染器：圆角高亮、跟着深色/浅色主题走、字体和设置页同族。
+		AuroraTheme.Refresh();
+		_menu.Renderer = new AuroraMenuRenderer();
+		_menu.ShowImageMargin = false;
+		_menu.ShowCheckMargin = true;
+		_menu.Font = AuroraTheme.Font(13f);
+		_menu.BackColor = AuroraTheme.Surface;
+		_menu.ForeColor = AuroraTheme.TextPrimary;
+		_menu.Padding = new Padding(4, 6, 4, 6);
+		_menu.Opening += delegate
+		{
+			try
+			{
+				AuroraTheme.Refresh();
+				_menu.BackColor = AuroraTheme.Surface;
+				_menu.ForeColor = AuroraTheme.TextPrimary;
+			}
+			catch
+			{
+			}
+		};
 		BuildTray();
 		ApplyConfig(initial: true);
 		_marshal = new Control();
@@ -409,6 +431,7 @@ internal sealed class TrayContext : ApplicationContext
 	private void RebuildTrayMenu()
 	{
 		_menu.Items.Clear();
+		_menu.Font = AuroraTheme.Font(13f);
 		_menu.Items.Add(new ToolStripMenuItem(Loc.T("设置…"), null, (object? s, EventArgs e) =>
 		{
 			ShowSettings();

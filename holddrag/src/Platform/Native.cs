@@ -1003,6 +1003,27 @@ internal static class Native
 		return -1;
 	}
 
+	/// <summary>
+	/// 让系统标题栏跟着深色主题走（Win10 20H1+ 是 19 号属性，Win11 改成 20 号）。
+	/// 不设的话，深色弹窗顶上会挂一条刺眼的白标题栏 —— 这正是「两个世界」的来源。
+	/// </summary>
+	internal static bool SetDarkTitleBar(nint hwnd, bool dark)
+	{
+		try
+		{
+			int pvAttribute = (dark ? 1 : 0);
+			if (DwmSetWindowAttribute(hwnd, 20, ref pvAttribute, 4) == 0)
+			{
+				return true;
+			}
+			return DwmSetWindowAttribute(hwnd, 19, ref pvAttribute, 4) == 0;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
 	internal static bool SetWindowRoundedCorners(nint hwnd)
 	{
 		try

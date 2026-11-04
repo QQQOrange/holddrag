@@ -48,10 +48,22 @@ internal static class FrameStyles
 	/// <summary>四角标：只在四个角画粗短线，最"轻"，不占视觉。</summary>
 	public const string Corners = "Corners";
 
+	/// <summary>霓虹：实线 + 紧贴的高亮外发光 + 内侧一道亮线，最有"电"。</summary>
+	public const string Neon = "Neon";
+
+	/// <summary>括号：只在左右两边画竖条，像把窗口"夹"起来。</summary>
+	public const string Brackets = "Brackets";
+
+	/// <summary>底部条：贴着窗口下沿的一条渐变高亮带。</summary>
+	public const string Underline = "Underline";
+
+	/// <summary>四角圆点：四个角各一个实心圆点，配合细线或不配。</summary>
+	public const string Dots = "Dots";
+
 	// 精简后的样式表：#43 起只保留经得起看的 5 种。
 	// 旧的 Flat / Solid / Double / Aurora / Neon / Halo / Corners / Underline / Brackets 全部删除
 	// （用户反馈：丑、不明显、不实用），虚线环是唯一日常在用的，留作默认。
-	public static readonly string[] All = new string[7] { "Aurora", "Dashed", "Hairline", "Focus", "Glow", "Shadow", "Corners" };
+	public static readonly string[] All = new string[11] { "Aurora", "Neon", "Dashed", "Hairline", "Focus", "Glow", "Shadow", "Corners", "Brackets", "Underline", "Dots" };
 
 	public static string DefaultId => "Dashed";
 
@@ -107,6 +119,10 @@ internal static class FrameStyles
 			"Shadow" => Loc.T("柔和投影"), 
 			"Aurora" => Loc.T("流光边"), 
 			"Corners" => Loc.T("四角标"), 
+			"Neon" => Loc.T("霓虹"), 
+			"Brackets" => Loc.T("括号"), 
+			"Underline" => Loc.T("底部条"), 
+			"Dots" => Loc.T("四角点"), 
 			_ => id, 
 		};
 	}
@@ -122,6 +138,10 @@ internal static class FrameStyles
 			"Shadow" => Loc.T("真实柔化投影，像窗口浮起来了一层"), 
 			"Aurora" => Loc.T("渐变描边加一层柔光，最现代的一档，亮暗窗口都好看"), 
 			"Corners" => Loc.T("只在四个角画短线，最轻，几乎不挡内容"), 
+			"Neon" => Loc.T("实线外面裹一层紧贴的高亮光，最有「通电」感"), 
+			"Brackets" => Loc.T("只在左右两边画竖条，像把窗口夹住"), 
+			"Underline" => Loc.T("贴着窗口下沿的一条渐变高亮带，最不干扰内容"), 
+			"Dots" => Loc.T("四个角各一个圆点，极简"), 
 			_ => string.Empty, 
 		};
 	}
@@ -140,6 +160,12 @@ internal static class FrameStyles
 			return Math.Max(2f, (float)thickness * 1.15f);
 		case "Corners":
 			return Math.Max(2.5f, (float)thickness * 1.6f);
+		case "Brackets":
+			return Math.Max(3f, (float)thickness * 1.8f);
+		case "Underline":
+			return Math.Max(2.5f, (float)thickness * 1.4f);
+		case "Dots":
+			return Math.Max(3f, (float)thickness * 1.7f);
 		default:
 			return thickness;
 		}
@@ -154,6 +180,10 @@ internal static class FrameStyles
 			"Glow" => num + 12, 
 			"Aurora" => num + 14, 
 			"Corners" => num + 6, 
+			"Neon" => num + 13, 
+			"Brackets" => num + 8, 
+			"Underline" => num + 11, 
+			"Dots" => num + 12, 
 			"Shadow" => num + 17, 
 			"Focus" => num + 7, 
 			"Dashed" => num + 8, 
@@ -194,6 +224,18 @@ internal static class FrameStyles
 			return;
 		case "Corners":
 			DrawCorners(g, ring, r, color, strokeW);
+			return;
+		case "Neon":
+			DrawNeon(g, ring, r, color, strokeW);
+			return;
+		case "Brackets":
+			DrawBrackets(g, ring, r, color, strokeW);
+			return;
+		case "Underline":
+			DrawUnderline(g, ring, color, strokeW);
+			return;
+		case "Dots":
+			DrawDots(g, ring, color, strokeW);
 			return;
 		case "Hairline":
 			DrawHairline(g, ring, r, color, strokeW);
@@ -452,6 +494,134 @@ internal static class FrameStyles
 			pen2.EndCap = LineCap.Round;
 			pen2.LineJoin = LineJoin.Round;
 			g.DrawLines(pen2, corners[i]);
+		}
+	}
+
+
+	// 霓虹：实线 + 紧贴的高亮外发光（半径小、亮度高，和 Glow 的"大面积柔光"区分开）+ 内侧亮线。
+	private static void DrawNeon(Graphics g, RectangleF ring, float r, Color color, float t)
+	{
+		for (int i = 5; i >= 1; i--)
+		{
+			int alpha = 70 - i * 11;
+			if (alpha < 4)
+			{
+				continue;
+			}
+			using GraphicsPath path = RoundedPath(ring, r);
+			using Pen pen = new Pen(Color.FromArgb(alpha, color), t + (float)i * 2.4f);
+			pen.LineJoin = LineJoin.Round;
+			g.DrawPath(pen, path);
+		}
+		using (GraphicsPath path2 = RoundedPath(ring, r))
+		{
+			using Pen pen2 = new Pen(Lighten(color, 0.42f), Math.Max(1.4f, t * 0.85f));
+			pen2.LineJoin = LineJoin.Round;
+			g.DrawPath(pen2, path2);
+		}
+		float num = t * 0.5f + 2f;
+		RectangleF inner = RectangleF.Inflate(ring, -num, -num);
+		if (inner.Width > 6f && inner.Height > 6f)
+		{
+			using GraphicsPath path3 = RoundedPath(inner, Math.Max(0f, r - num));
+			using Pen pen3 = new Pen(Color.FromArgb(150, Lighten(color, 0.7f)), Math.Max(1f, t * 0.3f));
+			pen3.LineJoin = LineJoin.Round;
+			g.DrawPath(pen3, path3);
+		}
+	}
+
+	// 括号：左右两条竖臂（圆角、双层），中间留空 —— 最不挡内容的"环"。
+	private static void DrawBrackets(Graphics g, RectangleF ring, float r, Color color, float t)
+	{
+		float arm = Math.Max(24f, Math.Min(ring.Height * 0.6f, t * 12f));
+		arm = Math.Min(arm, ring.Height * 0.86f);
+		float inset = t * 0.5f;
+		float left = ring.Left + inset;
+		float right = ring.Right - inset;
+		float top = ring.Top + (ring.Height - arm) * 0.5f;
+		float bottom = top + arm;
+		float bend = Math.Max(2f, r * 0.6f);
+		PointF[][] arms = new PointF[2][]
+		{
+			new PointF[4]
+			{
+				new PointF(left + bend, top),
+				new PointF(left, top),
+				new PointF(left, bottom),
+				new PointF(left + bend, bottom)
+			},
+			new PointF[4]
+			{
+				new PointF(right - bend, top),
+				new PointF(right, top),
+				new PointF(right, bottom),
+				new PointF(right - bend, bottom)
+			}
+		};
+		for (int i = 0; i < arms.Length; i++)
+		{
+			using Pen pen = new Pen(Color.FromArgb(48, color), t * 2.0f);
+			pen.StartCap = LineCap.Round;
+			pen.EndCap = LineCap.Round;
+			pen.LineJoin = LineJoin.Round;
+			g.DrawLines(pen, arms[i]);
+		}
+		for (int j = 0; j < arms.Length; j++)
+		{
+			using Pen pen2 = new Pen(color, t);
+			pen2.StartCap = LineCap.Round;
+			pen2.EndCap = LineCap.Round;
+			pen2.LineJoin = LineJoin.Round;
+			g.DrawLines(pen2, arms[j]);
+		}
+	}
+
+	// 底部条：贴下沿的渐变带（左右两端收圆），像一条"进度条"，最不打扰内容。
+	private static void DrawUnderline(Graphics g, RectangleF ring, Color color, float t)
+	{
+		float h = Math.Max(3f, t * 1.15f);
+		float w = Math.Max(24f, ring.Width - t * 6f);
+		RectangleF bar = new RectangleF(ring.Left + (ring.Width - w) * 0.5f, ring.Bottom - h * 1.6f, w, h);
+		using GraphicsPath path = RoundedPath(bar, h * 0.5f);
+		using LinearGradientBrush brush = new LinearGradientBrush(new RectangleF(bar.X - 1f, bar.Y - 1f, Math.Max(4f, bar.Width + 2f), Math.Max(4f, bar.Height + 2f)), Color.FromArgb(40, color), Color.FromArgb(40, color), 0f);
+		brush.InterpolationColors = new ColorBlend
+		{
+			Colors = new Color[3] { Color.FromArgb(0, color), color, Color.FromArgb(0, color) },
+			Positions = new float[3] { 0f, 0.5f, 1f }
+		};
+		g.FillPath(brush, path);
+		RectangleF glow = new RectangleF(bar.X, bar.Y - h, bar.Width, h * 3f);
+		using GraphicsPath path2 = RoundedPath(glow, h);
+		using SolidBrush brush2 = new SolidBrush(Color.FromArgb(34, color));
+		g.FillPath(brush2, path2);
+	}
+
+	// 四角点：四个实心圆（带一圈柔光），极简但要看清。
+	private static void DrawDots(Graphics g, RectangleF ring, Color color, float t)
+	{
+		float num = Math.Max(3.2f, t * 1.25f);
+		float inset = t;
+		PointF[] points = new PointF[4]
+		{
+			new PointF(ring.Left + inset, ring.Top + inset),
+			new PointF(ring.Right - inset, ring.Top + inset),
+			new PointF(ring.Left + inset, ring.Bottom - inset),
+			new PointF(ring.Right - inset, ring.Bottom - inset)
+		};
+		for (int i = 0; i < points.Length; i++)
+		{
+			using SolidBrush brush = new SolidBrush(Color.FromArgb(52, color));
+			g.FillEllipse(brush, points[i].X - num * 2f, points[i].Y - num * 2f, num * 4f, num * 4f);
+		}
+		for (int j = 0; j < points.Length; j++)
+		{
+			using SolidBrush brush2 = new SolidBrush(color);
+			g.FillEllipse(brush2, points[j].X - num, points[j].Y - num, num * 2f, num * 2f);
+		}
+		for (int k = 0; k < points.Length; k++)
+		{
+			using SolidBrush brush3 = new SolidBrush(Color.FromArgb(190, Lighten(color, 0.75f)));
+			g.FillEllipse(brush3, points[k].X - num * 0.42f, points[k].Y - num * 0.42f, num * 0.84f, num * 0.84f);
 		}
 	}
 

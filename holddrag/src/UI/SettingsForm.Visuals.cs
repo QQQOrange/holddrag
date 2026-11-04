@@ -1,4 +1,4 @@
-// HoldDrag · UI/SettingsForm.Visuals.cs
+﻿// HoldDrag · UI/SettingsForm.Visuals.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -50,6 +50,15 @@ internal sealed partial class SettingsForm
 
 	private sealed class SwatchGrid : Control, INeedHeight
 	{
+
+		public SwatchGrid()
+		{
+		// 自绘控件必须自己开双缓冲：不然每次悬停 Invalidate 都会先擦背景再重画，
+		// 肉眼看到的就是「鼠标移上去整块闪一下」。
+		SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
+		DoubleBuffered = true;
+			BackColor = Tokens.Surface;
+		}
 		public sealed class Entry
 		{
 			public string Id;
@@ -233,6 +242,15 @@ internal sealed partial class SettingsForm
 
 	private sealed class StyleGallery : Control, INeedHeight
 	{
+
+		public StyleGallery()
+		{
+		// 自绘控件必须自己开双缓冲：不然每次悬停 Invalidate 都会先擦背景再重画，
+		// 肉眼看到的就是「鼠标移上去整块闪一下」。
+		SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
+		DoubleBuffered = true;
+			BackColor = Tokens.Surface;
+		}
 		private List<string> _items = new List<string>();
 		private int _sel;
 		private int _hot = -1;
@@ -676,6 +694,15 @@ internal sealed partial class SettingsForm
 
 	internal sealed class HelpPanel : Control, INeedHeight
 	{
+
+		public HelpPanel()
+		{
+		// 自绘控件必须自己开双缓冲：不然每次悬停 Invalidate 都会先擦背景再重画，
+		// 肉眼看到的就是「鼠标移上去整块闪一下」。
+		SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
+		DoubleBuffered = true;
+			BackColor = Tokens.Surface;
+		}
 		internal sealed class Entry
 		{
 			public string Icon;
