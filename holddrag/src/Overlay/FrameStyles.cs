@@ -1,4 +1,4 @@
-// HoldDrag · Overlay/FrameStyles.cs
+﻿// HoldDrag · Overlay/FrameStyles.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -42,10 +42,16 @@ internal static class FrameStyles
 
 	public const string Shadow = "Shadow";
 
+	/// <summary>流光边：对角渐变描边 + 外层柔光，暗色/亮色窗口上都通透。</summary>
+	public const string Aurora = "Aurora";
+
+	/// <summary>四角标：只在四个角画粗短线，最"轻"，不占视觉。</summary>
+	public const string Corners = "Corners";
+
 	// 精简后的样式表：#43 起只保留经得起看的 5 种。
 	// 旧的 Flat / Solid / Double / Aurora / Neon / Halo / Corners / Underline / Brackets 全部删除
 	// （用户反馈：丑、不明显、不实用），虚线环是唯一日常在用的，留作默认。
-	public static readonly string[] All = new string[5] { "Dashed", "Hairline", "Focus", "Glow", "Shadow" };
+	public static readonly string[] All = new string[7] { "Aurora", "Dashed", "Hairline", "Focus", "Glow", "Shadow", "Corners" };
 
 	public static string DefaultId => "Dashed";
 
@@ -99,6 +105,8 @@ internal static class FrameStyles
 			"Focus" => Loc.T("焦点环"), 
 			"Glow" => Loc.T("柔光"), 
 			"Shadow" => Loc.T("柔和投影"), 
+			"Aurora" => Loc.T("流光边"), 
+			"Corners" => Loc.T("四角标"), 
 			_ => id, 
 		};
 	}
@@ -112,6 +120,8 @@ internal static class FrameStyles
 			"Focus" => Loc.T("双层描边，最醒目，接近系统焦点框"), 
 			"Glow" => Loc.T("细腻的多层衰减光晕，暗色窗口上尤其好看"), 
 			"Shadow" => Loc.T("真实柔化投影，像窗口浮起来了一层"), 
+			"Aurora" => Loc.T("渐变描边加一层柔光，最现代的一档，亮暗窗口都好看"), 
+			"Corners" => Loc.T("只在四个角画短线，最轻，几乎不挡内容"), 
 			_ => string.Empty, 
 		};
 	}
@@ -128,6 +138,8 @@ internal static class FrameStyles
 			return Math.Max(1f, (float)thickness * 0.55f);
 		case "Focus":
 			return Math.Max(2f, (float)thickness * 1.15f);
+		case "Corners":
+			return Math.Max(2.5f, (float)thickness * 1.6f);
 		default:
 			return thickness;
 		}
@@ -140,6 +152,8 @@ internal static class FrameStyles
 		return style switch
 		{
 			"Glow" => num + 12, 
+			"Aurora" => num + 14, 
+			"Corners" => num + 6, 
 			"Shadow" => num + 17, 
 			"Focus" => num + 7, 
 			"Dashed" => num + 8, 
@@ -174,6 +188,12 @@ internal static class FrameStyles
 			return;
 		case "Focus":
 			DrawFocus(g, ring, r, color, strokeW);
+			return;
+		case "Aurora":
+			DrawAurora(g, ring, r, color, strokeW);
+			return;
+		case "Corners":
+			DrawCorners(g, ring, r, color, strokeW);
 			return;
 		case "Hairline":
 			DrawHairline(g, ring, r, color, strokeW);
@@ -332,6 +352,107 @@ internal static class FrameStyles
 		using Pen pen = new Pen(Color.FromArgb(226, color), Math.Max(1f, Math.Min(2.2f, t * 0.6f)));
 		pen.LineJoin = LineJoin.Round;
 		g.DrawPath(pen, path);
+	}
+
+
+	// 流光边：先把 10 层高斯衰减的柔光铺开，再用「主色 → 提亮 35%」的对角渐变描一圈，
+	// 最后在内侧补一道极细的高光 —— 亮窗口上有层次，暗窗口上有微光，不会像纯色线那样"贴"在边上。
+	private static void DrawAurora(Graphics g, RectangleF ring, float r, Color color, float t)
+	{
+		const int layers = 10;
+		double sigma = (double)layers * 0.5;
+		double twoSigmaSq = 2.0 * sigma * sigma;
+		for (int i = layers; i >= 1; i--)
+		{
+			int alpha = (int)Math.Round(40.0 * Math.Exp(-(double)(i * i) / twoSigmaSq));
+			if (alpha < 2)
+			{
+				continue;
+			}
+			using GraphicsPath path = RoundedPath(ring, r);
+			using Pen pen = new Pen(Color.FromArgb(alpha, color), t + (float)i * 1.6f);
+			pen.LineJoin = LineJoin.Round;
+			g.DrawPath(pen, path);
+		}
+		Color light = Lighten(color, 0.34f);
+		using (GraphicsPath path2 = RoundedPath(ring, r))
+		{
+			using LinearGradientBrush brush = new LinearGradientBrush(new RectangleF(ring.X, ring.Y, Math.Max(2f, ring.Width), Math.Max(2f, ring.Height)), light, color, 45f);
+			using Pen pen2 = new Pen(brush, Math.Max(1.6f, t));
+			pen2.LineJoin = LineJoin.Round;
+			g.DrawPath(pen2, path2);
+		}
+		float num = Math.Max(1f, t * 0.42f);
+		RectangleF inner = RectangleF.Inflate(ring, -t * 0.55f, -t * 0.55f);
+		if (inner.Width > 6f && inner.Height > 6f)
+		{
+			using GraphicsPath path3 = RoundedPath(inner, Math.Max(0f, r - t * 0.55f));
+			using Pen pen3 = new Pen(Color.FromArgb(64, 255, 255, 255), num);
+			pen3.LineJoin = LineJoin.Round;
+			g.DrawPath(pen3, path3);
+		}
+	}
+
+	// 四角标：四个独立的 L 形短臂（互相不连），圆头、外层再叠一道极淡的粗描边当"光晕"。
+	// 臂长跟着短边联动，小窗口不会糊成一圈。
+	private static void DrawCorners(Graphics g, RectangleF ring, float r, Color color, float t)
+	{
+		float arm = Math.Min(Math.Min(ring.Width, ring.Height) * 0.24f, Math.Max(16f, t * 8f));
+		if (arm < 5f)
+		{
+			return;
+		}
+		float inset = t * 0.5f;
+		float left = ring.Left + inset;
+		float top = ring.Top + inset;
+		float right = ring.Right - inset;
+		float bottom = ring.Bottom - inset;
+		// 每条都是「臂 → 角点 → 臂」，角点必须在中间，否则会画成一条斜切。
+		PointF[][] corners = new PointF[4][]
+		{
+			new PointF[3]
+			{
+				new PointF(left + arm, top),
+				new PointF(left, top),
+				new PointF(left, top + arm)
+			},
+			new PointF[3]
+			{
+				new PointF(right - arm, top),
+				new PointF(right, top),
+				new PointF(right, top + arm)
+			},
+			new PointF[3]
+			{
+				new PointF(left + arm, bottom),
+				new PointF(left, bottom),
+				new PointF(left, bottom - arm)
+			},
+			new PointF[3]
+			{
+				new PointF(right - arm, bottom),
+				new PointF(right, bottom),
+				new PointF(right, bottom - arm)
+			}
+		};
+		// 第一遍：粗而极淡的底光
+		for (int i = 0; i < corners.Length; i++)
+		{
+			using Pen pen = new Pen(Color.FromArgb(46, color), t * 2.2f);
+			pen.StartCap = LineCap.Round;
+			pen.EndCap = LineCap.Round;
+			pen.LineJoin = LineJoin.Round;
+			g.DrawLines(pen, corners[i]);
+		}
+		// 第二遍：实色短线
+		for (int i = 0; i < corners.Length; i++)
+		{
+			using Pen pen2 = new Pen(color, t);
+			pen2.StartCap = LineCap.Round;
+			pen2.EndCap = LineCap.Round;
+			pen2.LineJoin = LineJoin.Round;
+			g.DrawLines(pen2, corners[i]);
+		}
 	}
 
 	private static readonly object ShadowGate = new object();

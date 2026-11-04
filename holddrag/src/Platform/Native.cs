@@ -745,6 +745,14 @@ internal static class Native
 	[DllImport("user32.dll", SetLastError = true)]
 	internal static extern short GetAsyncKeyState(int vKey);
 
+	/// <summary>
+	/// 给控件关掉系统主题绘制。传「 」是官方支持的写法：
+	/// ComboBox 自带的下拉按钮会画一块不跟随深色主题的白底方块（浅色下也突兀），
+	/// 关掉之后完全由我们自绘，圆角和配色才能跟别的控件一致。
+	/// </summary>
+	[DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
+	internal static extern int SetWindowTheme(nint hwnd, string pszSubAppName, string pszSubIdList);
+
 	[DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
 	internal static extern nint FindWindowW(string lpClassName, string lpWindowName);
 

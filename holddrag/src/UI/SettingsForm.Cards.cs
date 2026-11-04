@@ -81,8 +81,8 @@ internal sealed partial class SettingsForm
 		private readonly Font _fontSub;
 
 		/// <summary>卡片内边距（参照里 Padding=18，这里给 20 更透气）。</summary>
-		public const int PadX = 20;
-		private const int PadTop = 18;
+		public const int PadX = 22;
+		private const int PadTop = 20;
 		private const int PadBottom = 20;
 
 		public Card(string title, string subtitle)
@@ -199,11 +199,11 @@ internal sealed partial class SettingsForm
 			{
 				if (spec.TitleCtl == null && !string.IsNullOrEmpty(spec.Label))
 				{
-					spec.TitleCtl = NewLabel(spec.Label, 13.5f, Tokens.TextPrimary, bold: false);
+					spec.TitleCtl = NewLabel(spec.Label, Tokens.FontRow, Tokens.TextPrimary, bold: false);
 				}
 				if (spec.NoteCtl == null && !string.IsNullOrEmpty(spec.Note))
 				{
-					spec.NoteCtl = NewLabel(spec.Note, 12, Tokens.TextTertiary, bold: false);
+					spec.NoteCtl = NewLabel(spec.Note, Tokens.FontNote, Tokens.TextTertiary, bold: false);
 				}
 			}
 		}
@@ -269,8 +269,8 @@ internal sealed partial class SettingsForm
 
 			if (!string.IsNullOrEmpty(Title))
 			{
-				_titleRect = new Rectangle(padX, y, inner, Sc(24));
-				y += Sc(24);
+				_titleRect = new Rectangle(padX, y, inner, Sc(22));
+				y += Sc(22);
 				header = true;
 			}
 			else
@@ -279,8 +279,8 @@ internal sealed partial class SettingsForm
 			}
 			if (!string.IsNullOrEmpty(Subtitle))
 			{
-				_subRect = new Rectangle(padX, y + Sc(2), inner, Sc(18));
-				y += Sc(20);
+				_subRect = new Rectangle(padX, y + Sc(1), inner, Sc(17));
+				y += Sc(18);
 				header = true;
 			}
 			else
@@ -289,7 +289,7 @@ internal sealed partial class SettingsForm
 			}
 			if (header)
 			{
-				y += Sc(14);
+				y += Sc(10);
 			}
 			if (apply)
 			{
@@ -361,7 +361,7 @@ internal sealed partial class SettingsForm
 				int coreH = titleH + noteH2;
 				int ctlH = Math.Max(Sc(24), ControlHeight(row.Ctl, ctlW));
 				int contentH = Math.Max(Math.Max(coreH, ctlH), Sc(24));
-				int rowH = contentH + Sc(24);
+				int rowH = contentH + Sc(18);
 
 				if (!first && apply)
 				{
@@ -369,7 +369,7 @@ internal sealed partial class SettingsForm
 				}
 				first = false;
 
-				int top = y + Sc(12);
+				int top = y + Sc(10);
 				int textY = top + Math.Max(0, (contentH - coreH) / 2);
 				if (apply)
 				{
@@ -533,7 +533,10 @@ internal sealed partial class SettingsForm
 						continue;
 					}
 					Region region = field.Region;
-					field.Region = new Region(RoundedPath(new Rectangle(0, 0, size.Width, size.Height), Sc(Tokens.RadiusField)));
+					// 内缩 1px：控件自己的底色会盖住父控件画的描边，不缩这一圈就只剩四个圆角，
+					// 输入框看起来就是「没有框、只有一行文字」。
+					int inset = Math.Max(1, Sc(1));
+					field.Region = new Region(RoundedPath(new Rectangle(inset, inset, Math.Max(2, size.Width - inset * 2), Math.Max(2, size.Height - inset * 2)), Math.Max(2, Sc(Tokens.RadiusField) - inset)));
 					if (region != null)
 					{
 						region.Dispose();
@@ -863,7 +866,8 @@ internal sealed partial class SettingsForm
 						graphics.FillPath(brush, path);
 					}
 				}
-				Color color2 = ((flag || flag2) ? Tokens.TextPrimary : Tokens.TextSecondary);
+				// 当前页用强调色文字，悬停用主文字色：一眼能看出「我在哪一页」
+				Color color2 = (flag ? Tokens.Accent : ((flag2 ? Tokens.TextPrimary : Tokens.TextSecondary)));
 				int num4 = r.Left + Sc(12);
 				if (font2 != null && i < _glyphs.Length)
 				{
@@ -970,242 +974,6 @@ internal sealed partial class SettingsForm
 		}
 	}
 
-	// ======================= 自绘下拉框 =======================
-
-	private sealed class FlatCombo : ComboBox
-	{
-		public Action<Graphics, Rectangle, object> ClosedPainter;
-		private bool _hover;
-		private bool _open;
-		private const int WM_PAINT_MSG = 15;
-		private const int WM_MOUSEWHEEL_MSG = 522;
-		internal int WheelSwallowedForTest;
-		internal int WheelForwardedForTest;
-
-		public FlatCombo()
-		{
-			DropDownStyle = ComboBoxStyle.DropDownList;
-			DrawMode = DrawMode.OwnerDrawFixed;
-			FlatStyle = FlatStyle.Flat;
-			// ComboBox 的高度被系统锁成 PreferredHeight（ItemHeight + 边框），
-			// 默认值在高 DPI 下只有 21 逻辑像素，和旁边的数字框/按钮差一截，看着就是没对齐。
-			// 把行高顶上去，闭合态才和输入框同一量级。
-			// 22 让"下拉框闭合态"和旁边的数字框/文本框同高（32 设计像素）：
-			// 之前是 27，自然高度 ~46，比输入框高出一截，同一行看着就是没对齐。
-			ItemHeight = Sc(22);
-			BackColor = Tokens.Surface;
-			ForeColor = Tokens.TextPrimary;
-			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
-			SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
-		}
-
-		protected override void OnMouseEnter(EventArgs e)
-		{
-			_hover = true;
-			Invalidate();
-			base.OnMouseEnter(e);
-		}
-
-		/// <summary>
-		/// ComboBox 的真实高度由 ItemHeight 决定，布局给的高度它只会"部分接受"：
-		/// 一旦某次测量把行撑高，再摆回来就可能留下上下留白，同一页两个下拉框高低不一。
-		/// 这里统一夹到系统给的自然高度，让所有下拉框在任何 DPI 下都同高。
-		/// </summary>
-		protected override void SetBoundsCore(int x, int y, int width, int height, BoundsSpecified specified)
-		{
-			try
-			{
-				int preferredHeight = PreferredHeight;
-				if (preferredHeight > 0)
-				{
-					height = preferredHeight;
-				}
-			}
-			catch
-			{
-			}
-			base.SetBoundsCore(x, y, width, height, specified);
-		}
-
-		protected override void OnMouseLeave(EventArgs e)
-		{
-			_hover = false;
-			Invalidate();
-			base.OnMouseLeave(e);
-		}
-
-		protected override void OnDropDown(EventArgs e)
-		{
-			_open = true;
-			Invalidate();
-			base.OnDropDown(e);
-		}
-
-		protected override void OnDropDownClosed(EventArgs e)
-		{
-			_open = false;
-			Invalidate();
-			base.OnDropDownClosed(e);
-		}
-
-		protected override void OnDrawItem(DrawItemEventArgs e)
-		{
-			if (e.Index < 0)
-			{
-				base.OnDrawItem(e);
-				return;
-			}
-			Graphics graphics = e.Graphics;
-			HQ.Apply(graphics);
-			bool flag = (e.State & DrawItemState.Selected) != 0;
-			Rectangle bounds = e.Bounds;
-			using (SolidBrush brush = new SolidBrush(flag ? Tokens.AccentSoft : Tokens.Surface))
-			{
-				graphics.FillRectangle(brush, bounds);
-			}
-			if (flag)
-			{
-				using SolidBrush brush2 = new SolidBrush(Tokens.Accent);
-				graphics.FillRectangle(brush2, new Rectangle(bounds.Left, bounds.Top, Sc(3), bounds.Height));
-			}
-			object obj = ((e.Index < Items.Count) ? Items[e.Index] : null);
-			Rectangle rectangle = new Rectangle(bounds.Left + Sc(10), bounds.Top, Math.Max(10, bounds.Width - Sc(16)), bounds.Height);
-			if (ClosedPainter != null)
-			{
-				ClosedPainter(graphics, rectangle, obj);
-				return;
-			}
-			TextRenderer.DrawText(graphics, (obj != null) ? obj.ToString() : "", Font, rectangle, Tokens.TextPrimary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
-		}
-
-		protected override void WndProc(ref Message m)
-		{
-			if (m.Msg == 522)
-			{
-				if (!DroppedDown)
-				{
-					WheelSwallowedForTest++;
-					return;
-				}
-				WheelForwardedForTest++;
-			}
-			base.WndProc(ref m);
-			if (m.Msg == 15)
-			{
-				PaintClosed();
-			}
-		}
-
-		private void PaintClosed()
-		{
-			try
-			{
-				if (!IsHandleCreated || Width <= 0 || Height <= 0)
-				{
-					return;
-				}
-				using Graphics graphics = Graphics.FromHwnd(Handle);
-				HQ.Apply(graphics);
-				int num = Sc(1);
-				GraphicsPath graphicsPath = RoundedPath(new Rectangle(num, num, Width - num * 2 - 1, Height - num * 2 - 1), Sc(Tokens.RadiusField));
-				try
-				{
-					using (SolidBrush brush = new SolidBrush(Enabled ? BackColor : Tokens.DisabledFill))
-					{
-						graphics.FillPath(brush, graphicsPath);
-					}
-					Color color;
-					if (Enabled)
-					{
-						color = ((_hover || _open) ? Tokens.Accent : Tokens.InputStroke);
-					}
-					else
-					{
-						color = Tokens.DisabledStroke;
-					}
-					using Pen pen = new Pen(color);
-					graphics.DrawPath(pen, graphicsPath);
-				}
-				finally
-				{
-					graphicsPath.Dispose();
-				}
-				int num2 = Sc(26);
-				object obj = ((SelectedIndex >= 0 && SelectedIndex < Items.Count) ? Items[SelectedIndex] : null);
-				Rectangle rectangle = new Rectangle(Sc(10), 0, Math.Max(10, Width - num2 - Sc(16)), Height);
-				if (ClosedPainter != null)
-				{
-					ClosedPainter(graphics, rectangle, obj);
-				}
-				else
-				{
-					TextRenderer.DrawText(graphics, (obj != null) ? obj.ToString() : "", Font, rectangle, Enabled ? Tokens.TextPrimary : Tokens.TextTertiary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
-				}
-				float num3 = (float)Width - (float)num2 / 2f;
-				float num4 = (float)Height / 2f;
-				float num5 = (float)Sc(2) * 1.15f;
-				using Pen pen2 = new Pen(Enabled ? Tokens.TextSecondary : Tokens.TextTertiary, Math.Max(1.2f, (float)Sc(1) * 1.4f));
-				pen2.StartCap = LineCap.Round;
-				pen2.EndCap = LineCap.Round;
-				pen2.LineJoin = LineJoin.Round;
-				graphics.DrawLines(pen2, new PointF[3]
-				{
-					new PointF(num3 - num5 * 1.7f, num4 - num5 * 0.45f),
-					new PointF(num3, num4 + num5 * 1.15f),
-					new PointF(num3 + num5 * 1.7f, num4 - num5 * 0.45f)
-				});
-			}
-			catch (Exception ex)
-			{
-				Log.Error(ex);
-			}
-		}
-	}
-
-	// ======================= 自绘数字框 =======================
-
-	private sealed class FlatNum : NumericUpDown
-	{
-		public FlatNum()
-		{
-			// 不开这个，高度会被系统按字体锁死（实测只有 18 逻辑像素），
-			// 和同一行的标签/按钮对不齐——看上去就是"字和框的高度乱七八糟"。
-			AutoSize = false;
-			BorderStyle = BorderStyle.None;
-			BackColor = Tokens.FieldFill;
-			ForeColor = Tokens.TextPrimary;
-			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
-		}
-
-		protected override void OnHandleCreated(EventArgs e)
-		{
-			base.OnHandleCreated(e);
-			for (int i = 0; i < Controls.Count; i++)
-			{
-				try
-				{
-					Controls[i].BackColor = Tokens.FieldFill;
-					Controls[i].ForeColor = Tokens.TextPrimary;
-					if (Controls[i] is TextBox textBox)
-					{
-						textBox.BorderStyle = BorderStyle.None;
-					}
-				}
-				catch
-				{
-				}
-			}
-		}
-
-		protected override void WndProc(ref Message m)
-		{
-			if (m.Msg != 522 || Focused)
-			{
-				base.WndProc(ref m);
-			}
-		}
-	}
-
 	// ======================= 自绘开关 =======================
 
 	private sealed class FlatCheck : CheckBox
@@ -1285,10 +1053,8 @@ internal sealed partial class SettingsForm
 		{
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
-			using (SolidBrush brush = new SolidBrush(BackColor))
-			{
-				graphics.FillRectangle(brush, ClientRectangle);
-			}
+			// 同按钮：用父容器底色清屏，避免在卡片上留一块异色直角
+			graphics.Clear((Parent != null) ? Parent.BackColor : Tokens.Surface);
 			Rectangle trackRect = TrackRect;
 			int radius = TrackH / 2;
 			bool flag = Checked;
@@ -1398,7 +1164,9 @@ internal sealed partial class SettingsForm
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
 			Rectangle clientRectangle = ClientRectangle;
-			graphics.Clear(BackColor);
+			// 清屏用父容器底色：BackColor 是控件自己的填充色，拿它清屏会在圆角外留下一块同色直角，
+			// 看上去就是「方按钮」（深色主题下尤其明显）。
+			graphics.Clear((Parent != null) ? Parent.BackColor : Tokens.Canvas);
 			float value = _hoverT.Value;
 			Color color = (_primary ? Tokens.Accent : Tokens.ButtonHover);
 			Color back = Mix(_primary ? Tokens.Accent : Tokens.Surface, color, value);
@@ -1522,16 +1290,20 @@ internal sealed partial class SettingsForm
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
 			Rectangle clientRectangle = ClientRectangle;
-			graphics.Clear(BackColor);
+			// 清屏用父容器底色：BackColor 是控件自己的填充色，拿它清屏会在圆角外留下一块同色直角，
+			// 看上去就是「方按钮」（深色主题下尤其明显）。
+			graphics.Clear((Parent != null) ? Parent.BackColor : Tokens.Canvas);
 			if (_hot || _down)
 			{
-				Color color = ((_kind == 2) ? Color.FromArgb(196, 43, 28) : Tokens.ButtonHover);
+				Color color = ((_kind == 2) ? Tokens.Danger : Tokens.Hover);
 				if (_down)
 				{
-					color = ControlPaint.Dark(color, 0.06f);
+					color = ControlPaint.Dark(color, 0.08f);
 				}
+				Rectangle rect = new Rectangle(Sc(2), Sc(2), Math.Max(4, clientRectangle.Width - Sc(4)), Math.Max(4, clientRectangle.Height - Sc(4)));
+				using GraphicsPath path = RoundedPath(rect, Sc(Tokens.RadiusChip));
 				using SolidBrush brush = new SolidBrush(color);
-				graphics.FillRectangle(brush, clientRectangle);
+				graphics.FillPath(brush, path);
 			}
 			Color color2 = ((_kind == 2 && _hot) ? Color.White : Tokens.TextSecondary);
 			float num = Math.Max(1.1f, (float)Sc(1) * 1.15f);

@@ -232,6 +232,12 @@ internal static class Program
 			StressTest.HardExit(0);
 			return;
 		}
+		if (HasArg(args, "--uishot"))
+		{
+			SettingsForm.DumpUiShots(Path.Combine(Path.GetTempPath(), "holddrag-uishot"));
+			StressTest.HardExit(0);
+			return;
+		}
 		if (HasArg(args, "--langshot"))
 		{
 			string langShotLang = ArgValue(args, "--langshot");

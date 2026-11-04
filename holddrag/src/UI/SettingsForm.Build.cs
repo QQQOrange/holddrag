@@ -457,10 +457,10 @@ internal sealed partial class SettingsForm
 		{
 			for (int i = 0; i < Controls.Count; i++)
 			{
-				ComboBox comboBox = FindCombo(Controls[i]);
-				if (comboBox != null && comboBox.Height > 8)
+				FlatCombo flatCombo = FindCombo(Controls[i]);
+				if (flatCombo != null && flatCombo.Height > 8)
 				{
-					return Math.Max(Sc(24), comboBox.Height);
+					return Math.Max(Sc(24), flatCombo.Height);
 				}
 			}
 		}
@@ -470,20 +470,20 @@ internal sealed partial class SettingsForm
 		return Sc(32);
 	}
 
-	private static ComboBox FindCombo(Control root)
+	private static FlatCombo FindCombo(Control root)
 	{
 		try
 		{
 			for (int i = 0; i < root.Controls.Count; i++)
 			{
-				if (root.Controls[i] is ComboBox result)
+				if (root.Controls[i] is FlatCombo result)
 				{
 					return result;
 				}
-				ComboBox comboBox = FindCombo(root.Controls[i]);
-				if (comboBox != null)
+				FlatCombo flatCombo2 = FindCombo(root.Controls[i]);
+				if (flatCombo2 != null)
 				{
-					return comboBox;
+					return flatCombo2;
 				}
 			}
 		}
@@ -794,13 +794,7 @@ internal sealed partial class SettingsForm
 
 	private static FlatNum NewNum(decimal min, decimal max, decimal step)
 	{
-		return new FlatNum
-		{
-			Minimum = min,
-			Maximum = max,
-			Increment = step,
-			TextAlign = HorizontalAlignment.Center
-		};
+		return new FlatNum(min, max, step);
 	}
 
 	private static FlatCheck Check(string text)

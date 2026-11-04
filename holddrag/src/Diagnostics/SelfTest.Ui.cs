@@ -1,4 +1,4 @@
-// HoldDrag · Diagnostics/SelfTest.Ui.cs
+﻿// HoldDrag · Diagnostics/SelfTest.Ui.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -959,7 +959,7 @@ internal static partial class SelfTest
 		using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
 		settingsForm.CreateControl();
 		Application.DoEvents();
-		ComboBox comboBox = settingsForm.ProbeComboRight as ComboBox;
+		SettingsForm.FlatCombo comboBox = settingsForm.ProbeComboRight as SettingsForm.FlatCombo;
 		Check(comboBox != null && comboBox.Items.Count > 1, "取到右键动作下拉框");
 		if (comboBox != null && comboBox.Items.Count > 1)
 		{
@@ -971,14 +971,14 @@ internal static partial class SelfTest
 			Application.DoEvents();
 			Eq(comboBox.SelectedIndex, selectedIndex, "★ 滚轮扫过『右键』下拉框不会改掉动作绑定（误改的根因）");
 		}
-		if (settingsForm.ProbeComboLeft is ComboBox comboBox2 && comboBox2.Items.Count > 1)
+		if (settingsForm.ProbeComboLeft is SettingsForm.FlatCombo comboBox2 && comboBox2.Items.Count > 1)
 		{
 			int selectedIndex2 = comboBox2.SelectedIndex;
 			Native.SendMessageW(comboBox2.Handle, 522, wParam, IntPtr.Zero);
 			Application.DoEvents();
 			Eq(comboBox2.SelectedIndex, selectedIndex2, "★ 滚轮扫过『左键』下拉框不会改掉动作绑定");
 		}
-		NumericUpDown numericUpDown = settingsForm.ProbeNumHold as NumericUpDown;
+		SettingsForm.FlatNum numericUpDown = settingsForm.ProbeNumHold as SettingsForm.FlatNum;
 		Check(numericUpDown != null, "取到长按阈值数字框");
 		if (numericUpDown != null)
 		{

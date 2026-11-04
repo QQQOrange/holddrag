@@ -310,7 +310,7 @@ internal sealed partial class SettingsForm
 		return v;
 	}
 
-	private static void SelectAction(ComboBox c, string value)
+	private static void SelectAction(FlatCombo c, string value)
 	{
 		for (int i = 0; i < c.Items.Count; i++)
 		{
@@ -326,7 +326,7 @@ internal sealed partial class SettingsForm
 		}
 	}
 
-	private static void SelectId(ComboBox c, string value)
+	private static void SelectId(FlatCombo c, string value)
 	{
 		if (c == null || c.Items.Count == 0)
 		{
@@ -348,7 +348,7 @@ internal sealed partial class SettingsForm
 		c.SelectedIndex = 0;
 	}
 
-	private static string SelectedAction(ComboBox c)
+	private static string SelectedAction(FlatCombo c)
 	{
 		if (!(c.SelectedItem is ActionItem actionItem))
 		{
@@ -357,7 +357,7 @@ internal sealed partial class SettingsForm
 		return actionItem.Value;
 	}
 
-	private static string SelectedId(ComboBox c, string fallback)
+	private static string SelectedId(FlatCombo c, string fallback)
 	{
 		if (c.SelectedItem is IdItem idItem && !string.IsNullOrEmpty(idItem.Value))
 		{

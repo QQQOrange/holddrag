@@ -42,7 +42,6 @@ internal sealed partial class SettingsForm
 		card.Block(_lblKeyHint, null, 22);
 		card.Setting(_cmbTriggerMode, Loc.T("触发模式"), Loc.T("长按：按住才接管、松手即退出；点按：点一下抓住、再点一下放下（此时触发键不再输入字符）"), 200);
 		Card cardHold = NewCard(page, Loc.T("长按判定"), Loc.T("区分「长按触发」和「正常打字」就靠这一段时长"));
-		cardHold.RegisterField(_numHold);
 		cardHold.Toggle(_chkHold, Loc.T("需要长按触发"), Loc.T("关掉后按住触发键立即生效，不再等阈值"));
 		cardHold.Setting(_numHold, 84, UnitLabel(Loc.T("毫秒")), 34, Loc.T("长按阈值"), Loc.T("按住多久才算长按；太短容易误触发，太长会显得迟钝"));
 
@@ -68,9 +67,6 @@ internal sealed partial class SettingsForm
 		// 这三个输入框是加在 card5 上的，必须由 card5 注册：
 		// RegisterField 决定"卡片在自己的坐标系里给输入框补那块圆角底板"，
 		// 注册到别的卡片上会让 card5 的输入框没有底板、同时在 card4 上画出三个幽灵白块。
-		card5.RegisterField(_numFrameThick);
-		card5.RegisterField(_numFrameRadius);
-		card5.RegisterField(_numFrameOpacity);
 		card5.Setting(_cmbFrameStyle, Loc.T("样式"), Loc.T("选一种画法；下面的缩略图也可以直接点"), 200);
 		card5.Block(_galleryStyle, Loc.T("缩略图"));
 		card5.Block(_lblStyleHint, null, 22);
@@ -84,7 +80,6 @@ internal sealed partial class SettingsForm
 		// ---------- 4. 拖动行为 ----------
 		Page page4 = NewPage(Loc.T("拖动行为"), Loc.T("双击手势、全屏窗口与黑名单"));
 		Card card7 = NewCard(page4, Loc.T("拖动与缩放"), Loc.T("触发期间的拖动、缩放细节"));
-		card7.RegisterField(_numCorner);
 		card7.Setting(_numCorner, 72, UnitLabel("%"), 26, Loc.T("缩放角区"), Loc.T("鼠标离角多近才算抓住角；越大越好抓，但容易误触"));
 		card7.Toggle(_chkRestoreMax, Loc.T("允许拖动已最大化的窗口"), Loc.T("会先把窗口还原成普通大小，再开始拖"));
 		Card card8 = NewCard(page4, Loc.T("窗口层级与全屏"), Loc.T("全屏 / 无边框窗口容易被拖成一片黑"));
@@ -103,7 +98,6 @@ internal sealed partial class SettingsForm
 		Card card11 = NewCard(page5, Loc.T("刷新模式"), Loc.T("刷新越快越跟手，但也更吃 CPU"));
 		card11.Setting(_cmbRefreshMode, Loc.T("刷新模式"), Loc.T("「自动」会按当前显示器的刷新率决定"), 200);
 		Card card11b = NewCard(page5, Loc.T("固定值"), Loc.T("只在「固定值」模式下用得上"));
-		card11b.RegisterField(_numRefreshHz);
 		card11b.Setting(_numRefreshHz, 72, UnitLabel("Hz"), 26, Loc.T("刷新频率"), Loc.T("0 = 不限制；非 0 时下限钳到 20"));
 		card11b.Block(_lblRefreshHint, null, 22);
 

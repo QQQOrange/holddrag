@@ -1,4 +1,4 @@
-// HoldDrag · Overlay/FrameColors.cs
+﻿// HoldDrag · Overlay/FrameColors.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -81,97 +81,97 @@ internal static class FrameColors
 		{
 			Id = "Teal",
 			Name = "薄荷青",
-			Color = Color.FromArgb(107, 196, 165)
+			Color = Color.FromArgb(45, 212, 191)
 		},
 		new Entry
 		{
 			Id = "Aqua",
 			Name = "湖水青",
-			Color = Color.FromArgb(111, 200, 188)
+			Color = Color.FromArgb(34, 211, 238)
 		},
 		new Entry
 		{
 			Id = "Sky",
 			Name = "天青",
-			Color = Color.FromArgb(100, 194, 214)
+			Color = Color.FromArgb(56, 189, 248)
 		},
 		new Entry
 		{
 			Id = "Green",
-			Name = "抹茶绿",
-			Color = Color.FromArgb(116, 200, 148)
+			Name = "翡翠绿",
+			Color = Color.FromArgb(52, 211, 153)
 		},
 		new Entry
 		{
 			Id = "Lime",
 			Name = "嫩芽绿",
-			Color = Color.FromArgb(168, 203, 106)
+			Color = Color.FromArgb(163, 230, 53)
 		},
 		new Entry
 		{
 			Id = "Gold",
-			Name = "暖金",
-			Color = Color.FromArgb(214, 193, 106)
+			Name = "琥珀金",
+			Color = Color.FromArgb(251, 191, 36)
 		},
 		new Entry
 		{
 			Id = "Amber",
-			Name = "蜜橙",
-			Color = Color.FromArgb(221, 169, 92)
+			Name = "落日橙",
+			Color = Color.FromArgb(251, 146, 60)
 		},
 		new Entry
 		{
 			Id = "Coral",
 			Name = "珊瑚",
-			Color = Color.FromArgb(232, 147, 118)
+			Color = Color.FromArgb(251, 113, 133)
 		},
 		new Entry
 		{
 			Id = "Red",
-			Name = "暖砖红",
-			Color = Color.FromArgb(222, 133, 133)
+			Name = "朱砂红",
+			Color = Color.FromArgb(248, 113, 113)
 		},
 		new Entry
 		{
 			Id = "Rose",
 			Name = "玫瑰",
-			Color = Color.FromArgb(222, 133, 149)
+			Color = Color.FromArgb(244, 114, 182)
 		},
 		new Entry
 		{
 			Id = "Pink",
-			Name = "藕粉",
-			Color = Color.FromArgb(222, 147, 188)
+			Name = "樱粉",
+			Color = Color.FromArgb(232, 121, 249)
 		},
 		new Entry
 		{
 			Id = "Violet",
-			Name = "藕荷",
-			Color = Color.FromArgb(163, 142, 219)
+			Name = "极光紫",
+			Color = Color.FromArgb(139, 124, 255)
 		},
 		new Entry
 		{
 			Id = "Graphite",
 			Name = "石墨",
-			Color = Color.FromArgb(107, 122, 143)
+			Color = Color.FromArgb(100, 116, 139)
 		},
 		new Entry
 		{
 			Id = "Silver",
 			Name = "银灰",
-			Color = Color.FromArgb(168, 179, 193)
+			Color = Color.FromArgb(148, 163, 184)
 		},
 		new Entry
 		{
 			Id = "Obsidian",
 			Name = "曜石",
-			Color = Color.FromArgb(58, 68, 83)
+			Color = Color.FromArgb(51, 65, 85)
 		},
 		new Entry
 		{
 			Id = "Pearl",
 			Name = "珍珠白",
-			Color = Color.FromArgb(237, 241, 246)
+			Color = Color.FromArgb(248, 250, 252)
 		},
 		new Entry
 		{

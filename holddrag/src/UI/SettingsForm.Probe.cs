@@ -1,4 +1,4 @@
-// HoldDrag · UI/SettingsForm.Probe.cs
+﻿// HoldDrag · UI/SettingsForm.Probe.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -664,7 +664,7 @@ internal sealed partial class SettingsForm
 	internal CheckBox ProbeAutoUpdateCheck => _chkAutoUpdate;
 
 	/// <summary>自检/调试：语言下拉框（用来模拟用户切换语言）。</summary>
-	internal ComboBox ProbeLanguageCombo => _cmbLanguage;
+	internal FlatCombo ProbeLanguageCombo => _cmbLanguage;
 
 	internal Label ProbeUpdateStatusLabel => _lblUpdateStatus;
 
@@ -1558,6 +1558,93 @@ internal sealed partial class SettingsForm
 	/// 目的很具体——译文一变长，就可能溢出胶囊、按钮或折行错位，光看代码看不出来，必须真画一遍。
 	/// 用法：HoldDrag.exe --langshot en
 	/// </summary>
+
+	/// <summary>
+	/// UI 截图（设计迭代用）：只截**客户区**，明暗两套主题各一组。
+	///
+	/// 为什么不用 Form.DrawToBitmap：它会把系统标题栏一起画进来，而本窗口用
+	/// WM_NCCALCSIZE 把标题栏吃掉了 —— 截出来的图顶部会盖一条假的标题栏，
+	/// 看起来像"内容被裁掉"，完全没法拿来做视觉评审。这里改成把四个顶层子控件
+	/// （侧栏 / 标题条 / 内容 / 底栏）分别 DrawToBitmap 再拼回去，得到的就是真实客户区。
+	/// </summary>
+	internal static void DumpUiShots(string outDir)
+	{
+		Directory.CreateDirectory(outDir);
+		string text = Path.Combine(Path.GetTempPath(), "holddrag-uishot-cfg");
+		try
+		{
+			Directory.CreateDirectory(text);
+		}
+		catch
+		{
+		}
+		foreach (bool dark in new bool[2] { false, true })
+		{
+			SettingForceThemeForTest(dark);
+			ConfigStore configStore = new ConfigStore(text);
+			try
+			{
+				configStore.Load();
+			}
+			catch
+			{
+			}
+			configStore.Current.Language = Loc.Zh;
+			Coordinator coord = new Coordinator(configStore);
+			using SettingsForm form = new SettingsForm(configStore, coord);
+			form.StartPosition = FormStartPosition.Manual;
+			form.Location = new Point(20, 20);
+			form.ClientSize = new Size(1100, 760);
+			form.Show();
+			Application.DoEvents();
+			int count = form._pages.Count;
+			for (int i = 0; i < count; i++)
+			{
+				form.SelectPage(i);
+				Application.DoEvents();
+				Thread.Sleep(90);
+				Application.DoEvents();
+				using Bitmap bitmap = CaptureClient(form);
+				bitmap.Save(Path.Combine(outDir, string.Format("page{0}-{1}.png", i, dark ? "dark" : "light")), ImageFormat.Png);
+			}
+		}
+		SettingForceThemeForTest(null);
+	}
+
+	/// <summary>把窗体客户区拼成一张图（不含系统非客户区）。</summary>
+	internal static Bitmap CaptureClient(Form form)
+	{
+		Bitmap bitmap = new Bitmap(Math.Max(1, form.ClientSize.Width), Math.Max(1, form.ClientSize.Height));
+		using (Graphics graphics = Graphics.FromImage(bitmap))
+		{
+			graphics.Clear(Theme.IsDark ? Color.FromArgb(22, 24, 29) : Color.FromArgb(242, 245, 250));
+		}
+		foreach (Control control in form.Controls)
+		{
+			if (control == null || !control.Visible || control.Width <= 0 || control.Height <= 0)
+			{
+				continue;
+			}
+			try
+			{
+				using Bitmap bitmap2 = new Bitmap(control.Width, control.Height);
+				control.DrawToBitmap(bitmap2, new Rectangle(0, 0, control.Width, control.Height));
+				using Graphics graphics2 = Graphics.FromImage(bitmap);
+				graphics2.DrawImageUnscaled(bitmap2, control.Left, control.Top);
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+		}
+		return bitmap;
+	}
+
+	internal static void SettingForceThemeForTest(bool? dark)
+	{
+		Theme.SetForceDark(dark);
+	}
+
 	internal static void DumpLanguageShots(string outDir, string lang)
 	{
 		// 刻意从中文起步，再走"设置里改下拉框"这条真实路径切到目标语言：

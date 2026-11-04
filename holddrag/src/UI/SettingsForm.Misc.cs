@@ -1,4 +1,4 @@
-// HoldDrag · UI/SettingsForm.Misc.cs
+﻿// HoldDrag · UI/SettingsForm.Misc.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -109,7 +109,7 @@ internal sealed partial class SettingsForm
 		}
 	}
 
-	internal static int ProbeWheelSwallowed(ComboBox c)
+	internal static int ProbeWheelSwallowed(FlatCombo c)
 	{
 		if (c is FlatCombo flatCombo)
 		{
@@ -118,7 +118,7 @@ internal sealed partial class SettingsForm
 		return 0;
 	}
 
-	internal static int ProbeWheelForwarded(ComboBox c)
+	internal static int ProbeWheelForwarded(FlatCombo c)
 	{
 		if (c is FlatCombo flatCombo)
 		{
