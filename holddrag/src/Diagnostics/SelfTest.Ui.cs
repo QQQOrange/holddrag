@@ -539,6 +539,73 @@ internal static partial class SelfTest
 		Check(clipped.Length == 0, "★ 高 DPI 下所有文字都装得进自己的控件（字号被放大两次回归）", (clipped.Length == 0) ? (measured + " 个控件文字全部完整显示") : ("被裁切: " + clipped));
 		settingsForm.Close();
 	}
+
+	/// <summary>
+	/// 换颜色必须真的生效（v1.11.2 回归锁）。
+	///
+	/// 自绘下拉框最初是在 MouseDown 里弹层的：弹层刚 Show 出来就被自己的 Deactivate 关掉，
+	/// 用户看到的就是「点了没反应、颜色换不了」。这个用例锁两条真实路径：
+	/// 色板点一下、下拉框弹层里选一项。
+	/// </summary>
+	private static void TestFrameColorSwitch()
+	{
+		using DragFixture dragFixture = new DragFixture(delegate(AppConfig c)
+		{
+			c.FrameStyleId = "Aurora";
+			c.FrameColorId = "Teal";
+			c.ShowActivationFrame = true;
+		});
+		using SettingsForm settingsForm = new SettingsForm(dragFixture.Store, dragFixture.Coord);
+		settingsForm.CreateControl();
+		settingsForm.Show();
+		Application.DoEvents();
+		SettingsForm.RelayoutForTest(settingsForm);
+		Application.DoEvents();
+		settingsForm.ProbeSelectPage(2);
+		Application.DoEvents();
+		string before = settingsForm.ProbeFrameSelection().ColorId;
+		Check(!string.IsNullOrEmpty(before), "初始外框颜色非空", "值=" + before);
+		// 找一个和当前不同的色块
+		int pick = -1;
+		string pickId = null;
+		for (int i = 0; i < 16; i++)
+		{
+			string id = settingsForm.ProbeSwatchId(i);
+			if (!string.IsNullOrEmpty(id) && id != before)
+			{
+				pick = i;
+				pickId = id;
+				break;
+			}
+		}
+		Check(pick >= 0, "色板里有可切换的颜色", "当前=" + before);
+		if (pick >= 0)
+		{
+			string now = settingsForm.ProbePickSwatch(pick);
+			Application.DoEvents();
+			Check(now == pickId, "点色板后选中颜色变了", "期望=" + pickId + " 实际=" + now);
+			SettingsForm.FrameSelection sel = settingsForm.ProbeFrameSelection();
+			Check(sel.ColorId == pickId, "★ 点色板后外框颜色配置跟着变（颜色换不了的回归）", "配置=" + sel.ColorId + " 期望=" + pickId);
+			Check(sel.PreviewColorId == pickId, "★ 预览框同步到新颜色", "预览=" + sel.PreviewColorId);
+		}
+		// 下拉框：弹层要能打开、能选中
+		settingsForm.ProbeOpenColorPopup();
+		Application.DoEvents();
+		Rectangle bounds = settingsForm.ProbeColorPopupBounds();
+		Check(bounds.Width > 20 && bounds.Height > 20, "★ 外框颜色下拉框的弹层真的打开了（点了没反应的回归）", "bounds=" + bounds);
+		bool chosen = settingsForm.ProbeChooseColorInPopup(1);
+		Application.DoEvents();
+		Check(chosen, "弹层里能选中一项");
+		if (chosen)
+		{
+			SettingsForm.FrameSelection sel2 = settingsForm.ProbeFrameSelection();
+			Check(!string.IsNullOrEmpty(sel2.ColorId), "弹层选完后颜色配置有效", "值=" + sel2.ColorId);
+			Check(sel2.PreviewColorId == sel2.ColorId, "弹层选完后预览同步", "预览=" + sel2.PreviewColorId + " 配置=" + sel2.ColorId);
+		}
+		settingsForm.ProbeCloseColorPopup();
+		Application.DoEvents();
+	}
+
 	private static void TestKeyCombosHaveSelection()
 	{
 		using DragFixture dragFixture = new DragFixture((AppConfig c) =>

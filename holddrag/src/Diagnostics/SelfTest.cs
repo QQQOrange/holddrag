@@ -306,6 +306,7 @@ internal static partial class SelfTest
 		Safe("T101 点按切换模式：点一下抓住、再点一下放下，出厂默认仍是长按", TestToggleMode);
 		Safe("T102 合成按键欠账：注入过的「只按下」必须在抬起丢失时被补发，绝不留下系统级卡键", TestInjectedDownLedger);
 		Safe("T103 抢占链头的就地重装必须保持静默（否则激活瞬间被复位，核心拖动失效）", TestChainPriorityReinstallIsSilent);
+		Safe("T104 外框换颜色：点色板 / 下拉框弹层都必须真的换掉并同步预览", TestFrameColorSwitch);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();

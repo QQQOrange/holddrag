@@ -220,9 +220,20 @@ internal sealed partial class SettingsForm
 			{
 				_pressed = true;
 				Invalidate();
-				TogglePopup();
 			}
 			base.OnMouseDown(e);
+		}
+
+		protected override void OnMouseUp(MouseEventArgs e)
+		{
+			// 在 MouseUp 打开：MouseDown 里弹窗会被系统立刻判给新窗口并被自己的
+			// Deactivate 关掉，表现就是「点下拉框没反应、颜色换不了」。
+			if (e.Button == MouseButtons.Left && Enabled && _pressed)
+			{
+				_pressed = false;
+				TogglePopup();
+			}
+			base.OnMouseUp(e);
 		}
 
 		protected override void OnKeyDown(KeyEventArgs e)
@@ -354,8 +365,28 @@ internal sealed partial class SettingsForm
 			SelectedIndex = index;
 		}
 
+		/// <summary>自测用：在当前弹层里选中第 index 项并确认（等价于鼠标点一下）。</summary>
+		internal bool ProbeChooseInPopup(int index)
+		{
+			if (_popup == null || _popup.IsDisposed)
+			{
+				return false;
+			}
+			_popup.SelectIndexForTest(index);
+			_popup.Accept();
+			return true;
+		}
+
 		internal Font ItemFont => _font;
 
+
+		/// <summary>
+		/// 双缓冲 + AllPaintingInWmPaint 之后背景由 OnPaint 自己画；
+		/// 再把系统擦背景这一步挡掉，彻底消除「先擦成底色再画内容」的那一帧闪烁。
+		/// </summary>
+		protected override void OnPaintBackground(PaintEventArgs e)
+		{
+		}
 		protected override void OnPaint(PaintEventArgs e)
 		{
 			Graphics graphics = e.Graphics;
@@ -422,6 +453,8 @@ internal sealed partial class SettingsForm
 		private readonly PopupList _list;
 		private readonly int _rowH;
 
+		private long _openedAt;
+
 		public FlatComboPopup(FlatCombo owner)
 		{
 			_owner = owner;
@@ -467,18 +500,39 @@ internal sealed partial class SettingsForm
 			}
 			Location = point;
 			Show();
-			_list.Focus();
+			_openedAt = Environment.TickCount64;
+			try
+			{
+				BringToFront();
+				Activate();
+				_list.Focus();
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
 		}
 
 		protected override void OnDeactivate(EventArgs e)
 		{
 			base.OnDeactivate(e);
+			// 刚 Show 出来的那一瞬间，Windows 会先给一次「失活」
+			// （焦点从设置窗转过来的过程），此时不能关，否则弹窗一闪而过。
+			if (Environment.TickCount64 - _openedAt < 400)
+			{
+				return;
+			}
 			Close();
 		}
 
 		internal void MoveSelection(int delta)
 		{
 			_list.MoveSelection(delta);
+		}
+
+		internal void SelectIndexForTest(int index)
+		{
+			_list.SetIndexForTest(index);
 		}
 
 		internal void Accept()
@@ -512,6 +566,12 @@ internal sealed partial class SettingsForm
 			}
 
 			public int SelectedIndex => _index;
+
+			internal void SetIndexForTest(int index)
+			{
+				_index = index;
+				Invalidate();
+			}
 
 			public void SetItems(IList<object> items, int index, Action<Graphics, Rectangle, object> painter, Font font)
 			{
@@ -784,6 +844,14 @@ internal sealed partial class SettingsForm
 			base.OnKeyDown(e);
 		}
 
+
+		/// <summary>
+		/// 双缓冲 + AllPaintingInWmPaint 之后背景由 OnPaint 自己画；
+		/// 再把系统擦背景这一步挡掉，彻底消除「先擦成底色再画内容」的那一帧闪烁。
+		/// </summary>
+		protected override void OnPaintBackground(PaintEventArgs e)
+		{
+		}
 		protected override void OnPaint(PaintEventArgs e)
 		{
 			Graphics graphics = e.Graphics;

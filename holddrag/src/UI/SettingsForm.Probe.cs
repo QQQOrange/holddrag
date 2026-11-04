@@ -34,6 +34,75 @@ internal sealed partial class SettingsForm
 {
 	// ======================= 探针面（自测 / 生产预览） =======================
 
+	/// <summary>自测用：直接点第 index 个色块，返回新选中的颜色 id。</summary>
+	internal string ProbePickSwatch(int index)
+	{
+		_gridColor.ProbeClick(index);
+		Application.DoEvents();
+		return _gridColor.SelectedId;
+	}
+
+	/// <summary>自测用：色板第 index 格的颜色 id。</summary>
+	internal string ProbeSwatchId(int index)
+	{
+		return _gridColor.ProbeIdAt(index);
+	}
+
+	/// <summary>自测用：切到指定页。</summary>
+	internal void ProbeSelectPage(int index)
+	{
+		SelectPage(index);
+	}
+
+	/// <summary>自测用：在当前颜色弹层里选第 index 项。</summary>
+	internal bool ProbeChooseColorInPopup(int index)
+	{
+		return _cmbFrameColor.ProbeChooseInPopup(index);
+	}
+
+	/// <summary>自测用：打开外框颜色下拉框（截图 / 交互验证）。</summary>
+	internal void ProbeOpenColorPopup()
+	{
+		try
+		{
+			_cmbFrameColor.ShowPopup();
+			Application.DoEvents();
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	internal void ProbeCloseColorPopup()
+	{
+		try
+		{
+			_cmbFrameColor.ClosePopup();
+		}
+		catch
+		{
+		}
+	}
+
+	internal Rectangle ProbeColorPopupBounds()
+	{
+		try
+		{
+			foreach (Form form in Application.OpenForms)
+			{
+				if (form is FlatComboPopup)
+				{
+					return form.Bounds;
+				}
+			}
+		}
+		catch
+		{
+		}
+		return Rectangle.Empty;
+	}
+
 	internal FrameSelection ProbeFrameSelection()
 	{
 		return new FrameSelection
@@ -1606,6 +1675,32 @@ internal sealed partial class SettingsForm
 				Application.DoEvents();
 				using Bitmap bitmap = CaptureClient(form);
 				bitmap.Save(Path.Combine(outDir, string.Format("page{0}-{1}.png", i, dark ? "dark" : "light")), ImageFormat.Png);
+			}
+			// 下拉框弹层是独立窗口，DrawToBitmap 抓不到，只能屏幕拷贝
+			try
+			{
+				form.SelectPage(2);
+				Application.DoEvents();
+				Thread.Sleep(120);
+				form.ProbeOpenColorPopup();
+				Thread.Sleep(260);
+				Application.DoEvents();
+				Rectangle bounds = form.ProbeColorPopupBounds();
+				if (bounds.Width > 20 && bounds.Height > 20)
+				{
+					using Bitmap bitmap2 = new Bitmap(bounds.Width, bounds.Height);
+					using (Graphics graphics = Graphics.FromImage(bitmap2))
+					{
+						graphics.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+					}
+					bitmap2.Save(Path.Combine(outDir, "popup-color-" + (dark ? "dark" : "light") + ".png"), ImageFormat.Png);
+				}
+				form.ProbeCloseColorPopup();
+				Thread.Sleep(120);
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
 			}
 		}
 		SettingForceThemeForTest(null);

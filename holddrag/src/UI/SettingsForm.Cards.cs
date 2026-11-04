@@ -576,6 +576,14 @@ internal sealed partial class SettingsForm
 
 		// ---------- 绘制 ----------
 
+
+		/// <summary>
+		/// 双缓冲 + AllPaintingInWmPaint 之后背景由 OnPaint 自己画；
+		/// 再把系统擦背景这一步挡掉，彻底消除「先擦成底色再画内容」的那一帧闪烁。
+		/// </summary>
+		protected override void OnPaintBackground(PaintEventArgs e)
+		{
+		}
 		protected override void OnPaint(PaintEventArgs e)
 		{
 			Graphics graphics = e.Graphics;

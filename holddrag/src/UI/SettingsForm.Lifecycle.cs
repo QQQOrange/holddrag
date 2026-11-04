@@ -85,6 +85,18 @@ internal sealed partial class SettingsForm
 		}
 	}
 
+	protected override CreateParams CreateParams
+	{
+		get
+		{
+			CreateParams createParams = base.CreateParams;
+			// WS_EX_COMPOSITED：整窗自底向上合成，父/子控件不会再「先擦后画」出现残影。
+			// 自绘控件全部双缓冲之后仍有个别闪烁（滚动容器里的悬停），这一层是最后一道保险。
+			createParams.ExStyle |= 0x02000000;
+			return createParams;
+		}
+	}
+
 	protected override void WndProc(ref Message m)
 	{
 		if (m.Msg == 131)

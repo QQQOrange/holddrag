@@ -53,11 +53,19 @@ internal sealed partial class SettingsForm
 
 		public SwatchGrid()
 		{
-		// 自绘控件必须自己开双缓冲：不然每次悬停 Invalidate 都会先擦背景再重画，
-		// 肉眼看到的就是「鼠标移上去整块闪一下」。
-		SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
-		DoubleBuffered = true;
+			// 自绘控件必须自己开双缓冲：不然每次悬停 Invalidate 都会先擦背景再重画，
+			// 肉眼看到的就是「鼠标移上去整块闪一下」。
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
+			DoubleBuffered = true;
 			BackColor = Tokens.Surface;
+		}
+
+		/// <summary>
+		/// 双缓冲 + AllPaintingInWmPaint 之后背景由 OnPaint 自己画；
+		/// 再把系统擦背景这一步挡掉，彻底消除「先擦成底色再画内容」的那一帧闪烁。
+		/// </summary>
+		protected override void OnPaintBackground(PaintEventArgs e)
+		{
 		}
 		public sealed class Entry
 		{
@@ -111,6 +119,23 @@ internal sealed partial class SettingsForm
 		}
 
 		public int CellCount => _items.Count;
+
+		/// <summary>自测用：模拟点第 index 个色块（走和鼠标一样的 Picked 路径）。</summary>
+		internal void ProbeClick(int index)
+		{
+			if (index < 0 || index >= _items.Count)
+			{
+				return;
+			}
+			_sel = index;
+			Invalidate();
+			Picked?.Invoke(this, EventArgs.Empty);
+		}
+
+		internal string ProbeIdAt(int index)
+		{
+			return (index >= 0 && index < _items.Count) ? _items[index].Id : null;
+		}
 
 		public Rectangle SelectedCellRect
 		{
@@ -245,11 +270,19 @@ internal sealed partial class SettingsForm
 
 		public StyleGallery()
 		{
-		// 自绘控件必须自己开双缓冲：不然每次悬停 Invalidate 都会先擦背景再重画，
-		// 肉眼看到的就是「鼠标移上去整块闪一下」。
-		SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
-		DoubleBuffered = true;
+			// 自绘控件必须自己开双缓冲：不然每次悬停 Invalidate 都会先擦背景再重画，
+			// 肉眼看到的就是「鼠标移上去整块闪一下」。
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
+			DoubleBuffered = true;
 			BackColor = Tokens.Surface;
+		}
+
+		/// <summary>
+		/// 双缓冲 + AllPaintingInWmPaint 之后背景由 OnPaint 自己画；
+		/// 再把系统擦背景这一步挡掉，彻底消除「先擦成底色再画内容」的那一帧闪烁。
+		/// </summary>
+		protected override void OnPaintBackground(PaintEventArgs e)
+		{
 		}
 		private List<string> _items = new List<string>();
 		private int _sel;
@@ -697,11 +730,19 @@ internal sealed partial class SettingsForm
 
 		public HelpPanel()
 		{
-		// 自绘控件必须自己开双缓冲：不然每次悬停 Invalidate 都会先擦背景再重画，
-		// 肉眼看到的就是「鼠标移上去整块闪一下」。
-		SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
-		DoubleBuffered = true;
+			// 自绘控件必须自己开双缓冲：不然每次悬停 Invalidate 都会先擦背景再重画，
+			// 肉眼看到的就是「鼠标移上去整块闪一下」。
+			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
+			DoubleBuffered = true;
 			BackColor = Tokens.Surface;
+		}
+
+		/// <summary>
+		/// 双缓冲 + AllPaintingInWmPaint 之后背景由 OnPaint 自己画；
+		/// 再把系统擦背景这一步挡掉，彻底消除「先擦成底色再画内容」的那一帧闪烁。
+		/// </summary>
+		protected override void OnPaintBackground(PaintEventArgs e)
+		{
 		}
 		internal sealed class Entry
 		{
