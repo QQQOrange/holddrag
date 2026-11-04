@@ -1,4 +1,4 @@
-// HoldDrag · Diagnostics/SelfTest.cs
+﻿// HoldDrag · Diagnostics/SelfTest.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -195,6 +195,7 @@ internal static partial class SelfTest
 		catch
 		{
 		}
+		_only = Environment.GetEnvironmentVariable("HOLDDRAG_SELFTEST_ONLY");
 		StartWatchdog(dir);
 		Line("==== 长按拖窗 自检 ====");
 		Line("时间：" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -303,6 +304,7 @@ internal static partial class SelfTest
 		Safe("T99 保存失败不再静默：Save/Apply 返回 false 并带回错误信息（设置页据此红字早退）", TestConfigSaveFailureIsVisible);
 		Safe("T100 GitHub 令牌：整理/鉴权头/失效与限额判定/配置往返/无令牌只提示不下载", TestGitHubTokenHandling);
 		Safe("T101 点按切换模式：点一下抓住、再点一下放下，出厂默认仍是长按", TestToggleMode);
+		Safe("T102 合成按键欠账：注入过的「只按下」必须在抬起丢失时被补发，绝不留下系统级卡键", TestInjectedDownLedger);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();
@@ -721,16 +723,53 @@ internal static partial class SelfTest
 		}
 	}
 
+
+	/// <summary>
+	/// 带超时的 SendInput。
+	///
+	/// 为什么需要：SendInput 要等整条低级钩子链返回才回来。机器上只要有一个第三方钩子程序卡住
+	/// （实测：某个鼠标增强工具无响应），注入就永远不返回，自检会以「整进程卡死」收场 ——
+	/// 用户看到的是「自检卡在 T43」，实际是环境问题。这里改成后台线程注入 + 超时，
+	/// 卡住就放弃并如实报告，不再把整个自检拖死。
+	/// </summary>
+	private static bool SendInputWithTimeout(Native.INPUT[] inputs, int timeoutMs)
+	{
+		bool done = false;
+		int cbSize = Marshal.SizeOf(typeof(Native.INPUT));
+		ThreadPool.QueueUserWorkItem(delegate
+		{
+			try
+			{
+				Native.SendInput((uint)inputs.Length, inputs, cbSize);
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+			finally
+			{
+				Volatile.Write(ref done, true);
+			}
+		});
+		long num = Environment.TickCount64 + timeoutMs;
+		while (!Volatile.Read(ref done) && Environment.TickCount64 < num)
+		{
+			Application.DoEvents();
+			Thread.Sleep(10);
+		}
+		return Volatile.Read(ref done);
+	}
+
 	private static bool InjectAndWaitDrag(Coordinator coord, uint downFlag, uint upFlag, string label, int sessionsBefore)
 	{
 		try
 		{
 			int cbSize = Marshal.SizeOf(typeof(Native.INPUT));
 			Native.INPUT[] pInputs = new Native.INPUT[1] { MakeMouseInput(downFlag) };
-			uint num = Native.SendInput(1u, pInputs, cbSize);
-			if (num != 1)
+			if (!SendInputWithTimeout(pInputs, 2000))
 			{
-				Log.Trace("注入 " + label + "按下 只成功 " + num + "/1");
+				Line("    （跳过：注入" + label + "按下 2 秒都没返回 —— 机器上有第三方钩子卡住了，这是环境问题）");
+				return false;
 			}
 			for (int i = 0; i < 30; i++)
 			{
@@ -744,7 +783,7 @@ internal static partial class SelfTest
 			Application.DoEvents();
 			bool result = coord.Drag.SessionCount > sessionsBefore;
 			Native.INPUT[] pInputs2 = new Native.INPUT[1] { MakeMouseInput(upFlag) };
-			Native.SendInput(1u, pInputs2, cbSize);
+			SendInputWithTimeout(pInputs2, 2000);
 			for (int j = 0; j < 5; j++)
 			{
 				Application.DoEvents();
@@ -1091,10 +1130,11 @@ internal static partial class SelfTest
 		{
 			Thread thread = new Thread(() =>
 			{
-				Thread.Sleep(150000);
+				// 240 秒：拆分后的用例变多，机器忙时 150 秒会把「慢」误报成「卡住」
+				Thread.Sleep(240000);
 				try
 				{
-					Buf.Append("\r\n\r\n!! 自检总超时（150 秒），报告到此为止。");
+					Buf.Append("\r\n\r\n!! 自检总超时（240 秒），报告到此为止。");
 					Buf.Append("\r\n   上面最后一组日志就是卡住的位置。\r\n");
 					File.WriteAllText(Path.Combine(_reportDir, "selftest.txt"), Buf.ToString(), Encoding.UTF8);
 				}
@@ -1112,8 +1152,19 @@ internal static partial class SelfTest
 		}
 	}
 
+	/// <summary>
+	/// 只跑名字里含这个片段的用例（环境变量 HOLDDRAG_SELFTEST_ONLY）。
+	/// 用途：本机环境有问题（比如第三方钩子卡住导致注入类用例必失败）时，
+	/// 单独复跑某个用例定位，不必等整套跑完。
+	/// </summary>
+	private static string _only;
+
 	private static void Safe(string name, Action test)
 	{
+		if (!string.IsNullOrEmpty(_only) && name.IndexOf(_only, StringComparison.OrdinalIgnoreCase) < 0)
+		{
+			return;
+		}
 		_watch.Restart();
 		Log.Info("[自检] == " + name);
 		Line(name);

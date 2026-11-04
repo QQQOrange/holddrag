@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Runtime.InteropServices;
 
 // 启动器是用户唯一直接接触的那个 exe（更新替换的也是它），
@@ -10,7 +10,7 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyProduct("长按拖窗")]
 [assembly: AssemblyCopyright("GPL-3.0 · 派生自 AltDrag")]
 [assembly: AssemblyConfiguration("Release")]
-[assembly: AssemblyVersion("1.10.0.0")]
-[assembly: AssemblyFileVersion("1.10.0.0")]
-[assembly: AssemblyInformationalVersion("1.10.0")]
+[assembly: AssemblyVersion("1.10.1.0")]
+[assembly: AssemblyFileVersion("1.10.1.0")]
+[assembly: AssemblyInformationalVersion("1.10.1")]
 [assembly: ComVisible(false)]

@@ -1,4 +1,4 @@
-// HoldDrag · Overlay/LayeredBitmapOverlay.cs
+﻿// HoldDrag · Overlay/LayeredBitmapOverlay.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -485,10 +485,7 @@ internal abstract class LayeredBitmapOverlay : OverlayWindow
 	{
 		lock (_bufGate)
 		{
-			while (_pushInFlight > 0)
-			{
-				Monitor.Wait(_bufGate);
-			}
+			WaitForPendingPushesLocked("销毁浮层");
 			ReleaseBitmap();
 			if (_memDc != IntPtr.Zero)
 			{
@@ -503,6 +500,39 @@ internal abstract class LayeredBitmapOverlay : OverlayWindow
 	/// 下一次显示会经 Rebuild 重建缓冲；DC 不释放可以避免"频繁拖动时反复建 DC"的开销。
 	/// 必须先等在途的 Push 完成再放（UpdateLayeredWindow 还拿着那块内存）。
 	/// </summary>
+	/// <summary>
+	/// 等在途的 UpdateLayeredWindow 落地（调用方必须已持有 _bufGate）。
+	///
+	/// 为什么要有上限：ULW 会跟合成器/DWM 同步，远程桌面切换、驱动卡顿、桌面被占用时可能长时间不返回。
+	/// 旧实现是无条件的 Monitor.Wait —— 退出程序时界面线程、空闲回收时线程池线程都会**永久卡在这里**，
+	/// 用户看到的就是「点退出没反应」。宁可放弃等待、让那一帧的位图泄漏一次，也不能把进程锁死。
+	/// </summary>
+	private void WaitForPendingPushesLocked(string what)
+	{
+		if (_pushInFlight <= 0)
+		{
+			return;
+		}
+		long num = Environment.TickCount64 + 4000;
+		while (_pushInFlight > 0)
+		{
+			long num2 = num - Environment.TickCount64;
+			if (num2 <= 0)
+			{
+				Log.Error("等待在途 UpdateLayeredWindow 超过 4 秒（" + what + "），放弃等待，避免把线程锁死");
+				return;
+			}
+			try
+			{
+				Monitor.Wait(_bufGate, (int)Math.Min(num2, 1000L));
+			}
+			catch
+			{
+				return;
+			}
+		}
+	}
+
 	internal void ReleaseBuffersForIdle()
 	{
 		try
@@ -515,17 +545,7 @@ internal abstract class LayeredBitmapOverlay : OverlayWindow
 		}
 		lock (_bufGate)
 		{
-			while (_pushInFlight > 0)
-			{
-				try
-				{
-					Monitor.Wait(_bufGate);
-				}
-				catch
-				{
-					break;
-				}
-			}
+			WaitForPendingPushesLocked("空闲释放");
 			ReleaseBitmap();
 		}
 	}

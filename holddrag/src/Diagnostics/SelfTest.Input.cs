@@ -1,4 +1,4 @@
-// HoldDrag · Diagnostics/SelfTest.Input.cs
+﻿// HoldDrag · Diagnostics/SelfTest.Input.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -121,6 +121,70 @@ internal static partial class SelfTest
 		// 默认配置必须仍是长按模式，否则老用户会被悄悄改变行为
 		Check(new AppConfig().TriggerMode == "Hold", "出厂默认仍是长按模式");
 	}
+
+	/// <summary>
+	/// 合成按下的「欠账」机制（v1.10.1 修的核心 bug）。
+	///
+	/// 触发键短按时，程序会把阈值期间被吞掉的左键按下**只补一个 down** 还给下层，
+	/// 依赖「用户真实的 up 稍后送达」来配对。这个 up 一旦丢失
+	/// （钩子被看门狗重装、暂停、UAC 安全桌面、程序退出），Windows 里就会永久留着一个
+	/// 「按着」的左键：用户明明没按，所有程序都在拖选 —— 就是「左键一直长按没停过」的报障。
+	/// 本用例锁住两件事：注入必须记账；抬起丢失时必须归还。
+	/// </summary>
+	private static void TestInjectedDownLedger()
+	{
+		string text = Path.Combine(Path.GetTempPath(), "holddrag-selftest-inject");
+		try
+		{
+			Directory.CreateDirectory(text);
+		}
+		catch (Exception)
+		{
+		}
+		// 只跑账本，不真的往系统注入鼠标（否则自检会在用户桌面上点出真实点击）
+		Coordinator.SuppressSyntheticMouseForTest = true;
+		try
+		{
+			ConfigStore configStore = new ConfigStore(text);
+			configStore.Load();
+			configStore.Current.ActionLeft = "Move";
+			configStore.Current.TriggerKeyId = "K:0x0D";
+			using (Coordinator coordinator = new Coordinator(configStore))
+			{
+				Native.MSLLHOOKSTRUCT ms = Ms(new Native.POINT(400, 300));
+				coordinator.Trigger.SimulateKeyDown();
+				Check(coordinator.OnMouse(513, ref ms), "阈值期间的左键按下被吞掉（从未投递给任何窗口）");
+				Check(coordinator.BufferedDownForTest(0), "按下进了缓冲账");
+				coordinator.Trigger.SimulateKeyUp(null);
+				Check(coordinator.InjectedDownMaskForTest == 1, "短按补发只注入 down → 必须记账", "掩码=" + coordinator.InjectedDownMaskForTest);
+				Native.MSLLHOOKSTRUCT ms2 = Ms(new Native.POINT(400, 300));
+				coordinator.OnMouse(514, ref ms2);
+				Check(coordinator.InjectedDownMaskForTest == 0, "真实抬起到达 → 销账，之后不会再补发第二次 up");
+			}
+			using (Coordinator coordinator2 = new Coordinator(configStore))
+			{
+				Native.MSLLHOOKSTRUCT ms3 = Ms(new Native.POINT(400, 300));
+				coordinator2.Trigger.SimulateKeyDown();
+				coordinator2.OnMouse(513, ref ms3);
+				coordinator2.Trigger.SimulateKeyUp(null);
+				Check(coordinator2.InjectedDownMaskForTest == 1, "再次注入同样记账", "掩码=" + coordinator2.InjectedDownMaskForTest);
+				coordinator2.OnHooksReinstalled();
+				Check(coordinator2.InjectedDownMaskForTest == 0, "钩子重装（缝隙里的抬起必丢）→ 欠账必须立刻归还，系统不许留卡键");
+			}
+		}
+		finally
+		{
+			Coordinator.SuppressSyntheticMouseForTest = false;
+			try
+			{
+				Directory.Delete(text, true);
+			}
+			catch (Exception)
+			{
+			}
+		}
+	}
+
 	private static void TestHooks()
 	{
 		using HookEngine hookEngine = new HookEngine(new NullSink());

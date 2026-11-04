@@ -1,4 +1,4 @@
-// HoldDrag · Tray/TrayContext.cs
+﻿// HoldDrag · Tray/TrayContext.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -118,6 +118,15 @@ internal sealed class TrayContext : ApplicationContext
 		_coord.PrecreateOverlays();
 		_hooks = new HookEngine(_coord);
 		bool flag2 = _hooks.Install();
+		// 钩子被看门狗真正重装时：重装缝隙里的按键/鼠标事件都丢了，
+		// 必须把鼠标三本账、触发状态和欠着的合成抬起一起收拾干净。
+		_hooks.HooksReinstalled += delegate
+		{
+			// 只清「合成按下」的欠账并补发抬起；触发状态复位保持 v1.10.0 原样，
+			// 免得把「激活瞬间抢占链头」这种计划内重装也当成事件丢失。
+			_coord.OnHooksReinstalled();
+			_coord.Trigger.Reset("钩子重装");
+		};
 		// 钩子重装期间会漏掉按键/鼠标事件：不把触发状态复位，用户会遇到"触发键按了没反应"
 		// 或者"没按键却一直在拖窗口"（看门狗救援、抢占链头都会走到这里）。
 		_hooks.HooksReinstalled += delegate

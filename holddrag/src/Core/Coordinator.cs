@@ -1,4 +1,4 @@
-// HoldDrag · Core/Coordinator.cs
+﻿// HoldDrag · Core/Coordinator.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -176,6 +176,207 @@ internal sealed class Coordinator : IInputSink, IDisposable
 		_drag.HideHoverFrame();
 	}
 
+
+	// ======================= 合成按下的「欠账」机制 =======================
+
+	/// <summary>
+	/// 我们注入过、「只有按下还没有抬起」的鼠标键位掩码（bit0 左 / bit1 右 / bit2 中）。
+	///
+	/// 触发键短按时，程序会把阈值期间被吞掉的鼠标按下**只补一个 down** 还给下层，
+	/// 依赖「用户真实的 up 稍后送达」来配对。这个假设在下面这些情况下是假的：
+	/// 钩子被看门狗重装、暂停、改配置、UAC 安全桌面、程序退出 —— 期间的输入全部丢失。
+	/// 一旦配对丢了，Windows 里就永远留着一个「按着」的键：所有程序都以为用户还按着左键，
+	/// 用户却根本没按（v1.10.0 之后的报障：鼠标左键一直长按没停过）。
+	/// 规则：注入 down 时记账；真实 up 到达时销账；任何「配对不可能再到达」的时刻补发 up。
+	/// </summary>
+	private int _injectedDownMask;
+
+	/// <summary>第一次注入（还欠着 up）的时刻，用于兜底超时。</summary>
+	private long _injectedDownAt;
+
+	private readonly object _ledgerGate = new object();
+
+	/// <summary>自检用：只跑账本逻辑，不真的往系统注入鼠标事件（避免在用户桌面上点出真实点击）。</summary>
+	internal static bool SuppressSyntheticMouseForTest;
+
+	/// <summary>自检用：当前还欠着抬起的合成按下掩码。</summary>
+	internal int InjectedDownMaskForTest
+	{
+		get
+		{
+			lock (_ledgerGate)
+			{
+				return _injectedDownMask;
+			}
+		}
+	}
+
+	private void MarkInjectedDown(int idx)
+	{
+		if (idx < 0 || idx > 2)
+		{
+			return;
+		}
+		lock (_ledgerGate)
+		{
+			if (_injectedDownMask == 0)
+			{
+				_injectedDownAt = Environment.TickCount64;
+			}
+			_injectedDownMask |= 1 << idx;
+		}
+	}
+
+	/// <summary>真实的抬起到了：注入出去的那次按下已经配对，销账（不能再补发第二次 up）。</summary>
+	private void PairInjectedDown(int idx)
+	{
+		if (idx < 0 || idx > 2)
+		{
+			return;
+		}
+		lock (_ledgerGate)
+		{
+			_injectedDownMask &= ~(1 << idx);
+			if (_injectedDownMask == 0)
+			{
+				_injectedDownAt = 0L;
+			}
+		}
+	}
+
+	/// <summary>
+	/// 把还欠着的抬起补发出去（系统层面真正松开），并销账。
+	/// 只在「配对不可能再到达」时调用：钩子重装、暂停、改配置、退出。
+	/// </summary>
+	private void ReleaseInjectedDowns(string reason)
+	{
+		int num;
+		lock (_ledgerGate)
+		{
+			num = _injectedDownMask;
+			_injectedDownMask = 0;
+			_injectedDownAt = 0L;
+		}
+		if (num == 0)
+		{
+			return;
+		}
+		for (int i = 0; i <= 2; i++)
+		{
+			if ((num & (1 << i)) != 0)
+			{
+				SendMouseButton(i, down: false);
+			}
+		}
+		Log.Info("补发残留的合成按键抬起（" + reason + "）：掩码=" + num + " —— 不补的话系统会一直以为这个键按着");
+	}
+
+	/// <summary>
+	/// 兜底巡检（每 500ms）：只处理「我们注入过 down、却再也不会等到配对 up」的情形。
+	/// 系统层面已经不是按下状态 → 只销账；还按着而我们早就不该按着 → 超过 8 秒补发 up。
+	/// </summary>
+	private void SweepInjectedDowns()
+	{
+		int num;
+		long num2;
+		lock (_ledgerGate)
+		{
+			num = _injectedDownMask;
+			num2 = _injectedDownAt;
+		}
+		if (num == 0)
+		{
+			return;
+		}
+		if (_drag.IsDragging || _trigger.Held || _trigger.Active)
+		{
+			return;
+		}
+		bool flag = false;
+		for (int i = 0; i <= 2; i++)
+		{
+			if ((num & (1 << i)) != 0 && IsButtonPhysicallyDown(i))
+			{
+				flag = true;
+			}
+		}
+		if (!flag)
+		{
+			lock (_ledgerGate)
+			{
+				_injectedDownMask = 0;
+				_injectedDownAt = 0L;
+			}
+			return;
+		}
+		if (num2 != 0L && Environment.TickCount64 - num2 > 8000)
+		{
+			ReleaseInjectedDowns("配对的抬起 8 秒都没到达");
+		}
+	}
+
+	/// <summary>注入单个鼠标键的按下/抬起（带本程序标记，钩子会忽略自己的合成事件）。</summary>
+	private static void SendMouseButton(int idx, bool down)
+	{
+		try
+		{
+			uint num = idx switch
+			{
+				1 => (down ? 8u : 16u), 
+				0 => (down ? 2u : 4u), 
+				_ => (down ? 32u : 64u), 
+			};
+			if (SuppressSyntheticMouseForTest)
+			{
+				return;
+			}
+			Native.INPUT[] array = new Native.INPUT[1];
+			array[0].type = 0u;
+			array[0].u.mi.dwFlags = num;
+			array[0].u.mi.dwExtraInfo = HookEngine.MagicExtraInfo;
+			Native.SendInput(1u, array, Marshal.SizeOf(typeof(Native.INPUT)));
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	/// <summary>清空鼠标三本账（放行 / 缓冲 / 阈值期按住）。</summary>
+	private void ForgetButtonLedger(string reason)
+	{
+		for (int i = 0; i <= 2; i++)
+		{
+			_lastDown[i] = 0L;
+			_lastMoved[i] = false;
+			_swallowUp[i] = false;
+			_heldDuringHold[i] = false;
+			_passedDown[i] = false;
+			_bufferedDown[i] = false;
+		}
+		if (!string.IsNullOrEmpty(reason))
+		{
+			Log.Info("鼠标按键账本已清零：" + reason);
+		}
+	}
+
+	/// <summary>
+	/// 钩子被真正重装之后（看门狗救援）：重装缝隙里的按下/抬起全丢了，
+	/// 鼠标三本账与触发状态必须归零，还欠着的合成抬起也要立刻补掉。
+	/// </summary>
+	internal void OnHooksReinstalled()
+	{
+		try
+		{
+			ForgetButtonLedger("钩子重装");
+			ReleaseInjectedDowns("钩子重装，缝隙里的抬起已丢失");
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
 	public void PrecreateOverlays()
 	{
 		_drag.Precreate();
@@ -185,6 +386,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
 			try
 			{
 				_drag.EnforceFrameInvariant(_trigger.Active);
+				SweepInjectedDowns();
 			}
 			catch (Exception ex)
 			{
@@ -238,6 +440,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
 		{
 			// 暂停期间收不到任何输入，触发键的 up 事件必然丢失；不复位的话 _held/_active 会永久卡住，
 			// 恢复后表现为"触发键失灵"或"每次点鼠标都在拖窗口"。
+			ReleaseInjectedDowns("暂停");
 			_trigger.Reset("暂停");
 			_drag.Cancel();
 			_drag.HideHoverFrame();
@@ -249,6 +452,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
 	{
 		_drag.Cancel();
 		// 换触发键 / 改长按阈值时，旧键的松开事件可能永远不会再来，同样要复位。
+		ReleaseInjectedDowns("配置变更");
 		_trigger.Reset("配置变更");
 		WindowActions.ApplyBlacklist(_store.Current.Blacklist);
 		WindowActions.AllowDragOwnWindows = _store.Current.AllowDragOwnWindows;
@@ -270,6 +474,8 @@ internal sealed class Coordinator : IInputSink, IDisposable
 
 	public void Dispose()
 	{
+		// 退出前把欠着的合成抬起补掉：否则进程一走，系统里那个「按着」的键就再也没人放了
+		ReleaseInjectedDowns("程序退出");
 		try
 		{
 			_frameGuard.Stop();
@@ -326,6 +532,8 @@ internal sealed class Coordinator : IInputSink, IDisposable
 				_passedDown[num] = false;
 				_swallowUp[num] = false;
 				_bufferedDown[num] = false;
+				// 暂停期间的抬起也是真实抬起：同样销掉合成按下的账
+				PairInjectedDown(num);
 			}
 			return false;
 		}
@@ -391,6 +599,8 @@ internal sealed class Coordinator : IInputSink, IDisposable
 			_heldDuringHold[num2] = false;
 			_passedDown[num2] = false;
 			_bufferedDown[num2] = false;
+			// 真实的抬起到了：之前补发出去的按下已经配对，不能再补一次 up
+			PairInjectedDown(num2);
 			return HandleButtonUp(num2, ms.pt);
 		}
 		}
@@ -549,7 +759,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
 		}
 	}
 
-	private static void ReplayBufferedClick(int idx, bool keepDown)
+	private void ReplayBufferedClick(int idx, bool keepDown)
 	{
 		try
 		{
@@ -575,7 +785,15 @@ internal sealed class Coordinator : IInputSink, IDisposable
 				array[1].u.mi.dwFlags = num2;
 				array[1].u.mi.dwExtraInfo = HookEngine.MagicExtraInfo;
 			}
-			Native.SendInput((uint)array.Length, array, Marshal.SizeOf(typeof(Native.INPUT)));
+			if (!SuppressSyntheticMouseForTest)
+			{
+				Native.SendInput((uint)array.Length, array, Marshal.SizeOf(typeof(Native.INPUT)));
+			}
+			if (keepDown)
+			{
+				// 只补了 down：必须记账，否则配对的 up 一旦丢失，系统会永久以为这个键按着
+				MarkInjectedDown(idx);
+			}
 		}
 		catch (Exception ex)
 		{

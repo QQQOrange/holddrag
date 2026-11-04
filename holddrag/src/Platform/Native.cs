@@ -1,4 +1,4 @@
-// HoldDrag · Platform/Native.cs
+﻿// HoldDrag · Platform/Native.cs
 
 using System;
 using System.Collections.Concurrent;
