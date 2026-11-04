@@ -185,6 +185,39 @@ internal static partial class SelfTest
 		}
 	}
 
+
+	/// <summary>
+	/// 抢占链头的「就地重装」绝不能广播 HooksReinstalled（v1.10.2 回归锁）。
+	///
+	/// 激活瞬间会做一次就地重装把鼠标钩子顶到链头。若这次重装也广播事件，
+	/// 订阅方会按「钩子出过事 = 事件丢了」处理并立刻复位触发状态 ——
+	/// 用户看到的就是「按住触发键，外框闪一下就没了、窗口完全拖不动」（v1.10.1 的真实事故）。
+	/// 只有看门狗式 Reinstall()（真的会丢事件）才允许广播。
+	/// </summary>
+	private static void TestChainPriorityReinstallIsSilent()
+	{
+		using HookEngine hookEngine = new HookEngine(new NullSink());
+		Check(hookEngine.Install(), "钩子安装成功", "LastError=" + hookEngine.LastError);
+		int fired = 0;
+		hookEngine.HooksReinstalled += delegate
+		{
+			fired++;
+		};
+		hookEngine.ReinstallMouseForChainPriority();
+		for (int i = 0; i < 60; i++)
+		{
+			Application.DoEvents();
+			Thread.Sleep(10);
+		}
+		Check(fired == 0, "★ 抢占链头的就地重装不得广播 HooksReinstalled（否则刚激活就被复位，核心拖动失效）", "广播了 " + fired + " 次");
+		hookEngine.Reinstall();
+		for (int i = 0; i < 60; i++)
+		{
+			Application.DoEvents();
+			Thread.Sleep(10);
+		}
+		Check(fired == 1, "看门狗式重装必须广播 HooksReinstalled（那种重装真的会丢事件）", "广播了 " + fired + " 次");
+	}
 	private static void TestHooks()
 	{
 		using HookEngine hookEngine = new HookEngine(new NullSink());
