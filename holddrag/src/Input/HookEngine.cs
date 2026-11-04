@@ -1,4 +1,4 @@
-// HoldDrag · Input/HookEngine.cs
+﻿// HoldDrag · Input/HookEngine.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -209,7 +209,10 @@ internal sealed class HookEngine : IDisposable
 			}
 			ReinstallCount++;
 			Log.Info("鼠标钩子已就地重装并顶到钩子链头部（激活时抢占，第三方手势工具不再先拿到鼠标键）");
-			RaiseReinstalled();
+			// 这里刻意【不】触发 HooksReinstalled：这是激活瞬间「抢占链头」的计划内重装，
+			// 一瞬间完成、不丢事件。若当成钩子出事，Coordinator 会在刚激活的同一刻把触发状态复位，
+			// 用户看到的就是「按了触发键，外框闪一下就没了、鼠标完全拖不动」。
+			// 只有 Reinstall()（看门狗救援，真的会丢事件）才广播。
 		}
 		catch (Exception ex)
 		{

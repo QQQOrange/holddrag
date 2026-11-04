@@ -127,12 +127,6 @@ internal sealed class TrayContext : ApplicationContext
 			_coord.OnHooksReinstalled();
 			_coord.Trigger.Reset("钩子重装");
 		};
-		// 钩子重装期间会漏掉按键/鼠标事件：不把触发状态复位，用户会遇到"触发键按了没反应"
-		// 或者"没按键却一直在拖窗口"（看门狗救援、抢占链头都会走到这里）。
-		_hooks.HooksReinstalled += delegate
-		{
-			_coord.Trigger.Reset("钩子重装");
-		};
 		_coord.ReinstallHooksForPriority = () =>
 		{
 			_hooks.ReinstallMouseForChainPriority();
