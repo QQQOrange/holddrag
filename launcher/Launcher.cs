@@ -520,8 +520,12 @@ namespace HoldDragLauncher
 						"启动器里没有内嵌主程序（打包时没把 HoldDrag.App.exe 嵌进去）。");
 				}
 				string hash = ShortHash(stream);
-				string root = Path.Combine(
-					Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HoldDrag", "app");
+				// 便携模式：exe 旁边有 portable.txt 就把主程序也解到 data\app，
+				// 否则换台机器/换用户就找不到缓存，而且会在别人的 AppData 里留东西。
+				string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+				string root = File.Exists(Path.Combine(baseDir, "portable.txt"))
+					? Path.Combine(baseDir, "data", "app")
+					: Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "HoldDrag", "app");
 				string dir = Path.Combine(root, hash);
 				string target = Path.Combine(dir, AppFileName);
 				long length = stream.Length;
