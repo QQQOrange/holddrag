@@ -1,4 +1,4 @@
-// HoldDrag · Diagnostics/SelfTest.Frames.cs
+﻿// HoldDrag · Diagnostics/SelfTest.Frames.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -763,8 +763,9 @@ internal static partial class SelfTest
 		Eq(frameSelection.GridColorId, frameSelection.ColorId, "色板高亮与当前颜色一致");
 		settingsForm.ProbeSelectFrameColor("Gold");
 		SettingsForm.FrameSelection frameSelection2 = settingsForm.ProbeFrameSelection();
-		Eq(frameSelection2.GridColorId, "Gold", "★ 选了「暖金」之后，色板里高亮的就是暖金");
-		Check(!string.IsNullOrEmpty(frameSelection2.ColorNameText) && frameSelection2.ColorNameText.Contains("暖金"), "界面上写明了当前颜色的名字（状态清晰）", "文字=" + frameSelection2.ColorNameText);
+		string goldName = FrameColors.All.First((FrameColors.Entry e) => e.Id == "Gold").Name;
+		Eq(frameSelection2.GridColorId, "Gold", "★ 选了「" + goldName + "」之后，色板里高亮的就是它");
+		Check(!string.IsNullOrEmpty(frameSelection2.ColorNameText) && frameSelection2.ColorNameText.Contains(goldName), "界面上写明了当前颜色的名字（状态清晰）", "文字=" + frameSelection2.ColorNameText);
 		int[] array = new int[6] { 736, 900, 1180, 1516, 1900, 2600 };
 		int num = 0;
 		string text = "";

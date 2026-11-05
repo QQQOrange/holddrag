@@ -87,13 +87,13 @@ internal static class FrameColors
 		{
 			Id = "Aqua",
 			Name = "湖水青",
-			Color = Color.FromArgb(34, 211, 238)
+			Color = Color.FromArgb(53, 197, 219)
 		},
 		new Entry
 		{
 			Id = "Sky",
 			Name = "天青",
-			Color = Color.FromArgb(56, 189, 248)
+			Color = Color.FromArgb(80, 180, 224)
 		},
 		new Entry
 		{
@@ -105,49 +105,49 @@ internal static class FrameColors
 		{
 			Id = "Lime",
 			Name = "嫩芽绿",
-			Color = Color.FromArgb(163, 230, 53)
+			Color = Color.FromArgb(161, 221, 62)
 		},
 		new Entry
 		{
 			Id = "Gold",
 			Name = "琥珀金",
-			Color = Color.FromArgb(251, 191, 36)
+			Color = Color.FromArgb(222, 178, 65)
 		},
 		new Entry
 		{
 			Id = "Amber",
 			Name = "落日橙",
-			Color = Color.FromArgb(251, 146, 60)
+			Color = Color.FromArgb(225, 149, 86)
 		},
 		new Entry
 		{
 			Id = "Coral",
 			Name = "珊瑚",
-			Color = Color.FromArgb(251, 113, 133)
+			Color = Color.FromArgb(233, 131, 146)
 		},
 		new Entry
 		{
 			Id = "Red",
 			Name = "朱砂红",
-			Color = Color.FromArgb(248, 113, 113)
+			Color = Color.FromArgb(233, 128, 128)
 		},
 		new Entry
 		{
 			Id = "Rose",
 			Name = "玫瑰",
-			Color = Color.FromArgb(244, 114, 182)
+			Color = Color.FromArgb(232, 126, 181)
 		},
 		new Entry
 		{
 			Id = "Pink",
 			Name = "樱粉",
-			Color = Color.FromArgb(232, 121, 249)
+			Color = Color.FromArgb(221, 136, 234)
 		},
 		new Entry
 		{
 			Id = "Violet",
 			Name = "极光紫",
-			Color = Color.FromArgb(139, 124, 255)
+			Color = Color.FromArgb(154, 144, 235)
 		},
 		new Entry
 		{

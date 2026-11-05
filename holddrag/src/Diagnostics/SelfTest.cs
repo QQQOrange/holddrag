@@ -320,6 +320,8 @@ internal static partial class SelfTest
 		Safe("T114 设置搜索：关键字命中与状态提示", TestSettingsSearch);
 		Safe("T115 便携模式：数据目录判定", TestPortableMode);
 		Safe("T116 规则与布局的界面行真的存在", TestRulesAndLayoutUi);
+		Safe("T117 引导线位置：必须画在吸附位置（之前在屏幕左上角）", TestGuideLineGeometry);
+		Safe("T118 吸附：窗口比工作区大时不做右侧/底部吸附", TestSnapWideWindow);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();

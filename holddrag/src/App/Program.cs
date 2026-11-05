@@ -101,6 +101,8 @@ internal static class Program
 		}
 		if (HasArg(args, "--cmd"))
 		{
+			// WinExe 默认没有控制台：不附着父进程的话，--cmd 的输出在终端里完全看不见。
+			SelfTest.AttachConsoleForTest(uint.MaxValue);
 			string text3 = ArgValue(args, "--cmd");
 			if (string.IsNullOrWhiteSpace(text3))
 			{

@@ -1,4 +1,4 @@
-// HoldDrag · Core/SnapEngine.cs
+﻿// HoldDrag · Core/SnapEngine.cs
 //
 // 拖动时的边缘吸附（纯函数，便于自检）。
 //
@@ -45,7 +45,10 @@ internal static class SnapEngine
 		int left = proposed.Left;
 		int guideX = -1;
 		ConsiderX(work.Left, work.Left);
-		ConsiderX(work.Right - width, work.Right);
+		if (width <= work.Width)
+		{
+			ConsiderX(work.Right - width, work.Right);
+		}
 		ConsiderX(work.Left + (work.Width - width) / 2, work.Left + work.Width / 2);
 		if (guideX >= 0)
 		{
@@ -58,7 +61,10 @@ internal static class SnapEngine
 		int top = proposed.Top;
 		int guideY = -1;
 		ConsiderY(work.Top, work.Top);
-		ConsiderY(work.Bottom - height, work.Bottom);
+		if (height <= work.Height)
+		{
+			ConsiderY(work.Bottom - height, work.Bottom);
+		}
 		ConsiderY(work.Top + (work.Height - height) / 2, work.Top + work.Height / 2);
 		if (guideY >= 0)
 		{

@@ -526,6 +526,15 @@ internal sealed class DragEngine : IDisposable
 		}
 	}
 
+	internal Rectangle GuideBoundsForTest
+	{
+		get
+		{
+			Thread.Sleep(120);
+			return _guide.BoundsForTest;
+		}
+	}
+
 	internal void ProbeHideHintsForTest()
 	{
 		_hud.Hide();
@@ -751,6 +760,10 @@ internal sealed class DragEngine : IDisposable
 				{
 					_guide.Hide();
 				}
+			}
+			else
+			{
+				_guide.Hide();
 			}
 			if (appConfig.ShowDragHud)
 			{

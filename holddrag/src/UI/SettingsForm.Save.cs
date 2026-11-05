@@ -756,7 +756,7 @@ internal sealed partial class SettingsForm
 		}
 	}
 
-	private void PickWindowByClick()
+	private void PickWindowByClick(Action<Native.POINT> onPick = null)
 	{
 		try
 		{
@@ -787,7 +787,8 @@ internal sealed partial class SettingsForm
 				{
 				}
 				Application.DoEvents();
-				AddBlacklistFromWindowAt(pt);
+				Action<Native.POINT> action = onPick ?? new Action<Native.POINT>(AddBlacklistFromWindowAt);
+				action(pt);
 				try
 				{
 					mask.Close();

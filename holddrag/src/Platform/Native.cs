@@ -233,6 +233,28 @@ internal static class Native
 		public byte AlphaFormat;
 	}
 
+	[StructLayout(LayoutKind.Sequential)]
+	internal struct GUITHREADINFO
+	{
+		public int cbSize;
+
+		public int flags;
+
+		public nint hwndActive;
+
+		public nint hwndFocus;
+
+		public nint hwndCapture;
+
+		public nint hwndMenuOwner;
+
+		public nint hwndMoveSize;
+
+		public nint hwndCaret;
+
+		public RECT rcCaret;
+	}
+
 	internal delegate nint WndProc(nint hWnd, uint msg, nint wParam, nint lParam);
 
 	[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -625,6 +647,45 @@ internal static class Native
 	internal static extern bool IsIconic(nint hWnd);
 
 	[DllImport("user32.dll", SetLastError = true)]
+	internal static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
+
+	/// <summary>
+	/// 当前前台窗口的焦点控件是不是文本输入框。
+	/// 用来避免把用户正在编辑的 Ctrl+Z 抢去撤销窗口位置。
+	/// </summary>
+	internal static bool IsTextInputFocused()
+	{
+		try
+		{
+			nint foregroundWindow = GetForegroundWindow();
+			if (foregroundWindow == IntPtr.Zero)
+			{
+				return false;
+			}
+			uint windowThreadProcessId = GetWindowThreadProcessId(foregroundWindow, out var _);
+			if (windowThreadProcessId == 0)
+			{
+				return false;
+			}
+			GUITHREADINFO gUITHREADINFO = default(GUITHREADINFO);
+			gUITHREADINFO.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+			if (!GetGUIThreadInfo(windowThreadProcessId, ref gUITHREADINFO) || gUITHREADINFO.hwndFocus == IntPtr.Zero)
+			{
+				return false;
+			}
+			System.Text.StringBuilder stringBuilder = new System.Text.StringBuilder(64);
+			GetClassNameW(gUITHREADINFO.hwndFocus, stringBuilder, stringBuilder.Capacity);
+			string text = stringBuilder.ToString();
+			return text.IndexOf("Edit", StringComparison.OrdinalIgnoreCase) >= 0
+				|| text.IndexOf("Scintilla", StringComparison.OrdinalIgnoreCase) >= 0
+				|| text.IndexOf("TextBox", StringComparison.OrdinalIgnoreCase) >= 0;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
 	internal static extern nint GetForegroundWindow();
 
 	[DllImport("user32.dll", SetLastError = true)]

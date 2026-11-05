@@ -176,6 +176,16 @@ internal sealed class Coordinator : IInputSink, IDisposable
 			{
 				return false;
 			}
+			// 没有可撤销的操作就别再往下查（钩子回调要尽量短）
+			if (!_drag.HasUndoForTest)
+			{
+				return false;
+			}
+			// 正在文本框里打字时，Ctrl+Z 是"撤销输入"，不能拿来做窗口撤销
+			if (Native.IsTextInputFocused())
+			{
+				return false;
+			}
 			if (!_drag.TryUndoLast())
 			{
 				return false;
@@ -196,6 +206,10 @@ internal sealed class Coordinator : IInputSink, IDisposable
 		try
 		{
 			if (!_store.Current.KeyboardTiling || !_trigger.Active || _drag.IsDragging)
+			{
+				return false;
+			}
+			if (Native.IsTextInputFocused())
 			{
 				return false;
 			}

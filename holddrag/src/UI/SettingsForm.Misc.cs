@@ -114,9 +114,31 @@ internal sealed partial class SettingsForm
 
 	private void AddRuleFromWindow()
 	{
+		AddRuleAtCursor();
+	}
+
+	private void AddRuleAtCursor()
+	{
 		try
 		{
-			nint num = WindowActions.TargetUnderCursor();
+			if (!Native.GetCursorPos(out var pt))
+			{
+				return;
+			}
+			AddRuleAt(pt);
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	/// <summary>把 pt 处的窗口程序名 + 当前选中的规则类型追加到规则列表。</summary>
+	private void AddRuleAt(Native.POINT pt)
+	{
+		try
+		{
+			nint num = WindowActions.FindTarget(pt, allowFullscreen: true);
 			if (num == IntPtr.Zero)
 			{
 				_lblStatus.Text = Loc.T("没有找到窗口：把鼠标移到目标窗口上再点");
@@ -401,8 +423,11 @@ internal sealed partial class SettingsForm
 				return;
 			}
 			string text = DiagnosticsBundle.Create(saveFileDialog.FileName, "当前页=" + _activePage + " 目标=" + _edit.TriggerKeyId);
-			_lblStatus.Text = Loc.T("诊断包已导出：") + text;
-			_lblStatus.ForeColor = Tokens.Success;
+			if (_lblStatus != null)
+			{
+				_lblStatus.Text = Loc.T("诊断包已导出：") + text;
+				_lblStatus.ForeColor = Tokens.Success;
+			}
 			try
 			{
 				Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + text + "\"")
@@ -417,8 +442,11 @@ internal sealed partial class SettingsForm
 		catch (Exception ex)
 		{
 			Log.Error(ex);
-			_lblStatus.Text = Loc.T("导出失败：") + ex.Message;
-			_lblStatus.ForeColor = Tokens.Danger;
+			if (_lblStatus != null)
+			{
+				_lblStatus.Text = Loc.T("导出失败：") + ex.Message;
+				_lblStatus.ForeColor = Tokens.Danger;
+			}
 		}
 	}
 

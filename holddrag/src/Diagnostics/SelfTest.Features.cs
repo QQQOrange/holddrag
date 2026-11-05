@@ -169,4 +169,38 @@ internal static partial class SelfTest
 			dragFixture.Coord.Drag.ProbeHideHintsForTest();
 		}
 	}
+
+	/// <summary>回归：引导线必须画在吸附位置，不能画在屏幕左上角。</summary>
+	private static void TestGuideLineGeometry()
+	{
+		using DragFixture dragFixture = new DragFixture(null);
+		try
+		{
+			dragFixture.Coord.Drag.ProbeShowGuideForTest();
+			Rectangle rectangle = dragFixture.Coord.Drag.GuideBoundsForTest;
+			Check(!rectangle.IsEmpty, "引导线窗口已显示", rectangle.ToString());
+			Eq(rectangle.Left, 400, "★ 竖引导线的 x 就是吸附位置（曾经恒为 0）");
+			Eq(rectangle.Top, 100, "★ 竖引导线的起点是吸附区间的上端");
+			Check(rectangle.Width <= 6, "竖引导线很细", "宽=" + rectangle.Width);
+			Check(rectangle.Height >= 700, "竖引导线覆盖吸附区间", "高=" + rectangle.Height);
+			dragFixture.Coord.Drag.ProbeHideHintsForTest();
+		}
+		finally
+		{
+			dragFixture.Coord.Drag.ProbeHideHintsForTest();
+		}
+	}
+
+	/// <summary>回归：窗口比工作区还宽时，不能吸到右边（会把它弹到屏幕外）。</summary>
+	private static void TestSnapWideWindow()
+	{
+		Native.RECT work = new Native.RECT(0, 0, 1000, 800);
+		Native.RECT wide = new Native.RECT(-200, 100, 1300, 900);
+		SnapEngine.Result result = SnapEngine.SnapMove(new Native.RECT(-197, 100, 1303, 900), work, 8);
+		Check(!result.SnappedX, "比屏幕宽的窗口不吸附右边", "Left=" + result.Rect.Left);
+		Native.RECT tall = new Native.RECT(100, -300, 900, 900);
+		SnapEngine.Result result2 = SnapEngine.SnapMove(new Native.RECT(100, -296, 900, 904), work, 8);
+		Check(!result2.SnappedY, "比屏幕高的窗口不吸附下边", "Top=" + result2.Rect.Top);
+	}
+
 }

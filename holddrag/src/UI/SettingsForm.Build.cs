@@ -686,7 +686,7 @@ internal sealed partial class SettingsForm
 		};
 		_btnAddRule.Click += delegate
 		{
-			AddRuleFromWindow();
+			PickWindowByClick(AddRuleAt);
 		};
 		_cmbLayouts = NewCombo();
 		_btnLayoutSave = new FlatButton

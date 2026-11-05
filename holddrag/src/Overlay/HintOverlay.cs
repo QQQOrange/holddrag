@@ -70,6 +70,17 @@ internal sealed class HintOverlay : IDisposable
 	/// </summary>
 	private static readonly List<Native.WndProc> ProcKeepAlive = new List<Native.WndProc>();
 
+	/// <summary>测量/绘制用的字体缓存（按缩放取整），避免每帧 new Font 泄漏 GDI 句柄。</summary>
+	private Font _font;
+
+	private string _lastText = "";
+
+	private Native.RECT _lastFrame;
+
+	private bool _lastFrameValid;
+
+	private int _fontScale1000 = -1;
+
 	private int _appliedGen;
 
 	private int _wantGen;
@@ -77,6 +88,25 @@ internal sealed class HintOverlay : IDisposable
 	internal int ApplyCountForTest;
 
 	internal bool VisibleForTest => _visible;
+
+	/// <summary>自测用：分层窗口当前的位置与尺寸（验证引导线画在吸附位置而不是屏幕左上角）。</summary>
+	internal Rectangle BoundsForTest
+	{
+		get
+		{
+			try
+			{
+				if (_hwnd != IntPtr.Zero && Native.GetWindowRect(_hwnd, out var r) && r.Width > 0)
+				{
+					return new Rectangle(r.Left, r.Top, r.Width, r.Height);
+				}
+			}
+			catch
+			{
+			}
+			return Rectangle.Empty;
+		}
+	}
 
 	public void Start()
 	{
@@ -173,9 +203,19 @@ internal sealed class HintOverlay : IDisposable
 			{
 				return;
 			}
-			_text = text ?? "";
+			string text2 = text ?? "";
+			float num = (scale <= 0f) ? 1f : scale;
+			// 拖动时每帧都会调进来：文字和位置都没变就不用重画（省掉几十次/秒的位图重建）
+			if (_visible && !_isLine && _lastFrameValid && string.Equals(_lastText, text2, StringComparison.Ordinal) && _lastFrame.Left == rect.Left && _lastFrame.Top == rect.Top && _lastFrame.Right == rect.Right && _lastFrame.Bottom == rect.Bottom && Math.Abs(_scale - num) < 0.01f)
+			{
+				return;
+			}
+			_text = text2;
+			_lastText = text2;
+			_lastFrame = rect;
+			_lastFrameValid = true;
 			_isLine = false;
-			_scale = (scale <= 0f) ? 1f : scale;
+			_scale = num;
 			MeasureAndPlace(rect);
 			_visible = true;
 			_wantGen++;
@@ -196,9 +236,15 @@ internal sealed class HintOverlay : IDisposable
 			_isLine = true;
 			_vertical = vertical;
 			_linePos = pos;
-			_lineStart = start;
-			_lineEnd = end;
+			_lineStart = Math.Min(start, end);
+			_lineEnd = Math.Max(start, end);
 			_accent = color;
+			// 竖线：左上角 = (pos, start)；横线：左上角 = (start, pos)。
+			// 之前这里没赋值，_x/_y 一直是 0，于是引导线永远画在屏幕左上角。
+			_x = (vertical ? pos : _lineStart);
+			_y = (vertical ? _lineStart : pos);
+			_w = (vertical ? 2 : (_lineEnd - _lineStart));
+			_h = (vertical ? (_lineEnd - _lineStart) : 2);
 			_visible = true;
 			_wantGen++;
 			_dirty = true;
@@ -224,13 +270,8 @@ internal sealed class HintOverlay : IDisposable
 	private void MeasureAndPlace(Native.RECT frame)
 	{
 		float num = _scale;
-		using Font font = new Font(SettingsForm.DesignFontFamily, 12f * num, FontStyle.Regular, GraphicsUnit.Pixel);
-		Size size;
-		using (Bitmap bitmap = new Bitmap(1, 1))
-		{
-			using Graphics graphics = Graphics.FromImage(bitmap);
-			size = TextRenderer.MeasureText(graphics, _text, font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding);
-		}
+		Font font = FontFor(num);
+		Size size = TextRenderer.MeasureText(_text, font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding);
 		int num2 = (int)Math.Round(16f * num);
 		int num3 = (int)Math.Round(7f * num);
 		_w = Math.Max(20, size.Width + num2 * 2);
@@ -313,7 +354,26 @@ internal sealed class HintOverlay : IDisposable
 		}
 	}
 
-	private static Bitmap RenderText(string text, int w, int h, float scale)
+	/// <summary>按缩放缓存字体（拖动时一秒几十帧，不能每帧 new Font）。</summary>
+	private Font FontFor(float scale)
+	{
+		int num = (int)Math.Round(scale * 1000f);
+		if (_font == null || _fontScale1000 != num)
+		{
+			try
+			{
+				_font?.Dispose();
+			}
+			catch
+			{
+			}
+			_font = new Font(SettingsForm.DesignFontFamily, 12f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+			_fontScale1000 = num;
+		}
+		return _font;
+	}
+
+	private Bitmap RenderText(string text, int w, int h, float scale)
 	{
 		Bitmap bitmap = new Bitmap(w, h, PixelFormat.Format32bppArgb);
 		using Graphics graphics = Graphics.FromImage(bitmap);
@@ -328,7 +388,7 @@ internal sealed class HintOverlay : IDisposable
 			using Pen pen = new Pen(Color.FromArgb(64, 255, 255, 255));
 			graphics.DrawPath(pen, path);
 		}
-		using Font font = new Font(SettingsForm.DesignFontFamily, 12f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+		Font font = FontFor(scale);
 		TextRenderer.DrawText(graphics, text, font, rect, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 		return bitmap;
 	}
@@ -428,6 +488,14 @@ internal sealed class HintOverlay : IDisposable
 			{
 				Native.DestroyWindow(_hwnd);
 				_hwnd = IntPtr.Zero;
+			}
+			try
+			{
+				_font?.Dispose();
+				_font = null;
+			}
+			catch
+			{
 			}
 		}
 		catch

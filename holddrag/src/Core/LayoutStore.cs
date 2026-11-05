@@ -1,4 +1,4 @@
-// HoldDrag · Core/LayoutStore.cs
+﻿// HoldDrag · Core/LayoutStore.cs
 //
 // 工作区布局：把当前所有可见窗口的位置/大小存成一份命名快照，之后一键恢复。
 //
@@ -122,6 +122,11 @@ internal static class LayoutStore
 				try
 				{
 					if (!Native.IsWindowVisible(hwnd))
+					{
+						return true;
+					}
+					// 最小化窗口的 GetWindowRect 是 -32000 附近，存下来再恢复会把窗口丢到屏幕外
+					if (Native.IsIconic(hwnd))
 					{
 						return true;
 					}
