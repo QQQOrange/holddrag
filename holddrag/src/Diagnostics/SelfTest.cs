@@ -307,6 +307,12 @@ internal static partial class SelfTest
 		Safe("T102 合成按键欠账：注入过的「只按下」必须在抬起丢失时被补发，绝不留下系统级卡键", TestInjectedDownLedger);
 		Safe("T103 抢占链头的就地重装必须保持静默（否则激活瞬间被复位，核心拖动失效）", TestChainPriorityReinstallIsSilent);
 		Safe("T104 外框换颜色：点色板 / 下拉框弹层都必须真的换掉并同步预览", TestFrameColorSwitch);
+		Safe("T105 边缘吸附：靠近工作区边缘时贴齐并给出引导线，远离时不动", TestSnapEngine);
+		Safe("T106 键盘分屏：半屏 / 九宫格 / 居中 的矩形换算", TestTiling);
+		Safe("T107 撤销：Ctrl+Z 能还原上一次拖动，且只能用一次", TestUndo);
+		Safe("T108 诊断包：生成的 zip 里包含 system.txt 与版本/显示器信息", TestDiagnosticsBundle);
+		Safe("T109 新配置项默认值与越界归一（HUD / 吸附 / 分屏 / 撤销 / 引导）", TestNewConfigDefaults);
+		Safe("T110 尺寸 HUD 与吸附引导线：分层窗口能创建、显示、隐藏", TestHudOverlay);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();

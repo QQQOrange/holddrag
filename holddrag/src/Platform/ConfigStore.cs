@@ -84,6 +84,27 @@ internal sealed class AppConfig
 
 	public bool ShakeMinimizeOthers { get; set; }
 
+	/// <summary>拖动时在光标旁显示尺寸 HUD（W × H）。</summary>
+	public bool ShowDragHud { get; set; }
+
+	/// <summary>HUD 里是否附带窗口坐标。</summary>
+	public bool DragHudShowPosition { get; set; }
+
+	/// <summary>拖动时吸附到屏幕/工作区边缘。</summary>
+	public bool SnapToEdges { get; set; }
+
+	/// <summary>吸附阈值（像素）。</summary>
+	public int SnapThreshold { get; set; }
+
+	/// <summary>触发键按住期间用方向键 / 数字键布局窗口。</summary>
+	public bool KeyboardTiling { get; set; }
+
+	/// <summary>拖完 5 秒内按 Ctrl+Z 可以撤销这次移动/缩放。</summary>
+	public bool UndoEnabled { get; set; }
+
+	/// <summary>首次启动引导是否已经看过。</summary>
+	public bool OnboardingDone { get; set; }
+
 	public int CornerPercent { get; set; }
 
 	public string Blacklist { get; set; }
@@ -159,6 +180,13 @@ internal sealed class AppConfig
 		AllowDragOwnWindows = true;
 		ExitFullscreenOnTrigger = true;
 		ShakeMinimizeOthers = true;
+		ShowDragHud = true;
+		DragHudShowPosition = true;
+		SnapToEdges = true;
+		SnapThreshold = 8;
+		KeyboardTiling = true;
+		UndoEnabled = true;
+		OnboardingDone = false;
 		CornerPercent = 26;
 		Blacklist = string.Empty;
 		DragRefreshMode = "Auto";
@@ -194,6 +222,14 @@ internal sealed class AppConfig
 	public void Normalize()
 	{
 		Language = Loc.Normalize(Language);
+		if (SnapThreshold < 0)
+		{
+			SnapThreshold = 0;
+		}
+		if (SnapThreshold > 40)
+		{
+			SnapThreshold = 40;
+		}
 		if (string.IsNullOrEmpty(TriggerKeyId))
 		{
 			TriggerKeyId = "K:0x0D";
@@ -497,6 +533,28 @@ internal sealed class ConfigStore
 		}
 	}
 
+	/// <summary>
+	/// 老配置里没有这些字段（JSON 缺键 → 反序列化得到默认值），需要做一次性迁移：
+	/// 已经用过这个软件的人不该再被"首次引导"拦一次。
+	/// </summary>
+	private static void Migrate(AppConfig cfg, string rawJson)
+	{
+		try
+		{
+			if (cfg == null || string.IsNullOrEmpty(rawJson))
+			{
+				return;
+			}
+			if (!rawJson.Contains("\"OnboardingDone\""))
+			{
+				cfg.OnboardingDone = true;
+			}
+		}
+		catch
+		{
+		}
+	}
+
 	private static AppConfig TryRead(string path)
 	{
 		try
@@ -510,7 +568,9 @@ internal sealed class ConfigStore
 			{
 				return null;
 			}
-			return JsonSerializer.Deserialize<AppConfig>(text, Opts);
+			AppConfig appConfig = JsonSerializer.Deserialize<AppConfig>(text, Opts);
+			Migrate(appConfig, text);
+			return appConfig;
 		}
 		catch (Exception ex)
 		{

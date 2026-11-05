@@ -630,6 +630,12 @@ internal sealed partial class SettingsForm
 		_chkFullscreen = Check(Loc.T("允许拖动全屏 / 无边框窗口（有风险）"));
 		_chkExitFullscreen = Check(Loc.T("触发时先把全屏/最大化窗口变回普通"));
 		_chkShake = Check(Loc.T("选中窗口后晃一晃，其它窗口全部最小化"));
+		_chkShowHud = Check(Loc.T("拖动时显示尺寸提示"));
+		_chkHudPos = Check(Loc.T("尺寸提示里带上窗口坐标"));
+		_chkSnap = Check(Loc.T("拖到屏幕边缘时自动吸附"));
+		_numSnapThreshold = NewNum(0m, 40m, 1m);
+		_chkTiling = Check(Loc.T("按住触发键时用方向键 / 数字键布局窗口"));
+		_chkUndo = Check(Loc.T("允许 Ctrl+Z 撤销上一次拖动（5 秒内）"));
 		_txtBlacklist = new TextBox
 		{
 			BorderStyle = BorderStyle.None,
@@ -693,6 +699,14 @@ internal sealed partial class SettingsForm
 		};
 		_helpPanel = new HelpPanel();
 		_helpPanel.SetEntries(BuildHelpEntries());
+		_btnExportDiag = new FlatButton
+		{
+			Text = Loc.T("导出诊断包…")
+		};
+		_btnExportDiag.Click += delegate
+		{
+			ExportDiagnosticsBundle();
+		};
 		_btnGitHub = new FlatButton
 		{
 			Text = "github.com/QQQOrange/holddrag"

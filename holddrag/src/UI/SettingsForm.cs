@@ -98,6 +98,22 @@ internal sealed partial class SettingsForm
 	private FlatCheck _chkFullscreen;
 	private FlatCheck _chkExitFullscreen;
 	private FlatCheck _chkShake;
+
+	/// <summary>拖动时显示尺寸 HUD。</summary>
+	private FlatCheck _chkShowHud;
+
+	private FlatCheck _chkHudPos;
+
+	/// <summary>边缘吸附。</summary>
+	private FlatCheck _chkSnap;
+
+	private FlatNum _numSnapThreshold;
+
+	/// <summary>触发键按住时的方向键 / 数字键布局。</summary>
+	private FlatCheck _chkTiling;
+
+	/// <summary>Ctrl+Z 撤销上一次拖动。</summary>
+	private FlatCheck _chkUndo;
 	private TextBox _txtBlacklist;
 	private FlatButton _btnPickExe;
 	private FlatButton _btnPickWindow;
@@ -116,6 +132,8 @@ internal sealed partial class SettingsForm
 	private FlatButton _btnRestartAdmin;
 
 	private HelpPanel _helpPanel;
+
+	private FlatButton _btnExportDiag;
 
 	private FlatButton _btnGitHub;
 	private FlatCheck _chkAutoUpdate;

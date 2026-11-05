@@ -164,6 +164,27 @@ internal sealed class TrayContext : ApplicationContext
 		};
 		BuildTray();
 		ApplyConfig(initial: true);
+		if (!_store.Current.OnboardingDone)
+		{
+			// 托盘先起来，再弹引导：引导里要读配置、要能立即写入
+			System.Windows.Forms.Timer onboarding = new System.Windows.Forms.Timer();
+			onboarding.Interval = 700;
+			onboarding.Tick += delegate
+			{
+				onboarding.Stop();
+				onboarding.Dispose();
+				try
+				{
+					using OnboardingForm onboardingForm = new OnboardingForm(_store, _coord);
+					onboardingForm.ShowDialog();
+				}
+				catch (Exception ex)
+				{
+					Log.Error(ex);
+				}
+			};
+			onboarding.Start();
+		}
 		_marshal = new Control();
 		_marshal.CreateControl();
 		// 语言切换后托盘菜单要整份重建（菜单项文字是创建时取的译文）
@@ -436,6 +457,32 @@ internal sealed class TrayContext : ApplicationContext
 		{
 			ShowSettings();
 		}));
+		_menu.Items.Add(new ToolStripMenuItem(Loc.T("窗口居中"), null, delegate
+		{
+			if (!WindowActions.CenterUnderCursor())
+			{
+				Log.Info("[托盘] 居中失败：光标下没有可操作的窗口");
+			}
+		}));
+		_menu.Items.Add(new ToolStripMenuItem(Loc.T("移到下一块显示器"), null, delegate
+		{
+			if (!WindowActions.MoveToNextMonitor())
+			{
+				Log.Info("[托盘] 移屏失败：只有一块显示器，或光标下没有窗口");
+			}
+		}));
+		_menu.Items.Add(new ToolStripMenuItem(Loc.T("切换置顶"), null, delegate
+		{
+			if (!WindowActions.ToggleTopmostUnderCursor(out var nowTopmost))
+			{
+				Log.Info("[托盘] 置顶失败：光标下没有可操作的窗口");
+			}
+			else
+			{
+				Log.Info("[托盘] 置顶=" + nowTopmost);
+			}
+		}));
+		_menu.Items.Add(new ToolStripSeparator());
 		// 字段项（暂停/自启/提权）只接线一次，重建时仅重新挂回 Items，避免重复叠加处理器
 		if (!_menuHandlersWired)
 		{

@@ -82,6 +82,13 @@ internal sealed partial class SettingsForm
 		Card card7 = NewCard(page4, Loc.T("拖动与缩放"), Loc.T("触发期间的拖动、缩放细节"));
 		card7.Setting(_numCorner, 72, UnitLabel("%"), 26, Loc.T("缩放角区"), Loc.T("鼠标离角多近才算抓住角；越大越好抓，但容易误触"));
 		card7.Toggle(_chkRestoreMax, Loc.T("允许拖动已最大化的窗口"), Loc.T("会先把窗口还原成普通大小，再开始拖"));
+		Card cardAux = NewCard(page4, Loc.T("辅助"), Loc.T("尺寸提示、贴边吸附、键盘布局与撤销"));
+		cardAux.Toggle(_chkShowHud, Loc.T("拖动时显示尺寸提示"), Loc.T("在光标旁浮一个小标签，实时显示窗口宽高"));
+		cardAux.Toggle(_chkHudPos, Loc.T("尺寸提示里带上坐标"), Loc.T("同时显示窗口左上角的屏幕坐标"));
+		cardAux.Toggle(_chkSnap, Loc.T("拖到屏幕边缘时自动吸附"), Loc.T("离屏幕/工作区边缘很近时自动贴齐，并画一条引导线"));
+		cardAux.Setting(_numSnapThreshold, 72, UnitLabel("px"), 26, Loc.T("吸附距离"), Loc.T("离边缘多近才吸附；0 = 关闭"));
+		cardAux.Toggle(_chkTiling, Loc.T("键盘分屏"), Loc.T("按住触发键后：← 左半屏、→ 右半屏、↑ 最大化、↓ 还原、1-9 九宫格、0 居中"));
+		cardAux.Toggle(_chkUndo, Loc.T("允许 Ctrl+Z 撤销"), Loc.T("拖完 5 秒内按 Ctrl+Z 可以还原窗口原来的位置和大小"));
 		Card card8 = NewCard(page4, Loc.T("窗口层级与全屏"), Loc.T("全屏 / 无边框窗口容易被拖成一片黑"));
 		card8.Toggle(_chkFront, Loc.T("开始拖动时把窗口提到最前"), Loc.T("不用先点一下激活它"));
 		card8.Toggle(_chkFullscreen, Loc.T("允许拖动全屏 / 无边框窗口（有风险）"), Loc.T("部分游戏和视频窗口拖完会显示异常"));
@@ -115,6 +122,8 @@ internal sealed partial class SettingsForm
 
 		// ---------- 7. 帮助 ----------
 		Page page7 = NewPage(Loc.T("帮助"), Loc.T("每一项功能的实际行为说明"));
+		Card cardDiag = NewCard(page7, Loc.T("诊断"), Loc.T("遇到问题先导出诊断包：配置 + 最近日志 + 系统信息"));
+		cardDiag.Setting(_btnExportDiag, DesignButtonWidth(Loc.T("导出诊断包…"), 130), null, 0, Loc.T("导出诊断包"), Loc.T("打成一个 zip，方便发给开发者"));
 		Card card13 = NewCard(page7, Loc.T("功能说明"), Loc.T("点一下标题，就能展开对应功能的说明"));
 		card13.Block(_helpPanel);
 

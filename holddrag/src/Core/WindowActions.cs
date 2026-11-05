@@ -1,4 +1,4 @@
-// HoldDrag · Core/WindowActions.cs
+﻿// HoldDrag · Core/WindowActions.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -882,6 +882,136 @@ internal static class WindowActions
 				Log.Info("目标恢复响应，重新开始实时跟手");
 			}
 		}
+		return true;
+	}
+
+	/// <summary>
+	/// 按「可见矩形」设置窗口位置：自动补上 Win10/11 窗口四周那圈不可见的 resize 边框，
+	/// 否则贴左边会漏出 7px 空白（看起来像没贴齐）。
+	/// </summary>
+	public static bool SetVisibleRect(nint h, Native.RECT visible)
+	{
+		if (h == IntPtr.Zero || !Native.GetWindowRect(h, out var lpRect))
+		{
+			return false;
+		}
+		Native.RECT target = visible;
+		if (Native.TryGetVisibleRect(h, out var r))
+		{
+			target = Tiling.InflateToWindowRect(visible, lpRect, r);
+		}
+		SetDragRect(h, target);
+		return true;
+	}
+
+
+	/// <summary>光标下的目标窗口（托盘快捷操作用；找不到返回 0）。</summary>
+	public static nint TargetUnderCursor()
+	{
+		try
+		{
+			if (!Native.GetCursorPos(out var lpPoint))
+			{
+				return IntPtr.Zero;
+			}
+			return FindTarget(lpPoint, allowFullscreen: true);
+		}
+		catch
+		{
+			return IntPtr.Zero;
+		}
+	}
+
+	/// <summary>把光标下的窗口在当前显示器居中（保持大小）。</summary>
+	public static bool CenterUnderCursor()
+	{
+		nint num = TargetUnderCursor();
+		if (num == IntPtr.Zero)
+		{
+			return false;
+		}
+		Native.POINT pt = default(Native.POINT);
+		Native.GetCursorPos(out pt);
+		Rectangle workingArea = Screen.FromPoint(new Point(pt.X, pt.Y)).WorkingArea;
+		Native.RECT work = new Native.RECT(workingArea.Left, workingArea.Top, workingArea.Right, workingArea.Bottom);
+		Native.RECT current;
+		if (!Native.TryGetVisibleRect(num, out var r))
+		{
+			if (!Native.GetWindowRect(num, out current))
+			{
+				return false;
+			}
+		}
+		else
+		{
+			current = r;
+		}
+		return SetVisibleRect(num, Tiling.Centered(work, current));
+	}
+
+	/// <summary>把光标下的窗口送到下一块显示器，保持相对位置与大小。</summary>
+	public static bool MoveToNextMonitor()
+	{
+		nint num = TargetUnderCursor();
+		if (num == IntPtr.Zero)
+		{
+			return false;
+		}
+		Native.RECT r;
+		if (!Native.TryGetVisibleRect(num, out var r2))
+		{
+			if (!Native.GetWindowRect(num, out r))
+			{
+				return false;
+			}
+		}
+		else
+		{
+			r = r2;
+		}
+		Screen[] allScreens = Screen.AllScreens;
+		if (allScreens.Length < 2)
+		{
+			return false;
+		}
+		Point point = new Point(r.Left + r.Width / 2, r.Top + r.Height / 2);
+		int num2 = 0;
+		for (int i = 0; i < allScreens.Length; i++)
+		{
+			if (allScreens[i].Bounds.Contains(point))
+			{
+				num2 = i;
+				break;
+			}
+		}
+		Screen screen = allScreens[(num2 + 1) % allScreens.Length];
+		Rectangle workingArea = allScreens[num2].WorkingArea;
+		double num3 = ((workingArea.Width > 0) ? ((double)(r.Left - workingArea.Left) / (double)workingArea.Width) : 0.0);
+		double num4 = ((workingArea.Height > 0) ? ((double)(r.Top - workingArea.Top) / (double)workingArea.Height) : 0.0);
+		Rectangle workingArea2 = screen.WorkingArea;
+		int width = Math.Min(r.Width, workingArea2.Width);
+		int height = Math.Min(r.Height, workingArea2.Height);
+		int left = workingArea2.Left + (int)Math.Round(num3 * (double)workingArea2.Width);
+		int top = workingArea2.Top + (int)Math.Round(num4 * (double)workingArea2.Height);
+		left = Math.Max(workingArea2.Left, Math.Min(left, workingArea2.Right - width));
+		top = Math.Max(workingArea2.Top, Math.Min(top, workingArea2.Bottom - height));
+		return SetVisibleRect(num, new Native.RECT(left, top, left + width, top + height));
+	}
+
+	/// <summary>切换光标下窗口的"总在最前"。</summary>
+	public static bool ToggleTopmostUnderCursor(out bool nowTopmost)
+	{
+		nowTopmost = false;
+		nint num = TargetUnderCursor();
+		if (num == IntPtr.Zero)
+		{
+			return false;
+		}
+		long windowLong = Native.GetWindowLong(num, -20);
+		bool flag = (windowLong & 8) != 0;
+		nint hWndInsertAfter = flag ? new IntPtr(-2) : new IntPtr(-1);
+		Native.SetWindowPos(num, hWndInsertAfter, 0, 0, 0, 0, Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+		nowTopmost = !flag;
 		return true;
 	}
 

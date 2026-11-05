@@ -1,4 +1,4 @@
-// HoldDrag · Core/DragEngine.cs
+﻿// HoldDrag · Core/DragEngine.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -89,6 +89,18 @@ internal sealed class DragEngine : IDisposable
 
 	private volatile bool _frameWanted;
 
+	/// <summary>尺寸 HUD（拖动时显示 W × H）。</summary>
+	private readonly HintOverlay _hud = new HintOverlay();
+
+	/// <summary>吸附引导线（独立窗口，和 HUD 互不干扰）。</summary>
+	private readonly HintOverlay _guide = new HintOverlay();
+
+	private nint _undoHwnd;
+
+	private Native.RECT _undoRect;
+
+	private long _undoAt;
+
 	/// <summary>已向目标窗口发过 WM_ENTERSIZEMOVE / 事件 10，退出时必须成对补上（见 Cleanup / End）。</summary>
 	private volatile bool _sizeMoveActive;
 
@@ -167,6 +179,8 @@ internal sealed class DragEngine : IDisposable
 	public void Dispose()
 	{
 		Cancel();
+		_hud.Dispose();
+		_guide.Dispose();
 		_worker.Dispose();
 		if (_overlaysReady)
 		{
@@ -180,6 +194,8 @@ internal sealed class DragEngine : IDisposable
 	{
 		try
 		{
+			_hud.Start();
+			_guide.Start();
 			_frame.EnsureCreated();
 			_overlaysReady = true;
 		}
@@ -423,6 +439,116 @@ internal sealed class DragEngine : IDisposable
 		return true;
 	}
 
+	/// <summary>
+	/// 撤销上一次拖动：把窗口矩形还原回拖动开始前。
+	/// 只在 5 秒内有效，且窗口还活着 —— 否则用户按 Ctrl+Z 会去改一个已经关掉的窗口。
+	/// </summary>
+	public bool TryUndoLast()
+	{
+		if (_undoAt == 0L || _undoHwnd == IntPtr.Zero)
+		{
+			return false;
+		}
+		if (Environment.TickCount64 - _undoAt > 5000)
+		{
+			_undoAt = 0L;
+			return false;
+		}
+		if (!Native.IsWindow(_undoHwnd))
+		{
+			_undoAt = 0L;
+			return false;
+		}
+		try
+		{
+			WindowActions.SetDragRect(_undoHwnd, _undoRect);
+			Log.Info("[撤销] 已把窗口 " + ((IntPtr)_undoHwnd).ToInt64().ToString("X") + " 还原到 " + _undoRect.Left + "," + _undoRect.Top + " " + _undoRect.Width + "x" + _undoRect.Height);
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			return false;
+		}
+		_undoAt = 0L;
+		return true;
+	}
+
+	internal bool HasUndoForTest => _undoAt != 0L && Environment.TickCount64 - _undoAt <= 5000;
+
+	/// <summary>自检：直接显示一次 HUD，验证分层窗口从创建到渲染整条链路。</summary>
+	internal void ProbeShowHudForTest(string text)
+	{
+		_hud.Start();
+		_guide.Start();
+		Native.RECT rect = new Native.RECT(200, 200, 900, 700);
+		_hud.ShowText(text, rect, 1f);
+	}
+
+	internal void ProbeShowGuideForTest()
+	{
+		_guide.Start();
+		_guide.ShowLine(vertical: true, 400, 100, 900, Color.FromArgb(145, 140, 255));
+	}
+
+	internal bool HudVisibleForTest
+	{
+		get
+		{
+			Thread.Sleep(80);
+			return _hud.VisibleForTest;
+		}
+	}
+
+	internal bool GuideVisibleForTest
+	{
+		get
+		{
+			Thread.Sleep(80);
+			return _guide.VisibleForTest;
+		}
+	}
+
+	internal void ProbeHideHintsForTest()
+	{
+		_hud.Hide();
+		_guide.Hide();
+	}
+
+	internal void ArmUndoForTest(nint hwnd, Native.RECT rect)
+	{
+		_undoHwnd = hwnd;
+		_undoRect = rect;
+		_undoAt = Environment.TickCount64;
+	}
+
+	/// <summary>光标所在显示器的工作区（不含任务栏）。</summary>
+	private static Native.RECT WorkAreaOfPoint(Native.POINT pt)
+	{
+		try
+		{
+			Rectangle workingArea = Screen.FromPoint(new Point(pt.X, pt.Y)).WorkingArea;
+			return new Native.RECT(workingArea.Left, workingArea.Top, workingArea.Right, workingArea.Bottom);
+		}
+		catch
+		{
+			return new Native.RECT(0, 0, 1920, 1080);
+		}
+	}
+
+	/// <summary>吸附阈值按目标窗口的 DPI 缩放（150% 屏上 8px 会显得很紧）。</summary>
+	private static int ScaledThreshold(int threshold, nint hwnd)
+	{
+		try
+		{
+			int num = Native.DpiOfWindow(hwnd);
+			return Math.Max(1, (int)Math.Round((double)threshold * (double)num / 96.0));
+		}
+		catch
+		{
+			return threshold;
+		}
+	}
+
 	private static Native.RECT ComputeInset(nint hwnd, Native.RECT wr)
 	{
 		if (!Native.TryGetVisibleRect(hwnd, out var r))
@@ -590,6 +716,33 @@ internal sealed class DragEngine : IDisposable
 					ShakeAction.ToggleMinimizeOthers(s.Hwnd);
 				}
 			}
+			if (appConfig.SnapToEdges && appConfig.SnapThreshold > 0 && (s.Move || s.Zone != ResizeZone.None))
+			{
+				Native.RECT work = WorkAreaOfPoint(pt);
+				SnapEngine.Result snap = (s.Move ? SnapEngine.SnapMove(rECT, work, ScaledThreshold(appConfig.SnapThreshold, s.Hwnd)) : SnapEngine.SnapResize(rECT, s.Zone == ResizeZone.Left, s.Zone == ResizeZone.Right, s.Zone == ResizeZone.Top, s.Zone == ResizeZone.Bottom, work, ScaledThreshold(appConfig.SnapThreshold, s.Hwnd)));
+				rECT = snap.Rect;
+				if (snap.GuideX >= 0)
+				{
+					_guide.ShowLine(vertical: true, snap.GuideX, work.Top, work.Bottom, appConfig.EffectiveFrameColor);
+				}
+				else if (snap.GuideY >= 0)
+				{
+					_guide.ShowLine(vertical: false, snap.GuideY, work.Left, work.Right, appConfig.EffectiveFrameColor);
+				}
+				else
+				{
+					_guide.Hide();
+				}
+			}
+			if (appConfig.ShowDragHud)
+			{
+				string text = rECT.Width + " × " + rECT.Height;
+				if (appConfig.DragHudShowPosition)
+				{
+					text = text + "  ·  " + rECT.Left + "," + rECT.Top;
+				}
+				_hud.ShowText(text, FrameRectOf(rECT, appConfig, out var _), (float)Native.DpiOfWindow(s.Hwnd) / 96f);
+			}
 			if (appConfig.ShowActivationFrame)
 			{
 				Native.RECT rectNow = FrameRectOf(rECT, appConfig, out var inset);
@@ -679,7 +832,12 @@ internal sealed class DragEngine : IDisposable
 				{
 					Step(pt, s, forceWrite: true);
 					WindowActions.NotifySizeMove(hwnd, start: false);
+					_hud.Hide();
+					_guide.Hide();
 				});
+				_undoHwnd = hwnd;
+				_undoRect = s.StartRect;
+				_undoAt = Environment.TickCount64;
 			}
 			else if (hwnd != IntPtr.Zero)
 			{
@@ -848,6 +1006,8 @@ internal sealed class DragEngine : IDisposable
 			if (_overlaysReady)
 			{
 				_frame.HideNowSync();
+			_hud.Hide();
+			_guide.Hide();
 			}
 			try
 			{

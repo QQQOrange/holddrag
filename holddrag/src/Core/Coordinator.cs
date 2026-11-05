@@ -76,6 +76,9 @@ internal sealed class Coordinator : IInputSink, IDisposable
 
 	private readonly bool[] _bufferedDown = new bool[3];
 
+	/// <summary>激活瞬间锁定的目标窗口：键盘布局用它，避免鼠标一抖就换窗口。</summary>
+	private nint _activeTarget;
+
 	private readonly Native.POINT[] _bufferedPt = new Native.POINT[3];
 
 	public bool Paused { get; private set; }
@@ -130,6 +133,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
 		AppConfig current = _store.Current;
 		bool allowFullscreen = current.AllowFullscreenWindows || current.ExitFullscreenOnTrigger;
 		nint num = WindowActions.FindTarget(lpPoint, allowFullscreen);
+		_activeTarget = num;
 		if (num != IntPtr.Zero)
 		{
 			bool flag = false;
@@ -157,8 +161,128 @@ internal sealed class Coordinator : IInputSink, IDisposable
 		}
 	}
 
+
+	/// <summary>Ctrl+Z：撤销上一次拖动（5 秒内有效）。</summary>
+	private bool TryHandleUndo(ref Native.KBDLLHOOKSTRUCT kb)
+	{
+		try
+		{
+			if (!_store.Current.UndoEnabled || kb.vkCode != 0x5A)
+			{
+				return false;
+			}
+			if ((Native.GetAsyncKeyState(0x11) & 0x8000) == 0)
+			{
+				return false;
+			}
+			if (!_drag.TryUndoLast())
+			{
+				return false;
+			}
+			Log.Info("[撤销] Ctrl+Z：已还原上一次拖动");
+			return true;
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			return false;
+		}
+	}
+
+	/// <summary>触发键按住期间用方向键 / 数字键布局目标窗口。</summary>
+	private bool TryHandleTiling(ref Native.KBDLLHOOKSTRUCT kb)
+	{
+		try
+		{
+			if (!_store.Current.KeyboardTiling || !_trigger.Active || _drag.IsDragging)
+			{
+				return false;
+			}
+			nint activeTarget = _activeTarget;
+			if (activeTarget == IntPtr.Zero || !Native.IsWindow(activeTarget))
+			{
+				return false;
+			}
+			if (!Native.GetCursorPos(out var pt))
+			{
+				return false;
+			}
+			Native.RECT work = WorkAreaOf(pt);
+			int vk = (int)kb.vkCode;
+			Native.RECT? rect = null;
+
+			switch (vk)
+			{
+			case 0x25:
+				rect = Tiling.Half(work, left: true);
+				break;
+			case 0x27:
+				rect = Tiling.Half(work, left: false);
+				break;
+			case 0x26:
+				Native.ShowWindow(activeTarget, 3);
+				Log.Info("[布局] ↑ 最大化");
+				return true;
+			case 0x28:
+				Native.ShowWindow(activeTarget, 9);
+				Log.Info("[布局] ↓ 还原");
+				return true;
+			case 0x30:
+			{
+				Native.RECT current;
+				if (Native.TryGetVisibleRect(activeTarget, out var r))
+				{
+					current = r;
+				}
+				else if (!Native.GetWindowRect(activeTarget, out current))
+				{
+					return false;
+				}
+				rect = Tiling.Centered(work, current);
+				break;
+			}
+			default:
+				if (vk >= 0x31 && vk <= 0x39)
+				{
+					rect = Tiling.Zone(vk - 0x30, work);
+				}
+				else if (vk >= 0x61 && vk <= 0x69)
+				{
+					rect = Tiling.Zone(vk - 0x60, work);
+				}
+				break;
+			}
+			if (!rect.HasValue)
+			{
+				return false;
+			}
+			WindowActions.SetVisibleRect(activeTarget, rect.Value);
+			Log.Info("[布局] 键=" + vk + " 目标=" + ((IntPtr)activeTarget).ToInt64().ToString("X") + " → " + rect.Value.Left + "," + rect.Value.Top + " " + rect.Value.Width + "x" + rect.Value.Height);
+			return true;
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			return false;
+		}
+	}
+
+	private static Native.RECT WorkAreaOf(Native.POINT pt)
+	{
+		try
+		{
+			Rectangle workingArea = Screen.FromPoint(new Point(pt.X, pt.Y)).WorkingArea;
+			return new Native.RECT(workingArea.Left, workingArea.Top, workingArea.Right, workingArea.Bottom);
+		}
+		catch
+		{
+			return new Native.RECT(0, 0, 1920, 1080);
+		}
+	}
+
 	private void OnTriggerDeactivated()
 	{
+		_activeTarget = IntPtr.Zero;
 		// 松开触发键 = 退出拖动模式。此刻若还在拖（真实链路上"鼠标抬起"这条事件同样可能
 		// 落在鼠标钩子重装的缝隙里丢掉），必须就地收尾 —— 否则窗口会一直跟着光标跑，
 		// 用户看到的是"松开 Enter 了窗口还在被拖着"，比拖不动更莫名其妙。
@@ -497,7 +621,19 @@ internal sealed class Coordinator : IInputSink, IDisposable
 			{
 				return false;
 			}
-			return _trigger.HandleKeyboard(down, ref kb);
+			if (down && TryHandleUndo(ref kb))
+			{
+				return true;
+			}
+			if (_trigger.HandleKeyboard(down, ref kb))
+			{
+				return true;
+			}
+			if (down && TryHandleTiling(ref kb))
+			{
+				return true;
+			}
+			return false;
 		}
 		finally
 		{

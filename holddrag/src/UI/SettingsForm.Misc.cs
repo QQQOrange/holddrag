@@ -109,6 +109,45 @@ internal sealed partial class SettingsForm
 		}
 	}
 
+	/// <summary>把配置 + 最近日志 + 系统信息打成一个 zip，方便用户报障。</summary>
+	private void ExportDiagnosticsBundle()
+	{
+		try
+		{
+			using SaveFileDialog saveFileDialog = new SaveFileDialog
+			{
+				Title = Loc.T("导出诊断包"),
+				Filter = Loc.T("压缩包") + " (*.zip)|*.zip",
+				FileName = "HoldDrag-诊断-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".zip",
+				AddExtension = true,
+				DefaultExt = "zip"
+			};
+			if (saveFileDialog.ShowDialog(this) != DialogResult.OK)
+			{
+				return;
+			}
+			string text = DiagnosticsBundle.Create(saveFileDialog.FileName, "当前页=" + _activePage + " 目标=" + _edit.TriggerKeyId);
+			_lblStatus.Text = Loc.T("诊断包已导出：") + text;
+			_lblStatus.ForeColor = Tokens.Success;
+			try
+			{
+				Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + text + "\"")
+				{
+					UseShellExecute = true
+				});
+			}
+			catch
+			{
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			_lblStatus.Text = Loc.T("导出失败：") + ex.Message;
+			_lblStatus.ForeColor = Tokens.Danger;
+		}
+	}
+
 	internal static int ProbeWheelSwallowed(FlatCombo c)
 	{
 		if (c is FlatCombo flatCombo)

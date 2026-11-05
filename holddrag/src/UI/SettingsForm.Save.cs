@@ -145,6 +145,12 @@ internal sealed partial class SettingsForm
 		_chkFullscreen.Checked = _edit.AllowFullscreenWindows;
 		_chkExitFullscreen.Checked = _edit.ExitFullscreenOnTrigger;
 		_chkShake.Checked = _edit.ShakeMinimizeOthers;
+		_chkShowHud.Checked = _edit.ShowDragHud;
+		_chkHudPos.Checked = _edit.DragHudShowPosition;
+		_chkSnap.Checked = _edit.SnapToEdges;
+		_numSnapThreshold.Value = Clamp(_edit.SnapThreshold, (int)_numSnapThreshold.Minimum, (int)_numSnapThreshold.Maximum);
+		_chkTiling.Checked = _edit.KeyboardTiling;
+		_chkUndo.Checked = _edit.UndoEnabled;
 		_txtBlacklist.Text = _edit.Blacklist;
 		_cmbRefreshMode.Items.Clear();
 		_cmbRefreshMode.Items.Add(new IdItem
@@ -642,6 +648,12 @@ internal sealed partial class SettingsForm
 		target.FrameOpacity = (int)_numFrameOpacity.Value;
 		target.CornerPercent = (int)_numCorner.Value;
 		target.ShakeMinimizeOthers = _chkShake.Checked;
+		target.ShowDragHud = _chkShowHud.Checked;
+		target.DragHudShowPosition = _chkHudPos.Checked;
+		target.SnapToEdges = _chkSnap.Checked;
+		target.SnapThreshold = (int)_numSnapThreshold.Value;
+		target.KeyboardTiling = _chkTiling.Checked;
+		target.UndoEnabled = _chkUndo.Checked;
 		target.DragRefreshMode = SelectedId(_cmbRefreshMode, target.DragRefreshMode);
 		target.DragRefreshHz = (int)_numRefreshHz.Value;
 		target.DoubleClickLeftMaximize = _chkDblLeft.Checked;
