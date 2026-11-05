@@ -215,6 +215,24 @@ internal sealed class DragEngine : IDisposable
 
 	public bool Begin(nint hwnd, bool move, int button, Native.POINT pt)
 	{
+		if (hwnd != IntPtr.Zero)
+		{
+			if (move && !AppRules.AllowsMove(hwnd))
+			{
+				Log.Info("[规则] 该程序只允许缩放，忽略这次移动");
+				return false;
+			}
+			if (!move && !AppRules.AllowsResize(hwnd))
+			{
+				Log.Info("[规则] 该程序只允许移动，忽略这次缩放");
+				return false;
+			}
+		}
+		return BeginCore(hwnd, move, button, pt);
+	}
+
+	private bool BeginCore(nint hwnd, bool move, int button, Native.POINT pt)
+	{
 		AppConfig appConfig = _cfg();
 		if (!Native.GetWindowRect(hwnd, out var lpRect))
 		{
@@ -427,7 +445,7 @@ internal sealed class DragEngine : IDisposable
 			thread.Name = "HoldDrag.Raise";
 			thread.Start();
 		}
-		if (appConfig.ShowActivationFrame)
+		if (appConfig.ShowActivationFrame && AppRules.AllowsFrame(hwnd))
 		{
 			_frame.HideOverlay();
 			ShowDragFrame(lpRect, appConfig);
@@ -743,7 +761,7 @@ internal sealed class DragEngine : IDisposable
 				}
 				_hud.ShowText(text, FrameRectOf(rECT, appConfig, out var _), (float)Native.DpiOfWindow(s.Hwnd) / 96f);
 			}
-			if (appConfig.ShowActivationFrame)
+			if (appConfig.ShowActivationFrame && AppRules.AllowsFrame(s.Hwnd))
 			{
 				Native.RECT rectNow = FrameRectOf(rECT, appConfig, out var inset);
 				_frame.RaiseAboveAll = true;

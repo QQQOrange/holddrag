@@ -95,6 +95,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
 		_trigger = new TriggerState(() => _store.Current);
 		_drag = new DragEngine(() => _store.Current);
 		WindowActions.ApplyBlacklist(_store.Current.Blacklist);
+		AppRules.Apply(_store.Current.AppRules);
 		WindowActions.AllowDragOwnWindows = _store.Current.AllowDragOwnWindows;
 		_trigger.Activated += OnTriggerActivated;
 		_trigger.Deactivated += OnTriggerDeactivated;
@@ -132,7 +133,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
 		}
 		AppConfig current = _store.Current;
 		bool allowFullscreen = current.AllowFullscreenWindows || current.ExitFullscreenOnTrigger;
-		nint num = WindowActions.FindTarget(lpPoint, allowFullscreen);
+		nint num = WindowActions.FindTarget(lpPoint, allowFullscreen, applyAppRules: true);
 		_activeTarget = num;
 		if (num != IntPtr.Zero)
 		{
@@ -579,6 +580,7 @@ internal sealed class Coordinator : IInputSink, IDisposable
 		ReleaseInjectedDowns("配置变更");
 		_trigger.Reset("配置变更");
 		WindowActions.ApplyBlacklist(_store.Current.Blacklist);
+		AppRules.Apply(_store.Current.AppRules);
 		WindowActions.AllowDragOwnWindows = _store.Current.AllowDragOwnWindows;
 		for (int i = 0; i < 3; i++)
 		{

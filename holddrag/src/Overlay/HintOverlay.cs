@@ -8,6 +8,7 @@
 // 既不影响外框的绘制，也不会抢焦点（WS_EX_NOACTIVATE + WS_EX_TRANSPARENT）。
 
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -62,6 +63,13 @@ internal sealed class HintOverlay : IDisposable
 
 	private Native.WndProc _proc;
 
+	/// <summary>
+	/// 窗口类回调必须活到进程结束：只存在实例字段里时，一旦持有它的对象被回收，
+	/// 系统再回调就是 "callback on a garbage collected delegate"（整个进程直接 FailFast）。
+	/// 这里用静态表钉住所有实例的委托。
+	/// </summary>
+	private static readonly List<Native.WndProc> ProcKeepAlive = new List<Native.WndProc>();
+
 	private int _appliedGen;
 
 	private int _wantGen;
@@ -95,6 +103,10 @@ internal sealed class HintOverlay : IDisposable
 		{
 			_threadId = Native.GetCurrentThreadId();
 			_proc = WindowProc;
+			lock (ProcKeepAlive)
+			{
+				ProcKeepAlive.Add(_proc);
+			}
 			Native.WNDCLASSEX lpwcx = new Native.WNDCLASSEX
 			{
 				cbSize = (uint)Marshal.SizeOf(typeof(Native.WNDCLASSEX)),

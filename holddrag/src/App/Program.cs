@@ -99,13 +99,31 @@ internal static class Program
 				text = text + " | SetProcessDpiAware: " + ex2.Message;
 			}
 		}
-		bool flag2 = HasArg(args, "--selftest");
+		if (HasArg(args, "--cmd"))
+		{
+			string text3 = ArgValue(args, "--cmd");
+			if (string.IsNullOrWhiteSpace(text3))
+			{
+				Console.Error.WriteLine("usage: HoldDrag.exe --cmd 「command」");
+				Environment.ExitCode = 2;
+				return;
+			}
+			string text4 = IpcServer.Send(text3);
+			Console.WriteLine(text4);
+			Environment.ExitCode = (text4.StartsWith("OK", StringComparison.Ordinal) ? 0 : 1);
+			return;
+		}
+		bool flag2 = HasArg(args, "--selftest") || HasArg(args, "--selftest-unit");
+		if (HasArg(args, "--selftest-unit"))
+		{
+			Environment.SetEnvironmentVariable("HOLDDRAG_SELFTEST_UNIT", "1");
+		}
 		bool flag3 = HasArg(args, "--stress");
 		bool flag4 = HasArg(args, "--dragbench");
 		bool flag5 = HasArg(args, "--probe");
 		bool flag6 = HasArg(args, "--no-elevate");
 		SmokeMode = HasArg(args, "--smoke");
-		string text2 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HoldDrag");
+		string text2 = AppPaths.DataDir;
 		try
 		{
 			Directory.CreateDirectory(text2);
@@ -442,7 +460,7 @@ internal static class Program
 		// 诊断路径也要认配置里的令牌，否则用户反馈"填了令牌还是被限流"时没法复现真实链路
 		try
 		{
-			ConfigStore configStore = new ConfigStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HoldDrag"));
+			ConfigStore configStore = new ConfigStore(AppPaths.DataDir);
 			configStore.Load();
 			Updater.Token = Updater.NormalizeToken(configStore.Current?.GitHubToken);
 			Console.WriteLine("令牌　　：" + (Updater.HasToken ? "已配置（不显示内容）" : "未配置（匿名请求 60 次/小时）"));

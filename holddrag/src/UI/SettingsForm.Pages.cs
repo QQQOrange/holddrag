@@ -89,6 +89,14 @@ internal sealed partial class SettingsForm
 		cardAux.Setting(_numSnapThreshold, 72, UnitLabel("px"), 26, Loc.T("吸附距离"), Loc.T("离边缘多近才吸附；0 = 关闭"));
 		cardAux.Toggle(_chkTiling, Loc.T("键盘分屏"), Loc.T("按住触发键后：← 左半屏、→ 右半屏、↑ 最大化、↓ 还原、1-9 九宫格、0 居中"));
 		cardAux.Toggle(_chkUndo, Loc.T("允许 Ctrl+Z 撤销"), Loc.T("拖完 5 秒内按 Ctrl+Z 可以还原窗口原来的位置和大小"));
+		Card cardRules = NewCard(page4, Loc.T("按程序规则"), Loc.T("对某个程序单独放行或限制，比黑名单细一档"));
+		cardRules.RegisterField(_txtAppRules);
+		cardRules.Setting(_cmbRuleMode, 170, _btnAddRule, DesignButtonWidth(Loc.T("点选窗口添加"), 110), Loc.T("添加规则"), Loc.T("先选规则类型，再点右边的按钮，然后把鼠标移到目标窗口上"));
+		cardRules.Setting(_txtAppRules, Loc.T("规则列表"), Loc.T("格式：程序名=类型，分号分隔。例：wps.exe=Ignore; code.exe=MoveOnly"));
+		Card cardLayout = NewCard(page4, Loc.T("工作区布局"), Loc.T("把当前所有窗口的位置存下来，之后一键恢复"));
+		cardLayout.Setting(_cmbLayouts, Loc.T("已保存的布局"), Loc.T("按 程序名 + 标题 匹配窗口，找不到的自动跳过"), 200);
+		cardLayout.Setting(_btnLayoutSave, DesignButtonWidth(Loc.T("保存当前…"), 100), _btnLayoutDelete, DesignButtonWidth(Loc.T("删除"), 74), Loc.T("保存 / 删除"), Loc.T("保存会记录当前所有可见窗口的位置和大小"));
+		cardLayout.Setting(_btnLayoutRestore, DesignButtonWidth(Loc.T("恢复选中布局"), 120), null, 0, Loc.T("恢复"), Loc.T("把窗口搬回保存时的位置；已经关掉的窗口会被忽略"));
 		Card card8 = NewCard(page4, Loc.T("窗口层级与全屏"), Loc.T("全屏 / 无边框窗口容易被拖成一片黑"));
 		card8.Toggle(_chkFront, Loc.T("开始拖动时把窗口提到最前"), Loc.T("不用先点一下激活它"));
 		card8.Toggle(_chkFullscreen, Loc.T("允许拖动全屏 / 无边框窗口（有风险）"), Loc.T("部分游戏和视频窗口拖完会显示异常"));

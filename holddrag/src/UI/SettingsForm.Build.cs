@@ -118,6 +118,29 @@ internal sealed partial class SettingsForm
 			TextAlign = ContentAlignment.MiddleLeft,
 			Text = ""
 		};
+		_txtSearch = new TextBox
+		{
+			BorderStyle = BorderStyle.FixedSingle,
+			ForeColor = Tokens.TextPrimary,
+			BackColor = Tokens.Surface,
+			Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel),
+			PlaceholderText = Loc.T("搜索设置…")
+		};
+		_txtSearch.KeyDown += delegate(object? s, KeyEventArgs e)
+		{
+			if (e.KeyCode == Keys.Enter)
+			{
+				e.SuppressKeyPress = true;
+				RunSearch(1);
+			}
+			else if (e.KeyCode == Keys.Escape)
+			{
+				_txtSearch.Clear();
+				_searchHits.Clear();
+				_searchIndex = -1;
+				_searchQuery = "";
+			}
+		};
 		_lblPageSub = new Label
 		{
 			AutoSize = false,
@@ -128,6 +151,7 @@ internal sealed partial class SettingsForm
 			Text = ""
 		};
 		_titleStrip.Controls.Add(_lblPageTitle);
+		_titleStrip.Controls.Add(_txtSearch);
 		_titleStrip.Controls.Add(_lblPageSub);
 		_btnMin = new CaptionButton
 		{
@@ -385,8 +409,13 @@ internal sealed partial class SettingsForm
 			Place(_btnMax, new Rectangle(_btnClose.Left - num4, num6, num4, num5));
 			Place(_btnMin, new Rectangle(_btnMax.Left - num4, num6, num4, num5));
 			// 标题 + 副标题：按实际文字宽度紧排，副标题跟在后面（不是钉死在某个 x）
+			// 搜索框：贴在最小化按钮左边（不影响标题/副标题的可用宽度）
+			int numSearch = S(180);
+			Place(_txtSearch, new Rectangle(_btnMin.Left - numSearch - S(10), num6 + (num5 - S(26)) / 2 + S(2), numSearch, S(26)));
 			int num8 = S(24);
-			int num9 = Math.Max(S(60), _btnMin.Left - num8 - S(16));
+			int num9 = Math.Max(S(60), _btnMin.Left - num8 - S(16) - numSearch - S(20));
+			// 副标题保持原来的宽度（不因搜索框而变窄，否则会折行）
+			num9 = Math.Max(S(60), _btnMin.Left - num8 - S(16));
 			int num10 = Math.Min(num9, TextRenderer.MeasureText(_lblPageTitle.Text, _lblPageTitle.Font).Width + S(8));
 			Place(_lblPageTitle, new Rectangle(num8, 0, num10, num));
 			Place(_lblPageSub, new Rectangle(num8 + num10 + S(12), 0, Math.Max(S(20), num9 - num10 - S(12)), num));
@@ -642,6 +671,47 @@ internal sealed partial class SettingsForm
 			ForeColor = Tokens.TextPrimary,
 			BackColor = Tokens.FieldFill,
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel)
+		};
+		_txtAppRules = new TextBox
+		{
+			BorderStyle = BorderStyle.None,
+			ForeColor = Tokens.TextPrimary,
+			BackColor = Tokens.FieldFill,
+			Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel)
+		};
+		_cmbRuleMode = NewCombo();
+		_btnAddRule = new FlatButton
+		{
+			Text = Loc.T("点选窗口添加")
+		};
+		_btnAddRule.Click += delegate
+		{
+			AddRuleFromWindow();
+		};
+		_cmbLayouts = NewCombo();
+		_btnLayoutSave = new FlatButton
+		{
+			Text = Loc.T("保存当前…")
+		};
+		_btnLayoutSave.Click += delegate
+		{
+			SaveLayoutFromUi();
+		};
+		_btnLayoutRestore = new FlatButton
+		{
+			Text = Loc.T("恢复选中布局")
+		};
+		_btnLayoutRestore.Click += delegate
+		{
+			RestoreLayoutFromUi();
+		};
+		_btnLayoutDelete = new FlatButton
+		{
+			Text = Loc.T("删除")
+		};
+		_btnLayoutDelete.Click += delegate
+		{
+			DeleteLayoutFromUi();
 		};
 		_btnPickExe = new FlatButton
 		{

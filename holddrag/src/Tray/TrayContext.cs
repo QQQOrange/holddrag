@@ -65,6 +65,9 @@ internal sealed class TrayContext : ApplicationContext
 
 	private readonly Icon _iconPaused;
 
+	/// <summary>脚本接口（命名管道）。</summary>
+	private IpcServer _ipc;
+
 	private SettingsForm _settings;
 
 	private bool _cleaned;
@@ -164,6 +167,16 @@ internal sealed class TrayContext : ApplicationContext
 		};
 		BuildTray();
 		ApplyConfig(initial: true);
+		try
+		{
+			_ipc = new IpcServer(HandleIpcCommand);
+			_ipc.Start();
+			Log.Info("[IPC] 已监听 " + IpcServer.PipeName);
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
 		if (!_store.Current.OnboardingDone)
 		{
 			// 托盘先起来，再弹引导：引导里要读配置、要能立即写入
@@ -482,6 +495,27 @@ internal sealed class TrayContext : ApplicationContext
 				Log.Info("[托盘] 置顶=" + nowTopmost);
 			}
 		}));
+		ToolStripMenuItem layoutMenu = new ToolStripMenuItem(Loc.T("工作区布局"));
+		foreach (LayoutStore.Layout item in LayoutStore.LoadAll())
+		{
+			LayoutStore.Layout captured = item;
+			layoutMenu.DropDownItems.Add(new ToolStripMenuItem(item.Name + " (" + item.Windows.Count + ")", null, delegate
+			{
+				int num2 = LayoutStore.Restore(captured);
+				Log.Info("[布局] 恢复 " + captured.Name + " 成功 " + num2 + "/" + captured.Windows.Count);
+			}));
+		}
+		if (layoutMenu.DropDownItems.Count > 0)
+		{
+			layoutMenu.DropDownItems.Add(new ToolStripSeparator());
+		}
+		layoutMenu.DropDownItems.Add(new ToolStripMenuItem(Loc.T("保存当前布局…"), null, delegate
+		{
+			LayoutStore.Layout layout = LayoutStore.Save(DateTime.Now.ToString("MMdd-HHmm"));
+			Log.Info("[布局] 已保存 " + layout.Name + " 共 " + layout.Windows.Count + " 个窗口");
+			RebuildTrayMenu();
+		}));
+		_menu.Items.Add(layoutMenu);
 		_menu.Items.Add(new ToolStripSeparator());
 		// 字段项（暂停/自启/提权）只接线一次，重建时仅重新挂回 Items，避免重复叠加处理器
 		if (!_menuHandlersWired)
@@ -763,6 +797,135 @@ internal sealed class TrayContext : ApplicationContext
 		return SystemIcons.Application;
 	}
 
+
+	/// <summary>
+	/// 脚本接口的命令处理。刻意保持"一行命令、一行回复"，方便 shell / AHK / Python 调用：
+	///   HoldDrag.exe --cmd "center"
+	/// </summary>
+	private string HandleIpcCommand(string command)
+	{
+		try
+		{
+			if (string.IsNullOrWhiteSpace(command))
+			{
+				return "ERR empty";
+			}
+			string[] array = command.Split(new char[1] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+			string text = array[0].ToLowerInvariant();
+			string text2 = ((array.Length > 1) ? string.Join(" ", array, 1, array.Length - 1) : "");
+			switch (text)
+			{
+			case "status":
+				return "OK v" + AppInfo.Version + " paused=" + _coord.Paused + " trigger=" + Loc.T(KeysUtil.DisplayName(_store.Current.TriggerKeyId)) + " rules=" + AppRules.Count + " layouts=" + LayoutStore.LoadAll().Count;
+			case "center":
+				return WindowActions.CenterUnderCursor() ? "OK centered" : "ERR no-window";
+			case "next-monitor":
+				return WindowActions.MoveToNextMonitor() ? "OK moved" : "ERR no-monitor-or-window";
+			case "topmost":
+				if (!WindowActions.ToggleTopmostUnderCursor(out var nowTopmost))
+				{
+					return "ERR no-window";
+				}
+				return "OK topmost=" + nowTopmost;
+			case "pause":
+				_coord.SetPaused(string.Equals(text2, "on", StringComparison.OrdinalIgnoreCase) || string.Equals(text2, "1", StringComparison.OrdinalIgnoreCase) || string.Equals(text2, "true", StringComparison.OrdinalIgnoreCase));
+				UpdateStatusText();
+				return "OK paused=" + _coord.Paused;
+			case "move":
+			{
+				if (array.Length < 5)
+				{
+					return "ERR usage: move <x> <y> <w> <h>";
+				}
+				if (!int.TryParse(array[1], out var result) || !int.TryParse(array[2], out var result2) || !int.TryParse(array[3], out var result3) || !int.TryParse(array[4], out var result4))
+				{
+					return "ERR bad-number";
+				}
+				nint num = WindowActions.TargetUnderCursor();
+				if (num == IntPtr.Zero)
+				{
+					return "ERR no-window";
+				}
+				if (result3 < 80 || result4 < 60)
+				{
+					return "ERR too-small";
+				}
+				WindowActions.SetVisibleRect(num, new Native.RECT(result, result2, result + result3, result2 + result4));
+				return "OK moved";
+			}
+			case "layout-save":
+			{
+				if (string.IsNullOrWhiteSpace(text2))
+				{
+					return "ERR usage: layout-save <name>";
+				}
+				LayoutStore.Layout layout = LayoutStore.Save(text2);
+				return "OK saved " + layout.Windows.Count;
+			}
+			case "layout-restore":
+			{
+				LayoutStore.Layout layout = LayoutStore.LoadAll().Find((LayoutStore.Layout l) => string.Equals(l.Name, text2, StringComparison.OrdinalIgnoreCase));
+				if (layout == null)
+				{
+					return "ERR not-found";
+				}
+				return "OK restored " + LayoutStore.Restore(layout);
+			}
+			case "layout-delete":
+				return LayoutStore.Delete(text2) ? "OK deleted" : "ERR not-found";
+			case "layout-list":
+				return "OK " + string.Join("|", LayoutStore.LoadAll().ConvertAll((LayoutStore.Layout l) => l.Name + "(" + l.Windows.Count + ")"));
+			case "windows":
+			{
+				StringBuilder stringBuilder = new StringBuilder();
+				int num2 = 0;
+				Native.EnumWindows(delegate(nint hwnd, nint lParam)
+				{
+					try
+					{
+						if (!Native.IsWindowVisible(hwnd) || (Native.GetWindowLong(hwnd, -20) & 0x80) != 0 || Native.GetWindowTextLengthW(hwnd) <= 0)
+						{
+							return true;
+						}
+						Native.GetWindowThreadProcessId(hwnd, out var lpdwProcessId);
+						if (lpdwProcessId == (uint)Environment.ProcessId)
+						{
+							return true;
+						}
+						if (num2 >= 12)
+						{
+							return false;
+						}
+						Native.GetWindowRect(hwnd, out var lpRect);
+						if (stringBuilder.Length > 0)
+						{
+							stringBuilder.Append("|");
+						}
+						stringBuilder.Append(WindowActions.ProcessExeNameByPid(lpdwProcessId)).Append(':').Append(WindowActions.TitleOf(hwnd)).Append(':')
+							.Append(lpRect.Left).Append(",").Append(lpRect.Top).Append(",")
+							.Append(lpRect.Width).Append(",").Append(lpRect.Height);
+						num2++;
+					}
+					catch
+					{
+					}
+					return true;
+				}, IntPtr.Zero);
+				return "OK " + stringBuilder;
+			}
+			case "help":
+				return "OK commands: status|center|next-monitor|topmost|pause on/off|move x y w h|layout-save NAME|layout-restore NAME|layout-delete NAME|layout-list|windows";
+			default:
+				return "ERR unknown:" + text;
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			return "ERR " + ex.Message.Replace('\r', ' ').Replace('\n', ' ');
+		}
+	}
+
 	private static Icon CreatePausedIcon()
 	{
 		try
@@ -895,6 +1058,14 @@ internal sealed class TrayContext : ApplicationContext
 		try
 		{
 			_menu.Dispose();
+		try
+		{
+			_ipc?.Dispose();
+			_ipc = null;
+		}
+		catch
+		{
+		}
 		}
 		catch
 		{

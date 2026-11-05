@@ -114,6 +114,40 @@ internal sealed partial class SettingsForm
 
 	/// <summary>Ctrl+Z 撤销上一次拖动。</summary>
 	private FlatCheck _chkUndo;
+
+	/// <summary>按程序规则：程序名=类型。</summary>
+	private TextBox _txtAppRules;
+
+	private FlatCombo _cmbRuleMode;
+
+	private FlatButton _btnAddRule;
+
+	/// <summary>工作区布局。</summary>
+	private FlatCombo _cmbLayouts;
+
+	private FlatButton _btnLayoutSave;
+
+	private FlatButton _btnLayoutRestore;
+
+	private FlatButton _btnLayoutDelete;
+
+	/// <summary>设置页搜索框。</summary>
+	private TextBox _txtSearch;
+
+	private List<SearchHit> _searchHits = new List<SearchHit>();
+
+	private int _searchIndex = -1;
+
+	private string _searchQuery = "";
+
+	private struct SearchHit
+	{
+		public int Page;
+
+		public Card Card;
+
+		public string Label;
+	}
 	private TextBox _txtBlacklist;
 	private FlatButton _btnPickExe;
 	private FlatButton _btnPickWindow;

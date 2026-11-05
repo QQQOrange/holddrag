@@ -152,6 +152,52 @@ internal sealed partial class SettingsForm
 		}
 
 		/// <summary>整行说明文字（不是设置项，只是解释）。</summary>
+		internal bool HasRow(string label)
+		{
+			foreach (RowSpec row in _rows)
+			{
+				if (!string.IsNullOrEmpty(row.Label) && string.Equals(row.Label, label, StringComparison.Ordinal))
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		/// <summary>设置页搜索用：标题 / 副标题 / 每一行的标题和说明都参与匹配。</summary>
+		internal bool Matches(string query, out string label)
+		{
+			label = null;
+			if (string.IsNullOrEmpty(query))
+			{
+				return false;
+			}
+			if (!string.IsNullOrEmpty(Title) && Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				label = Title;
+				return true;
+			}
+			if (!string.IsNullOrEmpty(Subtitle) && Subtitle.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				label = Title + " · " + Subtitle;
+				return true;
+			}
+			foreach (RowSpec row in _rows)
+			{
+				if (!string.IsNullOrEmpty(row.Label) && row.Label.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+				{
+					label = Title + " · " + row.Label;
+					return true;
+				}
+				if (!string.IsNullOrEmpty(row.Note) && row.Note.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+				{
+					label = Title + " · " + (row.Label ?? row.Note);
+					return true;
+				}
+			}
+			return false;
+		}
+
 		public void Note(string text)
 		{
 			Label label = NewLabel(text, 12, Tokens.TextTertiary, bold: false);

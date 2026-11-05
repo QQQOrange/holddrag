@@ -102,6 +102,9 @@ internal sealed class AppConfig
 	/// <summary>拖完 5 秒内按 Ctrl+Z 可以撤销这次移动/缩放。</summary>
 	public bool UndoEnabled { get; set; }
 
+	/// <summary>按程序规则：exe=Mode;exe=Mode（见 Core/AppRules.cs）。</summary>
+	public string AppRules { get; set; }
+
 	/// <summary>首次启动引导是否已经看过。</summary>
 	public bool OnboardingDone { get; set; }
 
@@ -187,6 +190,7 @@ internal sealed class AppConfig
 		KeyboardTiling = true;
 		UndoEnabled = true;
 		OnboardingDone = false;
+		AppRules = string.Empty;
 		CornerPercent = 26;
 		Blacklist = string.Empty;
 		DragRefreshMode = "Auto";

@@ -310,6 +310,30 @@ internal static class WindowActions
 		return false;
 	}
 
+	/// <summary>窗口标题（读不到就返回空串）。</summary>
+	public static string TitleOf(nint h)
+	{
+		try
+		{
+			if (h == IntPtr.Zero)
+			{
+				return string.Empty;
+			}
+			int windowTextLengthW = Native.GetWindowTextLengthW(h);
+			if (windowTextLengthW <= 0)
+			{
+				return string.Empty;
+			}
+			System.Text.StringBuilder stringBuilder = new System.Text.StringBuilder(windowTextLengthW + 2);
+			Native.GetWindowTextW(h, stringBuilder, stringBuilder.Capacity);
+			return stringBuilder.ToString();
+		}
+		catch
+		{
+			return string.Empty;
+		}
+	}
+
 	public static string ProcessExeName(nint h)
 	{
 		try
@@ -379,7 +403,21 @@ internal static class WindowActions
 		return FindTarget(pt, allowFullscreen: true);
 	}
 
-	public static nint FindTarget(Native.POINT pt, bool allowFullscreen)
+	/// <summary>
+	/// 找光标下的目标窗口。<paramref name="applyAppRules"/> = true 时跳过被规则标成 Ignore 的程序
+	/// （拖动链路要过滤；托盘/脚本的显式操作不该被自己的规则挡住）。
+	/// </summary>
+	public static nint FindTarget(Native.POINT pt, bool allowFullscreen, bool applyAppRules = false)
+	{
+		nint num = FindTargetCore(pt, allowFullscreen);
+		if (num != IntPtr.Zero && applyAppRules && AppRules.ShouldIgnore(num))
+		{
+			return IntPtr.Zero;
+		}
+		return num;
+	}
+
+	private static nint FindTargetCore(Native.POINT pt, bool allowFullscreen)
 	{
 		if (ForcedTargetForTest != IntPtr.Zero)
 		{

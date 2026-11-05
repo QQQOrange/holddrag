@@ -48,6 +48,40 @@ internal sealed partial class SettingsForm
 		return _gridColor.ProbeIdAt(index);
 	}
 
+	/// <summary>自测用：跑一次搜索，返回命中数。</summary>
+	internal int ProbeSearch(string query)
+	{
+		_txtSearch.Text = query;
+		RunSearch(1);
+		Application.DoEvents();
+		return _searchHits.Count;
+	}
+
+	internal string ProbeSearchStatus()
+	{
+		return _lblStatus.Text;
+	}
+
+	/// <summary>自测用：页面上是否有这一行（卡片可见 + 行标题匹配）。</summary>
+	internal bool ProbeControlVisible(string label)
+	{
+		foreach (Page page in _pages)
+		{
+			if (!page.Host.Visible)
+			{
+				continue;
+			}
+			foreach (Card card in page.Cards)
+			{
+				if (card.Visible && card.HasRow(label))
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
 	/// <summary>自测用：切到指定页。</summary>
 	internal void ProbeSelectPage(int index)
 	{

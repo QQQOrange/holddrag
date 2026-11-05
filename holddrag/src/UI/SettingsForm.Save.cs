@@ -151,6 +151,21 @@ internal sealed partial class SettingsForm
 		_numSnapThreshold.Value = Clamp(_edit.SnapThreshold, (int)_numSnapThreshold.Minimum, (int)_numSnapThreshold.Maximum);
 		_chkTiling.Checked = _edit.KeyboardTiling;
 		_chkUndo.Checked = _edit.UndoEnabled;
+		_txtAppRules.Text = _edit.AppRules ?? "";
+		if (_cmbRuleMode.Items.Count == 0)
+		{
+			string[] all = AppRules.All;
+			foreach (string text in all)
+			{
+				_cmbRuleMode.Items.Add(new IdItem
+				{
+					Value = text,
+					Text = AppRules.DisplayName(text)
+				});
+			}
+			_cmbRuleMode.SelectedIndex = 0;
+		}
+		RefreshLayoutCombo();
 		_txtBlacklist.Text = _edit.Blacklist;
 		_cmbRefreshMode.Items.Clear();
 		_cmbRefreshMode.Items.Add(new IdItem
@@ -654,6 +669,8 @@ internal sealed partial class SettingsForm
 		target.SnapThreshold = (int)_numSnapThreshold.Value;
 		target.KeyboardTiling = _chkTiling.Checked;
 		target.UndoEnabled = _chkUndo.Checked;
+		target.AppRules = AppRules.Normalize(_txtAppRules.Text);
+		AppRules.Apply(target.AppRules);
 		target.DragRefreshMode = SelectedId(_cmbRefreshMode, target.DragRefreshMode);
 		target.DragRefreshHz = (int)_numRefreshHz.Value;
 		target.DoubleClickLeftMaximize = _chkDblLeft.Checked;

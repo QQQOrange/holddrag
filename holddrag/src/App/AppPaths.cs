@@ -1,4 +1,4 @@
-// HoldDrag · App/AppPaths.cs
+﻿// HoldDrag · App/AppPaths.cs
 
 using System;
 using System.Collections.Concurrent;
@@ -47,6 +47,52 @@ internal static class AppPaths
 		get
 		{
 			return string.IsNullOrEmpty(HostPath) ? ExePath : HostPath;
+		}
+	}
+
+	/// <summary>
+	/// 数据目录：默认 %APPDATA%\HoldDrag；如果 exe 同目录下有 <c>portable.txt</c>，
+	/// 就改成 exe 旁边的 <c>data\</c>（U 盘 / 绿色版）。启动器与主程序都用这一份逻辑。
+	/// </summary>
+	public static string DataDir
+	{
+		get
+		{
+			try
+			{
+				string directoryName = Path.GetDirectoryName(EntryPath);
+				if (!string.IsNullOrEmpty(directoryName))
+				{
+					string path = Path.Combine(directoryName, "portable.txt");
+					if (File.Exists(path))
+					{
+						string text = Path.Combine(directoryName, "data");
+						Directory.CreateDirectory(text);
+						return text;
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+			return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HoldDrag");
+		}
+	}
+
+	public static bool IsPortable
+	{
+		get
+		{
+			try
+			{
+				string directoryName = Path.GetDirectoryName(EntryPath);
+				return !string.IsNullOrEmpty(directoryName) && File.Exists(Path.Combine(directoryName, "portable.txt"));
+			}
+			catch
+			{
+				return false;
+			}
 		}
 	}
 

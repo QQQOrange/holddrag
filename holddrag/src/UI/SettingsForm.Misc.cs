@@ -109,6 +109,280 @@ internal sealed partial class SettingsForm
 		}
 	}
 
+
+	// ======================= 按程序规则 =======================
+
+	private void AddRuleFromWindow()
+	{
+		try
+		{
+			nint num = WindowActions.TargetUnderCursor();
+			if (num == IntPtr.Zero)
+			{
+				_lblStatus.Text = Loc.T("没有找到窗口：把鼠标移到目标窗口上再点");
+				_lblStatus.ForeColor = Tokens.Danger;
+				return;
+			}
+			string text = WindowActions.ProcessExeName(num);
+			if (string.IsNullOrEmpty(text))
+			{
+				_lblStatus.Text = Loc.T("读不到这个窗口的程序名（权限更高？）");
+				_lblStatus.ForeColor = Tokens.Danger;
+				return;
+			}
+			string text2 = ((_cmbRuleMode.SelectedItem is IdItem idItem) ? idItem.Value : AppRules.Ignore);
+			List<string> list = new List<string>();
+			string[] array = (_txtAppRules.Text ?? "").Split(new char[1] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+			foreach (string text3 in array)
+			{
+				string text4 = text3.Trim();
+				if (text4.Length != 0 && !text4.StartsWith(text + "=", StringComparison.OrdinalIgnoreCase))
+				{
+					list.Add(text4);
+				}
+			}
+			list.Add(text + "=" + text2);
+			_txtAppRules.Text = string.Join(";", list);
+			_lblStatus.Text = Loc.T("已添加：") + text + " → " + AppRules.DisplayName(text2);
+			_lblStatus.ForeColor = Tokens.Success;
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	// ======================= 工作区布局 =======================
+
+	private void RefreshLayoutCombo()
+	{
+		try
+		{
+			string text = ((_cmbLayouts.SelectedItem is IdItem idItem) ? idItem.Value : null);
+			List<LayoutStore.Layout> list = LayoutStore.LoadAll();
+			list.Sort((LayoutStore.Layout a, LayoutStore.Layout b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
+			_cmbLayouts.BeginUpdate();
+			_cmbLayouts.Items.Clear();
+			foreach (LayoutStore.Layout item in list)
+			{
+				_cmbLayouts.Items.Add(new IdItem
+				{
+					Value = item.Name,
+					Text = item.Name + "  ·  " + item.Windows.Count + Loc.T(" 个窗口")
+				});
+			}
+			_cmbLayouts.EndUpdate();
+			if (_cmbLayouts.Items.Count > 0)
+			{
+				int num = 0;
+				for (int i = 0; i < _cmbLayouts.Items.Count; i++)
+				{
+					if (_cmbLayouts.Items[i] is IdItem idItem2 && string.Equals(idItem2.Value, text, StringComparison.OrdinalIgnoreCase))
+					{
+						num = i;
+						break;
+					}
+				}
+				_cmbLayouts.SelectedIndex = num;
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	private void SaveLayoutFromUi()
+	{
+		try
+		{
+			string text = AskText(Loc.T("保存布局"), Loc.T("布局 ") + DateTime.Now.ToString("MMdd-HHmm"));
+			if (string.IsNullOrEmpty(text))
+			{
+				return;
+			}
+			LayoutStore.Layout layout = LayoutStore.Save(text);
+			RefreshLayoutCombo();
+			_lblStatus.Text = Loc.T("已保存布局：") + text + "（" + layout.Windows.Count + Loc.T(" 个窗口）");
+			_lblStatus.ForeColor = Tokens.Success;
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+			_lblStatus.Text = Loc.T("保存布局失败：") + ex.Message;
+			_lblStatus.ForeColor = Tokens.Danger;
+		}
+	}
+
+	private void RestoreLayoutFromUi()
+	{
+		try
+		{
+			if (!(_cmbLayouts.SelectedItem is IdItem idItem))
+			{
+				_lblStatus.Text = Loc.T("还没有保存过布局");
+				_lblStatus.ForeColor = Tokens.Danger;
+				return;
+			}
+			LayoutStore.Layout layout = LayoutStore.LoadAll().Find((LayoutStore.Layout l) => string.Equals(l.Name, idItem.Value, StringComparison.OrdinalIgnoreCase));
+			if (layout == null)
+			{
+				_lblStatus.Text = Loc.T("找不到这个布局");
+				_lblStatus.ForeColor = Tokens.Danger;
+				return;
+			}
+			int num = LayoutStore.Restore(layout);
+			_lblStatus.Text = Loc.T("已恢复布局：") + layout.Name + "（" + num + " / " + layout.Windows.Count + Loc.T(" 个窗口）");
+			_lblStatus.ForeColor = Tokens.Success;
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	private void DeleteLayoutFromUi()
+	{
+		try
+		{
+			if (!(_cmbLayouts.SelectedItem is IdItem idItem))
+			{
+				return;
+			}
+			LayoutStore.Delete(idItem.Value);
+			RefreshLayoutCombo();
+			_lblStatus.Text = Loc.T("已删除布局：") + idItem.Value;
+			_lblStatus.ForeColor = Tokens.Success;
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	/// <summary>一个极简的输入框（Aurora 配色），用来问布局名字。</summary>
+	private string AskText(string title, string initial)
+	{
+		using Form form = new Form
+		{
+			Text = title,
+			FormBorderStyle = FormBorderStyle.FixedDialog,
+			StartPosition = FormStartPosition.CenterParent,
+			ClientSize = new Size(Sc(380), Sc(140)),
+			BackColor = Tokens.Surface,
+			ForeColor = Tokens.TextPrimary,
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel),
+			ShowInTaskbar = false,
+			MaximizeBox = false,
+			MinimizeBox = false
+		};
+		TextBox textBox = new TextBox
+		{
+			Bounds = new Rectangle(Sc(20), Sc(26), Sc(340), Sc(28)),
+			Text = initial ?? "",
+			BorderStyle = BorderStyle.FixedSingle,
+			BackColor = Tokens.FieldFill,
+			ForeColor = Tokens.TextPrimary,
+			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel)
+		};
+		FlatButton flatButton = new FlatButton
+		{
+			Text = Loc.T("确定"),
+			Bounds = new Rectangle(Sc(200), Sc(84), Sc(74), Sc(34))
+		};
+		flatButton.Click += delegate
+		{
+			form.DialogResult = DialogResult.OK;
+		};
+		FlatButton flatButton2 = new FlatButton
+		{
+			Text = Loc.T("取消"),
+			Bounds = new Rectangle(Sc(286), Sc(84), Sc(74), Sc(34))
+		};
+		flatButton2.Click += delegate
+		{
+			form.DialogResult = DialogResult.Cancel;
+		};
+		form.Controls.Add(textBox);
+		form.Controls.Add(flatButton);
+		form.Controls.Add(flatButton2);
+		form.ActiveControl = textBox;
+		textBox.SelectAll();
+		if (form.ShowDialog(this) != DialogResult.OK)
+		{
+			return null;
+		}
+		return textBox.Text.Trim();
+	}
+
+	// ======================= 设置页搜索 =======================
+
+	private void RunSearch(int direction)
+	{
+		try
+		{
+			string text = (_txtSearch.Text ?? "").Trim();
+			if (text.Length == 0)
+			{
+				return;
+			}
+			if (!string.Equals(text, _searchQuery, StringComparison.Ordinal))
+			{
+				_searchQuery = text;
+				_searchHits = FindHits(text);
+				_searchIndex = -1;
+			}
+			if (_searchHits.Count == 0)
+			{
+				_lblStatus.Text = Loc.T("没有找到：") + text;
+				_lblStatus.ForeColor = Tokens.Danger;
+				return;
+			}
+			_searchIndex = (_searchIndex + direction + _searchHits.Count) % _searchHits.Count;
+			SearchHit searchHit = _searchHits[_searchIndex];
+			SelectPage(searchHit.Page);
+			Page page = _pages[searchHit.Page];
+			if (searchHit.Card != null && page.Host != null)
+			{
+				page.Host.Offset = Math.Max(0, searchHit.Card.Top - Sc(20));
+			}
+			_lblStatus.Text = Loc.T("「") + text + Loc.T("」 ") + (_searchIndex + 1) + "/" + _searchHits.Count + Loc.T("：") + searchHit.Label;
+			_lblStatus.ForeColor = Tokens.TextSecondary;
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	private List<SearchHit> FindHits(string query)
+	{
+		List<SearchHit> list = new List<SearchHit>();
+		try
+		{
+			for (int i = 0; i < _pages.Count; i++)
+			{
+				foreach (Card card in _pages[i].Cards)
+				{
+					if (card.Matches(query, out var label))
+					{
+						list.Add(new SearchHit
+						{
+							Page = i,
+							Card = card,
+							Label = label
+						});
+					}
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+		return list;
+	}
+
 	/// <summary>把配置 + 最近日志 + 系统信息打成一个 zip，方便用户报障。</summary>
 	private void ExportDiagnosticsBundle()
 	{

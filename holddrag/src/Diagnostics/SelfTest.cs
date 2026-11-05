@@ -196,6 +196,7 @@ internal static partial class SelfTest
 		{
 		}
 		_only = Environment.GetEnvironmentVariable("HOLDDRAG_SELFTEST_ONLY");
+		_unitMode = string.Equals(Environment.GetEnvironmentVariable("HOLDDRAG_SELFTEST_UNIT"), "1", StringComparison.Ordinal);
 		StartWatchdog(dir);
 		Line("==== 长按拖窗 自检 ====");
 		Line("时间：" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -313,6 +314,12 @@ internal static partial class SelfTest
 		Safe("T108 诊断包：生成的 zip 里包含 system.txt 与版本/显示器信息", TestDiagnosticsBundle);
 		Safe("T109 新配置项默认值与越界归一（HUD / 吸附 / 分屏 / 撤销 / 引导）", TestNewConfigDefaults);
 		Safe("T110 尺寸 HUD 与吸附引导线：分层窗口能创建、显示、隐藏", TestHudOverlay);
+		Safe("T111 按程序规则：解析 / 匹配 / 非法条目丢弃", TestAppRules);
+		Safe("T112 工作区布局：保存 / 读取 / 恢复 / 删除", TestLayoutStore);
+		Safe("T113 脚本接口：命名管道一条命令一来一回", TestIpcRoundTrip);
+		Safe("T114 设置搜索：关键字命中与状态提示", TestSettingsSearch);
+		Safe("T115 便携模式：数据目录判定", TestPortableMode);
+		Safe("T116 规则与布局的界面行真的存在", TestRulesAndLayoutUi);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();
@@ -1167,8 +1174,33 @@ internal static partial class SelfTest
 	/// </summary>
 	private static string _only;
 
+	/// <summary>CI 模式：只跑纯逻辑用例（配置、按键、吸附、布局换算、诊断包、规则）。</summary>
+	private static bool _unitMode;
+
+	private static readonly string[] UnitPrefixes = new string[18]
+	{
+		"T01", "T02", "T03", "T04", "T05", "T07", "T08", "T09", "T10", "T11", "T12", "T13", "T14", "T16", "T17", "T29", "T105", "T106"
+	};
+
 	private static void Safe(string name, Action test)
 	{
+		if (_unitMode)
+		{
+			bool flag = false;
+			string[] unitPrefixes = UnitPrefixes;
+			foreach (string value in unitPrefixes)
+			{
+				if (name.StartsWith(value, StringComparison.OrdinalIgnoreCase))
+				{
+					flag = true;
+					break;
+				}
+			}
+			if (!flag)
+			{
+				return;
+			}
+		}
 		if (!string.IsNullOrEmpty(_only) && name.IndexOf(_only, StringComparison.OrdinalIgnoreCase) < 0)
 		{
 			return;

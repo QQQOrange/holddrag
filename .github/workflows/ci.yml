@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build (app)
+        run: dotnet build holddrag/src/HoldDrag.csproj -c Release --nologo
+
+      - name: Publish (app)
+        run: dotnet publish holddrag/src/HoldDrag.csproj -c Release --nologo -o out/app
+
+      - name: Build (launcher)
+        run: dotnet build launcher/HoldDragLauncher.csproj -c Release --nologo
+
+      - name: Unit self-test
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "out/app/HoldDrag.App.exe"
+          $p = Start-Process -FilePath $exe -ArgumentList "--selftest-unit" -PassThru -Wait
+          $log = Join-Path $env:APPDATA "HoldDrag\selftest.txt"
+          if (Test-Path $log) { Get-Content $log | Write-Host }
+          if ($p.ExitCode -ne 0) { throw "self-test failed with exit code $($p.ExitCode)" }
+          $text = Get-Content $log -Raw
+          if ($text -match '\[FAIL\]') { throw "self-test reported failures" }
+
+      - name: Upload self-test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-log
+          path: ${{ env.APPDATA }}/HoldDrag/selftest.txt
+          if-no-files-found: ignore
+
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: HoldDrag-App
+          path: out/app/HoldDrag.App.exe
