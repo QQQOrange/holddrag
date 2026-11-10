@@ -234,6 +234,17 @@ internal static class Native
 	}
 
 	[StructLayout(LayoutKind.Sequential)]
+	internal struct SECURITY_ATTRIBUTES
+	{
+		public int nLength;
+
+		public nint lpSecurityDescriptor;
+
+		[MarshalAs(UnmanagedType.Bool)]
+		public bool bInheritHandle;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
 	internal struct GUITHREADINFO
 	{
 		public int cbSize;

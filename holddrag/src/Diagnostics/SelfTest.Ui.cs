@@ -1136,18 +1136,23 @@ internal static partial class SelfTest
 		Check(probeHelpPanel != null, "取到帮助面板");
 		if (probeHelpPanel != null)
 		{
-			Eq(probeHelpPanel.EntryCountForTest, 6, "帮助条目数（触发/动作/外观/全屏/晃窗/黑名单）");
+			int helpCount = probeHelpPanel.EntryCountForTest;
+		Check(helpCount >= 6, "帮助条目数（至少覆盖触发/动作/外观/全屏/晃窗/黑名单）", "实际 " + helpCount);
+		Check(helpCount >= 12, "★ 新增的 HUD / 吸附 / 分屏 / 撤销 / 规则 / 布局 / 命令行 / 诊断都在帮助里", "实际 " + helpCount);
 			probeHelpPanel.OpenRangeForTest(out var top, out var bottom);
 			Check(bottom <= probeHelpPanel.Height, "★ 默认展开项的内容完全落在面板高度内（不会被裁掉）", "内容底 " + bottom + " 面板高 " + probeHelpPanel.Height);
 			Check(top == 0, "默认展开第一项（从顶部开始）", "top=" + top);
-			int y = probeHelpPanel.Height - Fields_Sc(30);
+			// 手风琴：展开项变了高度会变，所以每次点击前都重新按"当前"几何算一次落点
+			int y = probeHelpPanel.HeaderTopForTest(helpCount - 1) + probeHelpPanel.HeaderH / 2;
 			probeHelpPanel.ClickAtForTest(y);
 			Application.DoEvents();
-			Eq(probeHelpPanel.OpenIndexForTest, 5, "点最后一项的标题能把它展开");
+			Eq(probeHelpPanel.OpenIndexForTest, helpCount - 1, "点最后一项的标题能把它展开");
 			probeHelpPanel.OpenRangeForTest(out top, out bottom);
 			Check(bottom <= probeHelpPanel.Height, "★ 展开最后一项后内容仍然不越界", "内容底 " + bottom + " 面板高 " + probeHelpPanel.Height);
+			Check(probeHelpPanel.BodyH > 0, "★ 展开项真的有正文区（不容易被挤成 0）", "BodyH=" + probeHelpPanel.BodyH);
+			y = probeHelpPanel.HeaderTopForTest(helpCount - 1) + probeHelpPanel.HeaderH / 2;
 			probeHelpPanel.ClickAtForTest(y);
-			Eq(probeHelpPanel.OpenIndexForTest, 5, "再点一次已展开的项不会把它收起来（面板高度恒定）");
+			Eq(probeHelpPanel.OpenIndexForTest, helpCount - 1, "再点一次已展开的项不会把它收起来（同一项保持展开）");
 			probeHelpPanel.ClickAtForTest(Fields_Sc(10));
 			Eq(probeHelpPanel.OpenIndexForTest, 0, "点第一项能切回去");
 			settingsForm.Close();

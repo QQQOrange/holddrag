@@ -802,7 +802,7 @@ internal sealed partial class SettingsForm
 	{
 		get
 		{
-			return new string[8] { Glyph.Keyboard, Glyph.Move, Glyph.Color, Glyph.Speed, Glyph.Shield, Glyph.Chevron, Glyph.Help, Glyph.Info };
+			return new string[8] { Glyph.Keyboard, Glyph.Move, Glyph.Color, Glyph.Speed, Glyph.Shield, Glyph.Filter, Glyph.Help, Glyph.Info };
 		}
 	}
 

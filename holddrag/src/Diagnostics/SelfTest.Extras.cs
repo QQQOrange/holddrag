@@ -60,15 +60,17 @@ internal static partial class SelfTest
 
 	private static void TestIpcRoundTrip()
 	{
+		// 用独立管道名：正在运行的实例占着正式管道，抢同一个名字会让这条用例误判
+		string name = "HoldDrag.selftest." + Guid.NewGuid().ToString("N").Substring(0, 8);
 		using IpcServer ipcServer = new IpcServer(delegate(string cmd)
 		{
 			return (cmd == "ping") ? "OK pong" : "ERR unknown";
-		});
+		}, name);
 		ipcServer.Start();
-		Thread.Sleep(120);
-		string text = IpcServer.Send("ping", 2000);
+		Thread.Sleep(150);
+		string text = IpcServer.Send("ping", 3000, name);
 		Eq(text, "OK pong", "命名管道能收发一条命令");
-		string text2 = IpcServer.Send("nope", 2000);
+		string text2 = IpcServer.Send("nope", 3000, name);
 		Check(text2.StartsWith("ERR", StringComparison.Ordinal), "未知命令返回 ERR", text2);
 	}
 
@@ -114,7 +116,7 @@ internal static partial class SelfTest
 		Application.DoEvents();
 		SettingsForm.RelayoutForTest(settingsForm);
 		Application.DoEvents();
-		settingsForm.ProbeSelectPage(3);
+		settingsForm.ProbeSelectPage(4);
 		Application.DoEvents();
 		Check(settingsForm.ProbeControlVisible("规则列表"), "「规则列表」这一行在页面上");
 		Check(settingsForm.ProbeControlVisible("已保存的布局"), "「已保存的布局」这一行在页面上");

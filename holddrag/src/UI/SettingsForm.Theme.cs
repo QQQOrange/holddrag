@@ -380,6 +380,12 @@ internal sealed partial class SettingsForm : Form
 		public const string Chevron = "\ue76c";
 		public const string Help = "\ue897";
 		public const string Info = "\ue946";
+
+	/// <summary>漏斗：窗口规则页（按程序筛选）。</summary>
+	public const string Filter = "\ue71c";
+
+	/// <summary>窗口叠放：工作区布局。</summary>
+	public const string Layout = "\ue8a9";
 	}
 
 	// ======================= 补间动画 =======================

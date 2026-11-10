@@ -468,12 +468,15 @@ internal sealed partial class SettingsForm
 
 	private static string[] NavTitles()
 	{
-		return new string[8] { Loc.T("触发方式"), Loc.T("鼠标键动作"), Loc.T("视觉反馈"), Loc.T("拖动行为"), Loc.T("流畅度"), Loc.T("启动与权限"), Loc.T("帮助"), Loc.T("关于") };
+		return new string[9]
+		{
+			Loc.T("触发方式"), Loc.T("鼠标键动作"), Loc.T("视觉反馈"), Loc.T("拖动行为"), Loc.T("窗口规则"), Loc.T("流畅度"), Loc.T("启动与权限"), Loc.T("帮助"), Loc.T("关于")
+		};
 	}
 
 	private static string[] NavGlyphs()
 	{
-		return new string[8] { Glyph.Keyboard, Glyph.Move, Glyph.Color, Glyph.Move, Glyph.Speed, Glyph.Shield, Glyph.Help, Glyph.Info };
+		return new string[9] { Glyph.Keyboard, Glyph.Move, Glyph.Color, Glyph.Move, Glyph.Filter, Glyph.Speed, Glyph.Shield, Glyph.Help, Glyph.Info };
 	}
 
 	// 外壳几何对齐过程中会改控件尺寸，导致 Resize 回调重入；用一个标志挡住
@@ -769,6 +772,17 @@ internal sealed partial class SettingsForm
 		};
 		_helpPanel = new HelpPanel();
 		_helpPanel.SetEntries(BuildHelpEntries());
+		_helpPanel.OpenChanged = delegate
+		{
+			try
+			{
+				LayoutPages(Math.Max(10, ContentWidth()), forceAll: true);
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+		};
 		_btnExportDiag = new FlatButton
 		{
 			Text = Loc.T("导出诊断包…")

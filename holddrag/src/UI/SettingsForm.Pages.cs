@@ -89,26 +89,28 @@ internal sealed partial class SettingsForm
 		cardAux.Setting(_numSnapThreshold, 72, UnitLabel("px"), 26, Loc.T("吸附距离"), Loc.T("离边缘多近才吸附；0 = 关闭"));
 		cardAux.Toggle(_chkTiling, Loc.T("键盘分屏"), Loc.T("按住触发键后：← 左半屏、→ 右半屏、↑ 最大化、↓ 还原、1-9 九宫格、0 居中"));
 		cardAux.Toggle(_chkUndo, Loc.T("允许 Ctrl+Z 撤销"), Loc.T("拖完 5 秒内按 Ctrl+Z 可以还原窗口原来的位置和大小"));
-		Card cardRules = NewCard(page4, Loc.T("按程序规则"), Loc.T("对某个程序单独放行或限制，比黑名单细一档"));
-		cardRules.RegisterField(_txtAppRules);
-		cardRules.Setting(_cmbRuleMode, 170, _btnAddRule, DesignButtonWidth(Loc.T("点选窗口添加"), 110), Loc.T("添加规则"), Loc.T("先选规则类型，再点右边的按钮，然后把鼠标移到目标窗口上"));
-		cardRules.Setting(_txtAppRules, Loc.T("规则列表"), Loc.T("格式：程序名=类型，分号分隔。例：wps.exe=Ignore; code.exe=MoveOnly"));
-		Card cardLayout = NewCard(page4, Loc.T("工作区布局"), Loc.T("把当前所有窗口的位置存下来，之后一键恢复"));
-		cardLayout.Setting(_cmbLayouts, Loc.T("已保存的布局"), Loc.T("按 程序名 + 标题 匹配窗口，找不到的自动跳过"), 200);
-		cardLayout.Setting(_btnLayoutSave, DesignButtonWidth(Loc.T("保存当前…"), 100), _btnLayoutDelete, DesignButtonWidth(Loc.T("删除"), 74), Loc.T("保存 / 删除"), Loc.T("保存会记录当前所有可见窗口的位置和大小"));
-		cardLayout.Setting(_btnLayoutRestore, DesignButtonWidth(Loc.T("恢复选中布局"), 120), null, 0, Loc.T("恢复"), Loc.T("把窗口搬回保存时的位置；已经关掉的窗口会被忽略"));
 		Card card8 = NewCard(page4, Loc.T("窗口层级与全屏"), Loc.T("全屏 / 无边框窗口容易被拖成一片黑"));
 		card8.Toggle(_chkFront, Loc.T("开始拖动时把窗口提到最前"), Loc.T("不用先点一下激活它"));
 		card8.Toggle(_chkFullscreen, Loc.T("允许拖动全屏 / 无边框窗口（有风险）"), Loc.T("部分游戏和视频窗口拖完会显示异常"));
 		card8.Toggle(_chkExitFullscreen, Loc.T("触发时先把全屏 / 最大化窗口变回普通"), Loc.T("推荐开着：拖动和缩放都从正常尺寸开始"));
 		Card card9 = NewCard(page4, Loc.T("晃窗最小化"), Loc.T("选中窗口后左右晃一晃"));
 		card9.Toggle(_chkShake, Loc.T("晃窗把其它窗口最小化"), Loc.T("再晃一次还原；判定要求多次往复且净位移接近 0，正常拖动不会误触发"));
-		Card card10 = NewCard(page4, Loc.T("不生效的窗口"), Loc.T("命中黑名单的窗口完全不接管"));
+
+		// ---------- 5. 窗口规则 ----------
+		Page pageRules = NewPage(Loc.T("窗口规则"), Loc.T("哪些窗口不接管、每个程序怎么对待、布局怎么存"));
+		Card card10 = NewCard(pageRules, Loc.T("不生效的窗口"), Loc.T("命中黑名单的窗口完全不接管"));
 		card10.RegisterField(_txtBlacklist);
 		card10.Setting(_txtBlacklist, Loc.T("关键字"), Loc.T("窗口标题 / 程序名 / 类名，逗号分隔；命中就完全不接管"));
 		card10.Setting(_btnPickExe, DesignButtonWidth(_btnPickExe.Text, 96), _btnPickWindow, DesignButtonWidth(_btnPickWindow.Text, 92), Loc.T("快速添加"), Loc.T("不知道填什么时，用「选择程序」挑 exe，或「点选窗口」直接在屏幕上点那扇窗"));
-
-		// ---------- 5. 流畅度 ----------
+		Card cardRules = NewCard(pageRules, Loc.T("按程序规则"), Loc.T("对某个程序单独放行或限制，比黑名单细一档"));
+		cardRules.RegisterField(_txtAppRules);
+		cardRules.Setting(_cmbRuleMode, 170, _btnAddRule, DesignButtonWidth(Loc.T("点选窗口添加"), 110), Loc.T("添加规则"), Loc.T("先选规则类型，再点右边的按钮，然后把鼠标移到目标窗口上"));
+		cardRules.Setting(_txtAppRules, Loc.T("规则列表"), Loc.T("格式：程序名=类型，分号分隔。例：wps.exe=Ignore; code.exe=MoveOnly"));
+		Card cardLayout = NewCard(pageRules, Loc.T("工作区布局"), Loc.T("把当前所有窗口的位置存下来，之后一键恢复"));
+		cardLayout.Setting(_cmbLayouts, Loc.T("已保存的布局"), Loc.T("按 程序名 + 标题 匹配窗口，找不到的自动跳过"), 200);
+		cardLayout.Setting(_btnLayoutSave, DesignButtonWidth(Loc.T("保存当前…"), 100), _btnLayoutDelete, DesignButtonWidth(Loc.T("删除"), 74), Loc.T("保存 / 删除"), Loc.T("保存会记录当前所有可见窗口的位置和大小"));
+		cardLayout.Setting(_btnLayoutRestore, DesignButtonWidth(Loc.T("恢复选中布局"), 120), null, 0, Loc.T("恢复"), Loc.T("把窗口搬回保存时的位置；已经关掉的窗口会被忽略"));
+		// ---------- 6. 流畅度 ----------
 		Page page5 = NewPage(Loc.T("流畅度"), Loc.T("拖动过程中的刷新节流"));
 		Card card11 = NewCard(page5, Loc.T("刷新模式"), Loc.T("刷新越快越跟手，但也更吃 CPU"));
 		card11.Setting(_cmbRefreshMode, Loc.T("刷新模式"), Loc.T("「自动」会按当前显示器的刷新率决定"), 200);
@@ -116,7 +118,7 @@ internal sealed partial class SettingsForm
 		card11b.Setting(_numRefreshHz, 72, UnitLabel("Hz"), 26, Loc.T("刷新频率"), Loc.T("0 = 不限制；非 0 时下限钳到 20"));
 		card11b.Block(_lblRefreshHint, null, 22);
 
-		// ---------- 6. 启动与权限 ----------
+		// ---------- 7. 启动与权限 ----------
 		Page page6 = NewPage(Loc.T("启动与权限"), Loc.T("语言、开机自启与管理员权限"));
 		Card cardLang = NewCard(page6, Loc.T("语言 / Language"), Loc.T("界面文案用哪种语言显示；切换后立即生效并写入配置"));
 		cardLang.Setting(_cmbLanguage, Loc.T("界面语言"), Loc.T("简体中文 / English。选中即保存，整个界面马上换成该语言，下次启动沿用"), 220);
@@ -128,14 +130,14 @@ internal sealed partial class SettingsForm
 		card12b.Block(_lblAdmin, null, 22);
 		card12b.Setting(_btnRestartAdmin, Loc.T("立即生效"), Loc.T("改完权限相关设置后，用这个按钮重启一次"), 128);
 
-		// ---------- 7. 帮助 ----------
+		// ---------- 8. 帮助 ----------
 		Page page7 = NewPage(Loc.T("帮助"), Loc.T("每一项功能的实际行为说明"));
 		Card cardDiag = NewCard(page7, Loc.T("诊断"), Loc.T("遇到问题先导出诊断包：配置 + 最近日志 + 系统信息"));
 		cardDiag.Setting(_btnExportDiag, DesignButtonWidth(Loc.T("导出诊断包…"), 130), null, 0, Loc.T("导出诊断包"), Loc.T("打成一个 zip，方便发给开发者"));
 		Card card13 = NewCard(page7, Loc.T("功能说明"), Loc.T("点一下标题，就能展开对应功能的说明"));
 		card13.Block(_helpPanel);
 
-		// ---------- 8. 关于 ----------
+		// ---------- 9. 关于 ----------
 		Page page8 = NewPage(Loc.T("关于"), Loc.T("版本、开发者与更新"));
 		Card card14 = NewCard(page8, Loc.T("关于"), Loc.T("长按拖窗 HoldDrag · 长按触发键，随手拖动 / 缩放任意窗口"));
 		card14.Setting(ValueLabel("QQQOrange"), Loc.T("开发者"), null, 140);
@@ -194,6 +196,42 @@ internal sealed partial class SettingsForm
 				Icon = Glyph.Shield,
 				Title = Loc.T("不生效的窗口"),
 				Body = Loc.T("把窗口标题 / 程序名 / 窗口类名的关键字填进黑名单（逗号分隔），命中就完全不接管。不知道填什么可以用「选择程序」挑 exe，或用「点选窗口」直接在屏幕上点那扇窗。")
+			},
+			new HelpPanel.Entry
+			{
+				Icon = Glyph.Layout,
+				Title = Loc.T("尺寸提示与贴边吸附"),
+				Body = Loc.T("拖动时窗口角上浮一个小胶囊，实时显示宽高（可在「拖动行为 → 辅助」里关掉或加上坐标）。拖到屏幕或任务栏边缘附近会自动贴齐，并在吸附位置画一条细高亮线；吸附距离可调，0 表示关闭。")
+			},
+			new HelpPanel.Entry
+			{
+				Icon = Glyph.Keyboard,
+				Title = Loc.T("键盘分屏与撤销"),
+				Body = Loc.T("按住触发键不放时，方向键可以直接布局光标下的窗口：左半屏、右半屏、最大化、还原、1-9 九宫格、0 保持大小居中。拖完窗口 5 秒内按 Ctrl+Z 可以把窗口还原到拖动前的位置和大小（只能用一次；在文本框里打字时不会抢你的 Ctrl+Z）。")
+			},
+			new HelpPanel.Entry
+			{
+				Icon = Glyph.Filter,
+				Title = Loc.T("按程序规则"),
+				Body = Loc.T("在「窗口规则」页可以给单个程序指定行为：完全不接管 / 只允许移动 / 只允许缩放 / 接管但不画外框。选好类型后点「点选窗口添加」，再点屏幕上那扇窗即可。它比黑名单细一档：黑名单是整扇窗都不接管，规则还能只禁用其中一种操作。")
+			},
+			new HelpPanel.Entry
+			{
+				Icon = Glyph.Layout,
+				Title = Loc.T("工作区布局"),
+				Body = Loc.T("「窗口规则 → 工作区布局」可以把当前所有可见窗口的位置和大小存成一个命名快照，之后一键恢复（按「程序名 + 标题」匹配，已经关掉的窗口会自动跳过）。托盘菜单里也有同样的入口。")
+			},
+			new HelpPanel.Entry
+			{
+				Icon = Glyph.Speed,
+				Title = Loc.T("命令行与脚本接口"),
+				Body = Loc.T("运行中的实例会监听命名管道，可以用一条命令控制它：带 status 参数查看状态；center / next-monitor / topmost / pause on|off / move x y w h / layout-save 名称 / layout-restore 名称 都是可用命令，用 help 参数可以列出全部。成功返回 OK 且退出码为 0，失败返回 ERR 且退出码为 1。")
+			},
+			new HelpPanel.Entry
+			{
+				Icon = Glyph.Info,
+				Title = Loc.T("诊断包与便携模式"),
+				Body = Loc.T("「帮助 → 诊断」可以一键导出诊断包：配置文件 + 最近三个日志 + 系统信息（版本、系统、DPI、显示器、权限），遇到问题把它发给开发者即可。把 portable.txt 放在 exe 旁边则进入便携模式，配置、日志和布局都写在该目录的 data 文件夹里，不再写入 AppData。")
 			}
 		};
 	}

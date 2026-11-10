@@ -674,6 +674,20 @@ namespace HoldDrag
 			["「"] = "“",
 			["」 "] = "” ",
 			["："] = ": ",
+			["窗口规则"] = "Window rules",
+			["哪些窗口不接管、每个程序怎么对待、布局怎么存"] = "Which windows to skip, how each app is treated, and where layouts live",
+			["尺寸提示与贴边吸附"] = "Size HUD and edge snapping",
+			["拖动时窗口角上浮一个小胶囊，实时显示宽高（可在「拖动行为 → 辅助」里关掉或加上坐标）。拖到屏幕或任务栏边缘附近会自动贴齐，并在吸附位置画一条细高亮线；吸附距离可调，0 表示关闭。"] = "While dragging, a small pill shows the window size (toggle it, or add coordinates, under Drag behaviour → Assistance). Dragging near a screen or taskbar edge snaps flush and draws a thin guide line; the snap distance is adjustable, 0 disables it.",
+			["键盘分屏与撤销"] = "Keyboard tiling and undo",
+			["按住触发键不放时，方向键可以直接布局光标下的窗口：左半屏、右半屏、最大化、还原、1-9 九宫格、0 保持大小居中。拖完窗口 5 秒内按 Ctrl+Z 可以把窗口还原到拖动前的位置和大小（只能用一次；在文本框里打字时不会抢你的 Ctrl+Z）。"] = "While the trigger key is held, the arrow keys lay out the window under the cursor: left half, right half, maximise, restore, 1-9 grid, 0 centred. Within 5 seconds of a drag, Ctrl+Z restores the previous position and size (once only; it never steals Ctrl+Z while you are typing in a text field).",
+			["按程序规则"] = "Per-app rules",
+			["在「窗口规则」页可以给单个程序指定行为：完全不接管 / 只允许移动 / 只允许缩放 / 接管但不画外框。选好类型后点「点选窗口添加」，再点屏幕上那扇窗即可。它比黑名单细一档：黑名单是整扇窗都不接管，规则还能只禁用其中一种操作。"] = "On the Window rules page you can give a single program its own behaviour: never take over / move only / resize only / take over without a frame. Pick a type, click Pick a window, then click that window on screen. It is finer than the blacklist: the blacklist skips the window entirely, a rule can disable just one operation.",
+			["工作区布局"] = "Workspace layouts",
+			["「窗口规则 → 工作区布局」可以把当前所有可见窗口的位置和大小存成一个命名快照，之后一键恢复（按「程序名 + 标题」匹配，已经关掉的窗口会自动跳过）。托盘菜单里也有同样的入口。"] = "Window rules → Workspace layouts saves the position and size of every visible window as a named snapshot and restores it later (matched by exe + title; windows that were closed are skipped). The tray menu has the same entry.",
+			["命令行与脚本接口"] = "Command line and scripting",
+			["运行中的实例会监听命名管道，可以用一条命令控制它：带 status 参数查看状态；center / next-monitor / topmost / pause on|off / move x y w h / layout-save 名称 / layout-restore 名称 都是可用命令，用 help 参数可以列出全部。成功返回 OK 且退出码为 0，失败返回 ERR 且退出码为 1。"] = "The running instance listens on a named pipe, so a single command can drive it: status reports the state; center / next-monitor / topmost / pause on|off / move x y w h / layout-save NAME / layout-restore NAME are available, and help lists them all. Success returns OK with exit code 0, failure returns ERR with exit code 1.",
+			["诊断包与便携模式"] = "Diagnostics bundle and portable mode",
+			["「帮助 → 诊断」可以一键导出诊断包：配置文件 + 最近三个日志 + 系统信息（版本、系统、DPI、显示器、权限），遇到问题把它发给开发者即可。把 portable.txt 放在 exe 旁边则进入便携模式，配置、日志和布局都写在该目录的 data 文件夹里，不再写入 AppData。"] = "Help → Diagnostics exports a bundle: the config, the last three logs and system info (version, OS, DPI, monitors, privileges). Put portable.txt next to the exe to enable portable mode; config, logs and layouts then live in a data folder beside the exe instead of AppData.",
 		};
 	}
 }

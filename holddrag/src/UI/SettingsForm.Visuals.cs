@@ -757,10 +757,40 @@ internal sealed partial class SettingsForm
 
 		public int HeaderH => Sc(36);
 
+		/// <summary>
+		/// 面板高度 = 所有标题行 + 最高的那条正文。
+		///
+		/// 原来是写死的 Sc(360)：条目一多（v1.14 加到 12 条）标题行就把高度占满，
+		/// 正文区被挤成 0，最后几条标题直接超出控件边缘看不见。
+		/// 现在按内容算，并且取"所有条目里最高的正文"，保证切换展开项时高度不变。
+		/// </summary>
 		public int HeightFor(int width)
 		{
-			return Sc(360);
+			return _entries.Count * HeaderH + BodyHeightFor(width);
 		}
+
+		/// <summary>当前展开项的正文需要多高（按实际换行量出来，不猜）。</summary>
+		private int BodyHeightFor(int width)
+		{
+			if (_entries.Count == 0 || _open < 0 || _open >= _entries.Count)
+			{
+				return 0;
+			}
+			string body = _entries[_open].Body;
+			if (string.IsNullOrEmpty(body))
+			{
+				return 0;
+			}
+			int num = Math.Max(Sc(200), width - Sc(28));
+			Font font = _bodyFont ?? (_bodyFont = new Font(DesignFontFamily, Sc(11), FontStyle.Regular, GraphicsUnit.Pixel));
+			int num2 = TextRenderer.MeasureText(body, font, new Size(num, int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height;
+			return Math.Max(Sc(30), num2 + Sc(12));
+		}
+
+		/// <summary>展开项变化时通知宿主重排（手风琴的高度是变的）。</summary>
+		public Action OpenChanged;
+
+		private Font _bodyFont;
 
 		public void SetEntries(List<Entry> entries)
 		{
@@ -773,6 +803,8 @@ internal sealed partial class SettingsForm
 		public int OpenIndexForTest => _open;
 
 		public int BodyH => Math.Max(0, Height - _entries.Count * HeaderH);
+
+		internal int BodyForTest(int width) => BodyHeightFor(width);
 
 		public int HeaderTopForTest(int index)
 		{
@@ -845,6 +877,7 @@ internal sealed partial class SettingsForm
 				{
 					_open = num;
 					Invalidate();
+					OpenChanged?.Invoke();
 				}
 			}
 			base.OnMouseUp(e);
