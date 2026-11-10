@@ -122,7 +122,7 @@ internal sealed partial class SettingsForm
 		// ---------- 7. 启动与权限 ----------
 		Page page6 = NewPage(Loc.T("启动与权限"), Loc.T("语言、开机自启与管理员权限"));
 		Card cardLang = NewCard(page6, Loc.T("语言 / Language"), Loc.T("界面文案用哪种语言显示；切换后立即生效并写入配置"));
-		cardLang.Setting(_cmbLanguage, Loc.T("界面语言"), Loc.T("简体中文 / English。选中即保存，整个界面马上换成该语言，下次启动沿用"), 220);
+		cardLang.Setting(_cmbLanguage, Loc.T("界面语言"), Loc.T("选中即保存，整个界面马上换成该语言；把语言包 json 放进 lang 目录就能加新语言"), 220);
 		Card card12 = NewCard(page6, Loc.T("开机自启"), Loc.T("登录 Windows 后自动在托盘运行"));
 		card12.Setting(_cmbAutoStart, Loc.T("开机自启"), Loc.T("显示的是系统里的真实状态（会去查计划任务与注册表）"), 320);
 		Card card12b = NewCard(page6, Loc.T("管理员权限"), Loc.T("管理员权限能拖动更多程序，代价是每次启动弹一次 UAC"));

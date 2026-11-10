@@ -22,6 +22,14 @@ namespace HoldDrag
 
 		private static string _current = Zh;
 
+		/// <summary>当前语言的外部语言包（zh / en 为 null，走内置逻辑）。</summary>
+		private static Dictionary<string, string> _activePack;
+
+		private static List<LanguagePack> _packs = new List<LanguagePack>();
+
+		/// <summary>已发现的外部语言包（启动时扫描一次）。</summary>
+		public static IReadOnlyList<LanguagePack> Packs => _packs;
+
 		/// <summary>语言真的变了才触发；界面层订阅它做重建。</summary>
 		public static event Action Changed;
 
@@ -37,18 +45,59 @@ namespace HoldDrag
 			{
 				return Zh;
 			}
-			string text = id.Trim();
-			if (text.StartsWith("en", StringComparison.OrdinalIgnoreCase) || string.Equals(text, "english", StringComparison.OrdinalIgnoreCase))
+			string text = id.Trim().ToLowerInvariant();
+			if (text.StartsWith("en", StringComparison.Ordinal) || text == "english")
 			{
 				return En;
 			}
+			if (text.StartsWith("zh", StringComparison.Ordinal) || text == "chinese" || text == "cn")
+			{
+				return Zh;
+			}
+			foreach (LanguagePack pack in _packs)
+			{
+				if (string.Equals(pack.Id, text, StringComparison.Ordinal))
+				{
+					return pack.Id;
+				}
+			}
+			// 语言包被删掉/配置里写了没装的语言：回落到中文，而不是显示一堆 key
 			return Zh;
 		}
 
 		/// <summary>启动时按配置设定语言：不触发 Changed（此时还没有界面要重建）。</summary>
 		public static void Init(string id)
 		{
+			RefreshPacks();
 			_current = Normalize(id);
+			ApplyPack();
+		}
+
+		/// <summary>重新扫描语言包目录（用户可以在运行中把 json 丢进去）。</summary>
+		public static void RefreshPacks()
+		{
+			try
+			{
+				_packs = LanguagePack.LoadAll();
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+				_packs = new List<LanguagePack>();
+			}
+		}
+
+		private static void ApplyPack()
+		{
+			_activePack = null;
+			foreach (LanguagePack pack in _packs)
+			{
+				if (string.Equals(pack.Id, _current, StringComparison.Ordinal))
+				{
+					_activePack = pack.Map;
+					return;
+				}
+			}
 		}
 
 		/// <summary>运行中切换语言；真的变了才通知界面层。</summary>
@@ -60,6 +109,7 @@ namespace HoldDrag
 				return;
 			}
 			_current = text;
+			ApplyPack();
 			try
 			{
 				Changed?.Invoke();
@@ -73,18 +123,66 @@ namespace HoldDrag
 		/// <summary>取译文：中文原样，英文查表（查不到回退中文）。</summary>
 		public static string T(string zh)
 		{
-			if (zh == null || !IsEnglish)
+			if (zh == null || string.Equals(_current, Zh, StringComparison.Ordinal))
 			{
 				return zh;
 			}
 			string value;
-			return Map.TryGetValue(zh, out value) ? value : zh;
+			if (IsEnglish)
+			{
+				return Map.TryGetValue(zh, out value) ? value : zh;
+			}
+			// 外部语言包：缺词条就回退中文原文（不会露 key，也不会中英混排）
+			if (_activePack != null && _activePack.TryGetValue(zh, out value) && !string.IsNullOrWhiteSpace(value))
+			{
+				return value;
+			}
+			return zh;
+		}
+
+		/// <summary>全部词条（生成语言包模板用）。</summary>
+		public static List<string> Keys()
+		{
+			List<string> list = new List<string>(Map.Keys);
+			list.Sort(StringComparer.Ordinal);
+			return list;
 		}
 
 		/// <summary>语言下拉框里显示的名字（两种语言下都用各自的母语写法，便于辨认）。</summary>
 		public static string DisplayName(string id)
 		{
-			return string.Equals(Normalize(id), En, StringComparison.Ordinal) ? "English" : "简体中文";
+			string text = Normalize(id);
+			if (string.Equals(text, En, StringComparison.Ordinal))
+			{
+				return "English";
+			}
+			if (string.Equals(text, Zh, StringComparison.Ordinal))
+			{
+				return "简体中文";
+			}
+			foreach (LanguagePack pack in _packs)
+			{
+				if (string.Equals(pack.Id, text, StringComparison.Ordinal))
+				{
+					return pack.Name;
+				}
+			}
+			return text;
+		}
+
+		/// <summary>所有可选语言（内置两种 + 外部包）。</summary>
+		public static List<(string Id, string Name)> AllLanguages()
+		{
+			List<(string, string)> list = new List<(string, string)>
+			{
+				(Zh, "简体中文"),
+				(En, "English")
+			};
+			foreach (LanguagePack pack in _packs)
+			{
+				list.Add((pack.Id, pack.Name));
+			}
+			return list;
 		}
 
 		/// <summary>

@@ -136,5 +136,7 @@ internal static partial class SelfTest
 		Safe("T120 设置搜索：输入即定位（不用按回车）", TestSearchLive);
 		Safe("T121 触发提示浮层：能显示、能隐藏、内容覆盖主操作", TestTriggerHint);
 		Safe("T122 Shift 临时关吸附：状态读取与默认值", TestShiftBypassSnap);
+		Safe("T123 外部语言包：加载 / 匹配 / 缺词条回退 / 不许覆盖内置语言", TestLanguagePacks);
+		Safe("T124 语言包模板：能导出全部词条", TestLanguageTemplate);
 	}
 }

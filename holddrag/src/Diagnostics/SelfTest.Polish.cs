@@ -1,10 +1,11 @@
-// HoldDrag · Diagnostics/SelfTest.Polish.cs
+﻿// HoldDrag · Diagnostics/SelfTest.Polish.cs
 //
 // v1.15 的四个小改进：Shift 临时关吸附、触发提示浮层、搜索实时定位、规则通配符。
 
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Text;
 using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
@@ -91,4 +92,102 @@ internal static partial class SelfTest
 		Eq(result.Rect.Left, 0, "不按 Shift 时仍然吸附");
 		Check(DragEngine.ProbeShiftDownForTest() == ((Native.GetAsyncKeyState(0x10) & 0x8000) != 0), "Shift 状态读取与实际按键一致");
 	}
+
+	/// <summary>外部语言包：加载、匹配、缺词条回退、非法包被拒。</summary>
+	private static void TestLanguagePacks()
+	{
+		string dir = LanguagePack.Dir;
+		string path = System.IO.Path.Combine(dir, "selftest-" + Guid.NewGuid().ToString("N").Substring(0, 6) + ".json");
+		try
+		{
+			System.IO.Directory.CreateDirectory(dir);
+			System.IO.File.WriteAllText(path, "{\"id\":\"tst\",\"name\":\"Testish\",\"map\":{\"\u53d6\u6d88\":\"Cancel-ish\",\"\u4e0d\u5b58\u5728\u7684\u952e\":\"x\"}}", new System.Text.UTF8Encoding(false));
+			LanguagePack pack = LanguagePack.TryLoad(path);
+			Check(pack != null, "★ 外部语言包能被加载");
+			if (pack != null)
+			{
+				Eq(pack.Id, "tst", "语言包 id 读对");
+				Eq(pack.Name, "Testish", "语言包显示名读对");
+				Eq(pack.TranslatedCount, 2, "统计已翻译条目数（含空值过滤）");
+			}
+			Loc.RefreshPacks();
+			bool found = false;
+			StringBuilder ids = new StringBuilder();
+			foreach (var lang in Loc.AllLanguages())
+			{
+				if (lang.Id == "tst")
+				{
+					found = true;
+				}
+				ids.Append(lang.Id).Append(' ');
+			}
+			Check(found, "★ 语言列表里出现了新语言", ids.ToString());
+			Eq(Loc.Normalize("tst"), "tst", "Normalize 认这门语言");
+			Loc.Init("tst");
+			Eq(Loc.T("取消"), "Cancel-ish", "★ 外部语言包里的词条生效");
+			Eq(Loc.T("这条根本没翻译过"), "这条根本没翻译过", "★ 缺词条时回退中文原文（不露 key）");
+			Eq(Loc.DisplayName("tst"), "Testish", "下拉框显示语言包自己的名字");
+			Loc.Init(Loc.Zh);
+			Eq(Loc.T("取消"), "取消", "切回中文后不再翻译");
+			// 真的把文件删掉再刷新，才叫"语言包被移除"
+			System.IO.File.Delete(path);
+			Loc.RefreshPacks();
+			Eq(Loc.Normalize("tst"), Loc.Zh, "★ 语言包被移除后回落到中文（不会卡在一个不存在的语言上）");
+			// 内置语言不允许被文件覆盖
+			string bad = System.IO.Path.Combine(dir, "selftest-bad-" + Guid.NewGuid().ToString("N").Substring(0, 6) + ".json");
+			System.IO.File.WriteAllText(bad, "{\"id\":\"en\",\"name\":\"Hijack\",\"map\":{}}", new System.Text.UTF8Encoding(false));
+			Check(LanguagePack.TryLoad(bad) == null, "★ 外部包不能覆盖内置语言（en）");
+			try
+			{
+				System.IO.File.Delete(bad);
+			}
+			catch
+			{
+			}
+		}
+		finally
+		{
+			try
+			{
+				if (System.IO.File.Exists(path))
+				{
+					System.IO.File.Delete(path);
+				}
+			}
+			catch
+			{
+			}
+			Loc.RefreshPacks();
+			Loc.Init(Loc.Zh);
+		}
+	}
+
+	/// <summary>语言包模板能生成，且列出所有内置词条。</summary>
+	private static void TestLanguageTemplate()
+	{
+		string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "hd-template-" + Guid.NewGuid().ToString("N").Substring(0, 6) + ".json");
+		try
+		{
+			int num = LanguagePack.WriteTemplate(path, Loc.Keys(), "xx", "Template");
+			Check(num > 100, "★ 模板里列出了全部内置词条", "共 " + num + " 条");
+			Check(System.IO.File.Exists(path), "模板文件已生成");
+			string text = System.IO.File.ReadAllText(path);
+			Check(text.Contains("\"id\": \"xx\""), "模板带 id 字段");
+			Check(text.Contains("取消"), "模板里能看到中文原文（方便逐条翻译）");
+		}
+		finally
+		{
+			try
+			{
+				if (System.IO.File.Exists(path))
+				{
+					System.IO.File.Delete(path);
+				}
+			}
+			catch
+			{
+			}
+		}
+	}
+
 }

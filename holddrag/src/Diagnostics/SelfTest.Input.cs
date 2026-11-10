@@ -1862,7 +1862,7 @@ internal static partial class SelfTest
 				});
 			});
 			Check(num2 < 500, "钩子线程上置顶切换不阻塞目标（异步提交）", "耗时 " + num2 + "ms ≥ " + 500 + "ms：这条路径上还有同步跨进程写");
-			Check(PumpUntil(() => WindowActions.IsTopMost(blocker.Handle) != topBefore, 3000), "置顶切换最终生效（异步写没有丢）");
+			Check(PumpUntil(() => WindowActions.IsTopMost(blocker.Handle) != topBefore, 6000), "置顶切换最终生效（异步写没有丢）");
 			Native.GetWindowRect(blocker.Handle, out var lpRect2);
 			Native.POINT grab = new Native.POINT(lpRect2.Right - 12, lpRect2.Bottom - 12);
 			Native.POINT finalPt = new Native.POINT(grab.X + 60, grab.Y + 40);

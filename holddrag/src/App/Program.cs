@@ -99,6 +99,21 @@ internal static class Program
 				text = text + " | SetProcessDpiAware: " + ex2.Message;
 			}
 		}
+		if (HasArg(args, "--dumpstrings"))
+		{
+			// 生成语言包模板：把当前所有词条列成 JSON，翻译只需填 value
+			SelfTest.AttachConsoleForTest(uint.MaxValue);
+			string text5 = ArgValue(args, "--dumpstrings");
+			if (string.IsNullOrWhiteSpace(text5))
+			{
+				text5 = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "holddrag-strings.xx.json");
+			}
+			string text6 = System.IO.Path.GetFileNameWithoutExtension(text5);
+			int num3 = LanguagePack.WriteTemplate(text5, Loc.Keys(), text6, text6);
+			Console.WriteLine((num3 >= 0) ? ("OK " + num3 + " strings -> " + text5) : "ERR write-failed");
+			Environment.ExitCode = ((num3 >= 0) ? 0 : 1);
+			return;
+		}
 		if (HasArg(args, "--cmd"))
 		{
 			// WinExe 默认没有控制台：不附着父进程的话，--cmd 的输出在终端里完全看不见。

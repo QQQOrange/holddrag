@@ -759,7 +759,10 @@ internal static partial class SelfTest
 		SettleNavAnimation();
 		Color color5 = SettingsForm.ProbeNavRowColor(settingsForm, 2);
 		Color color6 = SettingsForm.ProbeNavRowColor(settingsForm, 0);
-		Check(color5.ToArgb() == color3.ToArgb(), "★ 点过又切走的导航项不残留胶囊底色（回归）", "第3项=" + color5.ToString() + " 侧栏底=" + color3.ToString());
+		// 注意：真实鼠标可能恰好停在侧栏上，那时会有一层悬停过渡色 —— 那是正常交互，不是残留。
+		// 这里只断言「没有留下强调色胶囊」，那才是这条回归用例真正要抓的东西。
+		Check(color5.ToArgb() != color4.ToArgb(), "★ 点过又切走的导航项不残留强调色胶囊（回归）", "第3项=" + color5.ToString() + " 胶囊色=" + color4.ToString());
+		Check(SettingsForm.ProbeSidebarActive((Form)settingsForm) == 0, "★ 点过又切走后，侧栏的当前页仍然指向第 1 项");
 		Check(color6.ToArgb() == color4.ToArgb(), "当前页那项是强调色胶囊", "第1项=" + color6.ToString());
 		settingsForm.Close();
 	}

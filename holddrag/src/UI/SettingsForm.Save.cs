@@ -185,17 +185,17 @@ internal sealed partial class SettingsForm
 		int refreshRate = Native.GetRefreshRate();
 		_lblRefreshHint.Text = Loc.T("跟随屏幕：按实测刷新率节流（本机 ") + ((refreshRate > 0) ? (refreshRate + "Hz") : Loc.T("未知")) + Loc.T("）。\r\n固定值：自定义频率，0 = 不限制。");
 		// 语言下拉：只有两项，显示各自的母语写法（English / 简体中文），换哪种语言都认得出
+		// 语言下拉：内置两种 + <数据目录>\lang 里的外部语言包（文件名即语言 id）
+		Loc.RefreshPacks();
 		_cmbLanguage.Items.Clear();
-		_cmbLanguage.Items.Add(new IdItem
+		foreach (var (id, name) in Loc.AllLanguages())
 		{
-			Value = Loc.Zh,
-			Text = Loc.DisplayName(Loc.Zh)
-		});
-		_cmbLanguage.Items.Add(new IdItem
-		{
-			Value = Loc.En,
-			Text = Loc.DisplayName(Loc.En)
-		});
+			_cmbLanguage.Items.Add(new IdItem
+			{
+				Value = id,
+				Text = name
+			});
+		}
 		SelectId(_cmbLanguage, Loc.Current);
 		_cmbAutoStart.Items.Clear();
 		_cmbAutoStart.Items.Add(new IdItem
