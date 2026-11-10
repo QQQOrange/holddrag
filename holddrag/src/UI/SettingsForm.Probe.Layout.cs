@@ -452,7 +452,7 @@ internal sealed partial class SettingsForm
 			LayoutWithContentOf(settingsForm);
 			int width2 = CardBoxOf(settingsForm).Width;
 			LastStretchDetail = Loc.T("卡片宽 ") + width + "->" + cardBox.Width + "->" + width2 + Loc.T(" | 每行张数 ") + num + "->" + num2 + Loc.T(" | 宽窗口下卡片 ") + cardBox2.ToString();
-			return width2 == width && cardBox.Width > width && cardBox.Width <= Sc(Tokens.CardMaxW) + Sc(2) && num == 1 && num2 == 2;
+			return width2 == width && cardBox.Width > width && cardBox.Width <= Sc(UiTheme.CardMaxW) + Sc(2) && num == 1 && num2 == 2;
 		}
 		catch
 		{
@@ -706,7 +706,7 @@ internal sealed partial class SettingsForm
 	}
 	internal static int ProbeCardMaxWidthPx(Form f)
 	{
-		return Sc(Tokens.CardMaxW);
+		return Sc(UiTheme.CardMaxW);
 	}
 
 		internal static Color ProbeTokenColor(string name)
@@ -714,19 +714,19 @@ internal sealed partial class SettingsForm
 		switch (name)
 		{
 		case "Surface":
-			return Tokens.Surface;
+			return UiTheme.Surface;
 		case "TextPrimary":
-			return Tokens.TextPrimary;
+			return UiTheme.TextPrimary;
 		case "TextSecondary":
-			return Tokens.TextSecondary;
+			return UiTheme.TextSecondary;
 		case "Accent":
-			return Tokens.Accent;
+			return UiTheme.Accent;
 		case "Canvas":
-			return Tokens.Canvas;
+			return UiTheme.Canvas;
 		case "Sidebar":
-			return Tokens.Sidebar;
+			return UiTheme.Sidebar;
 		case "AccentSoft":
-			return Tokens.AccentSoft;
+			return UiTheme.AccentSoft;
 		default:
 			return Color.Empty;
 		}

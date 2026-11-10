@@ -90,8 +90,8 @@ internal sealed partial class SettingsForm
 			Title = title;
 			Subtitle = subtitle;
 			Text = title;
-			BackColor = Tokens.Canvas;
-			ForeColor = Tokens.TextPrimary;
+			BackColor = UiTheme.Canvas;
+			ForeColor = UiTheme.TextPrimary;
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 			_fontTitle = new Font(DesignFontFamily, Sc(17), FontStyle.Bold, GraphicsUnit.Pixel);
 			_fontSub = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel);
@@ -200,7 +200,7 @@ internal sealed partial class SettingsForm
 
 		public void Note(string text)
 		{
-			Label label = NewLabel(text, 12, Tokens.TextTertiary, bold: false);
+			Label label = NewLabel(text, 12, UiTheme.TextTertiary, bold: false);
 			Add(new RowSpec
 			{
 				Kind = RowKind.Note,
@@ -214,7 +214,7 @@ internal sealed partial class SettingsForm
 			Label label2 = null;
 			if (!string.IsNullOrEmpty(label))
 			{
-				label2 = NewLabel(label, 12, Tokens.TextSecondary, bold: false);
+				label2 = NewLabel(label, 12, UiTheme.TextSecondary, bold: false);
 			}
 			Add(new RowSpec
 			{
@@ -245,11 +245,11 @@ internal sealed partial class SettingsForm
 			{
 				if (spec.TitleCtl == null && !string.IsNullOrEmpty(spec.Label))
 				{
-					spec.TitleCtl = NewLabel(spec.Label, Tokens.FontRow, Tokens.TextPrimary, bold: false);
+					spec.TitleCtl = NewLabel(spec.Label, UiTheme.FontRow, UiTheme.TextPrimary, bold: false);
 				}
 				if (spec.NoteCtl == null && !string.IsNullOrEmpty(spec.Note))
 				{
-					spec.NoteCtl = NewLabel(spec.Note, Tokens.FontNote, Tokens.TextTertiary, bold: false);
+					spec.NoteCtl = NewLabel(spec.Note, UiTheme.FontNote, UiTheme.TextTertiary, bold: false);
 				}
 			}
 		}
@@ -265,7 +265,7 @@ internal sealed partial class SettingsForm
 				// 必须是实色而不是 Transparent：WinForms 里 Transparent 的 Label 每次重绘
 				// 都要先让父控件把自己那块重画一遍，一页几十个标签就是几十次卡片重绘 ——
 				// 这是"滚动/切页发闷"的主要来源。卡片底就是纯色，用同一个颜色零成本。
-				BackColor = Tokens.Surface,
+				BackColor = UiTheme.Surface,
 				ForeColor = color,
 				// 设计稿给的是像素：按 DPI 换成**整数像素**字号。
 				// 用磅值会在 125%/150% 下变成 15.83px 这种小数，GDI 取舍不匀，中文笔画就会出现锯齿。
@@ -285,7 +285,7 @@ internal sealed partial class SettingsForm
 			_fields.Add(c);
 			try
 			{
-				c.BackColor = Tokens.FieldFill;
+				c.BackColor = UiTheme.FieldFill;
 			}
 			catch
 			{
@@ -582,7 +582,7 @@ internal sealed partial class SettingsForm
 					// 内缩 1px：控件自己的底色会盖住父控件画的描边，不缩这一圈就只剩四个圆角，
 					// 输入框看起来就是「没有框、只有一行文字」。
 					int inset = Math.Max(1, Sc(1));
-					field.Region = new Region(RoundedPath(new Rectangle(inset, inset, Math.Max(2, size.Width - inset * 2), Math.Max(2, size.Height - inset * 2)), Math.Max(2, Sc(Tokens.RadiusField) - inset)));
+					field.Region = new Region(RoundedPath(new Rectangle(inset, inset, Math.Max(2, size.Width - inset * 2), Math.Max(2, size.Height - inset * 2)), Math.Max(2, Sc(UiTheme.RadiusField) - inset)));
 					if (region != null)
 					{
 						region.Dispose();
@@ -635,18 +635,18 @@ internal sealed partial class SettingsForm
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
 			Rectangle clientRectangle = ClientRectangle;
-			using (SolidBrush brush = new SolidBrush(Tokens.Canvas))
+			using (SolidBrush brush = new SolidBrush(UiTheme.Canvas))
 			{
 				graphics.FillRectangle(brush, clientRectangle);
 			}
 			Rectangle rect = new Rectangle(0, 0, Math.Max(4, clientRectangle.Width - 1), Math.Max(4, clientRectangle.Height - 1));
-			using (GraphicsPath path = RoundedPath(rect, Sc(Tokens.Radius)))
+			using (GraphicsPath path = RoundedPath(rect, Sc(UiTheme.Radius)))
 			{
-				using (SolidBrush brush2 = new SolidBrush(Tokens.Surface))
+				using (SolidBrush brush2 = new SolidBrush(UiTheme.Surface))
 				{
 					graphics.FillPath(brush2, path);
 				}
-				using Pen pen = new Pen(Tokens.Stroke);
+				using Pen pen = new Pen(UiTheme.Stroke);
 				graphics.DrawPath(pen, path);
 			}
 			// 输入框底衬：TextBox / NumericUpDown 自己是无边框的，圆角描边在这里画
@@ -659,12 +659,12 @@ internal sealed partial class SettingsForm
 				try
 				{
 					Rectangle rect2 = new Rectangle(field.Left, field.Top, field.Width, field.Height);
-					using GraphicsPath fieldPath = RoundedPath(rect2, Sc(Tokens.RadiusField));
-					using (SolidBrush brush3 = new SolidBrush(field.Enabled ? Tokens.FieldFill : Tokens.DisabledFill))
+					using GraphicsPath fieldPath = RoundedPath(rect2, Sc(UiTheme.RadiusField));
+					using (SolidBrush brush3 = new SolidBrush(field.Enabled ? UiTheme.FieldFill : UiTheme.DisabledFill))
 					{
 						graphics.FillPath(brush3, fieldPath);
 					}
-					using Pen pen2 = new Pen(field.Enabled ? Tokens.FieldStroke : Tokens.DisabledStroke);
+					using Pen pen2 = new Pen(field.Enabled ? UiTheme.FieldStroke : UiTheme.DisabledStroke);
 					graphics.DrawPath(pen2, fieldPath);
 				}
 				catch
@@ -676,16 +676,16 @@ internal sealed partial class SettingsForm
 				if (_titleRect.Width > 0)
 				{
 					// 卡片标题：17px 半粗，和参照里的 H2 同一档
-					TextRenderer.DrawText(graphics, Title, _fontTitle, _titleRect, Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+					TextRenderer.DrawText(graphics, Title, _fontTitle, _titleRect, UiTheme.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 				}
 				if (_subRect.Width > 0)
 				{
-					TextRenderer.DrawText(graphics, Subtitle, _fontSub, _subRect, Tokens.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+					TextRenderer.DrawText(graphics, Subtitle, _fontSub, _subRect, UiTheme.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 				}
 				if (_dividers.Count > 0)
 				{
 					int padX = Sc(PadX);
-					using Pen pen3 = new Pen(Tokens.Divider);
+					using Pen pen3 = new Pen(UiTheme.Divider);
 					foreach (int divider in _dividers)
 					{
 						graphics.DrawLine(pen3, padX, divider, Math.Max(padX + 4, clientRectangle.Width - padX - 1), divider);
@@ -728,7 +728,7 @@ internal sealed partial class SettingsForm
 		public SideNav()
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
-			BackColor = Tokens.Sidebar;
+			BackColor = UiTheme.Sidebar;
 			_glow = new Tween[16];
 			_fontBrand = new Font(DesignFontFamily, Sc(14), FontStyle.Bold, GraphicsUnit.Pixel);
 			_fontBrandSub = new Font(DesignFontFamily, Sc(11), FontStyle.Regular, GraphicsUnit.Pixel);
@@ -876,11 +876,11 @@ internal sealed partial class SettingsForm
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
 			Rectangle clientRectangle = ClientRectangle;
-			using (SolidBrush solidBrush = new SolidBrush(Tokens.Sidebar))
+			using (SolidBrush solidBrush = new SolidBrush(UiTheme.Sidebar))
 			{
 				graphics.FillRectangle(solidBrush, clientRectangle);
 			}
-			using (Pen pen = new Pen(Tokens.Stroke))
+			using (Pen pen = new Pen(UiTheme.Stroke))
 			{
 				graphics.DrawLine(pen, clientRectangle.Width - 1, 0, clientRectangle.Width - 1, clientRectangle.Height);
 			}
@@ -912,7 +912,7 @@ internal sealed partial class SettingsForm
 				// 结果点过的每一项都会永久留一个灰胶囊，看起来像"没选中却高亮"。
 				if (flag || flag2)
 				{
-					Color color = (flag ? Tokens.AccentSoft : Tokens.Hover);
+					Color color = (flag ? UiTheme.AccentSoft : UiTheme.Hover);
 					float num3 = (flag ? Math.Min(1f, Math.Max(0.4f, num2)) : 0.7f);
 					using GraphicsPath path = RoundedPath(r, Sc(10));
 					using (SolidBrush brush = new SolidBrush(Mix(Color.FromArgb(0, color), color, num3)))
@@ -921,13 +921,13 @@ internal sealed partial class SettingsForm
 					}
 				}
 				// 当前页用强调色文字，悬停用主文字色：一眼能看出「我在哪一页」
-				Color color2 = (flag ? Tokens.Accent : ((flag2 ? Tokens.TextPrimary : Tokens.TextSecondary)));
+				Color color2 = (flag ? UiTheme.Accent : ((flag2 ? UiTheme.TextPrimary : UiTheme.TextSecondary)));
 				int num4 = r.Left + Sc(12);
 				if (font2 != null && i < _glyphs.Length)
 				{
-					using (SolidBrush brush2 = new SolidBrush(flag ? Tokens.Accent : Tokens.TextSecondary))
+					using (SolidBrush brush2 = new SolidBrush(flag ? UiTheme.Accent : UiTheme.TextSecondary))
 					{
-						TextRenderer.DrawText(graphics, _glyphs[i], font2, new Rectangle(num4, r.Top + (r.Height - Sc(16)) / 2, Sc(16), Sc(16)), flag ? Tokens.Accent : Tokens.TextSecondary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+						TextRenderer.DrawText(graphics, _glyphs[i], font2, new Rectangle(num4, r.Top + (r.Height - Sc(16)) / 2, Sc(16), Sc(16)), flag ? UiTheme.Accent : UiTheme.TextSecondary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 					}
 					num4 += Sc(16) + Sc(11);
 				}
@@ -947,9 +947,9 @@ internal sealed partial class SettingsForm
 				{
 					using (GraphicsPath path = RoundedPath(new Rectangle(rect.X - Sc(1), rect.Y - Sc(1), rect.Width + Sc(2), rect.Height + Sc(2)), Sc(8)))
 					{
-						using SolidBrush brush = new SolidBrush(Tokens.Surface);
+						using SolidBrush brush = new SolidBrush(UiTheme.Surface);
 						graphics.FillPath(brush, path);
-						using Pen pen = new Pen(Tokens.Stroke);
+						using Pen pen = new Pen(UiTheme.Stroke);
 						graphics.DrawPath(pen, path);
 					}
 					graphics.DrawImage(brand, rect);
@@ -957,21 +957,21 @@ internal sealed partial class SettingsForm
 				else
 				{
 					using GraphicsPath path2 = RoundedPath(rect, Sc(8));
-					using (SolidBrush brush2 = new SolidBrush(Tokens.AccentSoft))
+					using (SolidBrush brush2 = new SolidBrush(UiTheme.AccentSoft))
 					{
 						graphics.FillPath(brush2, path2);
 					}
 					using Font font = Icons.At(Sc(16));
 					if (font != null)
 					{
-						TextRenderer.DrawText(graphics, Glyph.Move, font, rect, Tokens.Accent, TextFormatFlags.NoPrefix | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+						TextRenderer.DrawText(graphics, Glyph.Move, font, rect, UiTheme.Accent, TextFormatFlags.NoPrefix | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
 					}
 				}
 				int num3 = rect.Right + Sc(11);
 				Font font2 = _fontBrand;
 				Font font3 = _fontBrandSub;
-				TextRenderer.DrawText(graphics, Loc.T("长按拖窗"), font2, new Rectangle(num3, rect.Top - Sc(2), Math.Max(20, client.Width - num3 - Sc(10)), Sc(20)), Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-				TextRenderer.DrawText(graphics, "HoldDrag · Win11 x64", font3, new Rectangle(num3, rect.Top + Sc(16), Math.Max(20, client.Width - num3 - Sc(10)), Sc(16)), Tokens.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+				TextRenderer.DrawText(graphics, Loc.T("长按拖窗"), font2, new Rectangle(num3, rect.Top - Sc(2), Math.Max(20, client.Width - num3 - Sc(10)), Sc(20)), UiTheme.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+				TextRenderer.DrawText(graphics, "HoldDrag · Win11 x64", font3, new Rectangle(num3, rect.Top + Sc(16), Math.Max(20, client.Width - num3 - Sc(10)), Sc(16)), UiTheme.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 			}
 			catch (Exception ex)
 			{
@@ -991,23 +991,23 @@ internal sealed partial class SettingsForm
 				}
 				using (GraphicsPath path = RoundedPath(rect, Sc(12)))
 				{
-					using (SolidBrush brush = new SolidBrush(Tokens.SurfaceAlt))
+					using (SolidBrush brush = new SolidBrush(UiTheme.SurfaceAlt))
 					{
 						graphics.FillPath(brush, path);
 					}
-					using Pen pen = new Pen(Tokens.Stroke);
+					using Pen pen = new Pen(UiTheme.Stroke);
 					graphics.DrawPath(pen, path);
 				}
 				int num2 = rect.Left + Sc(13);
 				int num3 = rect.Top + Sc(12);
-				using (SolidBrush brush2 = new SolidBrush(Tokens.Success))
+				using (SolidBrush brush2 = new SolidBrush(UiTheme.Success))
 				{
 					graphics.FillEllipse(brush2, new Rectangle(num2, num3 + Sc(6), Sc(8), Sc(8)));
 				}
 				Font font = _fontStatus;
 				Font font2 = _fontStatusSub;
-				TextRenderer.DrawText(graphics, _statusTitle, font, new Rectangle(num2 + Sc(15), num3, Math.Max(20, rect.Right - num2 - Sc(24)), Sc(20)), Tokens.TextSecondary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-				TextRenderer.DrawText(graphics, _statusDetail, font2, new Rectangle(num2, num3 + Sc(21), Math.Max(20, rect.Right - num2 - Sc(13)), Sc(18)), Tokens.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+				TextRenderer.DrawText(graphics, _statusTitle, font, new Rectangle(num2 + Sc(15), num3, Math.Max(20, rect.Right - num2 - Sc(24)), Sc(20)), UiTheme.TextSecondary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+				TextRenderer.DrawText(graphics, _statusDetail, font2, new Rectangle(num2, num3 + Sc(21), Math.Max(20, rect.Right - num2 - Sc(13)), Sc(18)), UiTheme.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 			}
 			catch (Exception ex)
 			{
@@ -1044,8 +1044,8 @@ internal sealed partial class SettingsForm
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 			FlatStyle = FlatStyle.Flat;
-			BackColor = Tokens.Surface;
-			ForeColor = Tokens.TextPrimary;
+			BackColor = UiTheme.Surface;
+			ForeColor = UiTheme.TextPrimary;
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 			Cursor = Cursors.Hand;
 			_hoverT = new Tween(this);
@@ -1108,7 +1108,7 @@ internal sealed partial class SettingsForm
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
 			// 同按钮：用父容器底色清屏，避免在卡片上留一块异色直角
-			graphics.Clear((Parent != null) ? Parent.BackColor : Tokens.Surface);
+			graphics.Clear((Parent != null) ? Parent.BackColor : UiTheme.Surface);
 			Rectangle trackRect = TrackRect;
 			int radius = TrackH / 2;
 			bool flag = Checked;
@@ -1121,12 +1121,12 @@ internal sealed partial class SettingsForm
 			Color color;
 			if (!Enabled)
 			{
-				color = (flag ? Tokens.TrackOff : Tokens.Divider);
+				color = (flag ? UiTheme.TrackOff : UiTheme.Divider);
 			}
 			else
 			{
-				Color a = Mix(Tokens.TrackOff, Tokens.TrackOffHover, value);
-				Color b = Mix(Tokens.Accent, ControlPaint.Light(Tokens.Accent, 0.08f), value);
+				Color a = Mix(UiTheme.TrackOff, UiTheme.TrackOffHover, value);
+				Color b = Mix(UiTheme.Accent, ControlPaint.Light(UiTheme.Accent, 0.08f), value);
 				color = Mix(a, b, num);
 			}
 			using (GraphicsPath path = RoundedPath(trackRect, radius))
@@ -1138,18 +1138,18 @@ internal sealed partial class SettingsForm
 			}
 			Point knobCenter = KnobCenter;
 			Rectangle rect = new Rectangle(knobCenter.X - KnobSize / 2, knobCenter.Y - KnobSize / 2, KnobSize, KnobSize);
-			using (SolidBrush brush3 = new SolidBrush(Color.FromArgb(28, Tokens.TextPrimary)))
+			using (SolidBrush brush3 = new SolidBrush(Color.FromArgb(28, UiTheme.TextPrimary)))
 			{
 				graphics.FillEllipse(brush3, new Rectangle(rect.X, rect.Y + Math.Max(1, Sc(1)), rect.Width, rect.Height));
 			}
-			using (SolidBrush brush4 = new SolidBrush(Enabled ? Tokens.SwitchKnob : Tokens.Surface))
+			using (SolidBrush brush4 = new SolidBrush(Enabled ? UiTheme.SwitchKnob : UiTheme.Surface))
 			{
 				graphics.FillEllipse(brush4, rect);
 			}
 			Rectangle bounds = new Rectangle(trackRect.Right + Sc(8), 0, Math.Max(10, Width - trackRect.Right - Sc(10)), Height);
 			if (bounds.Width > 0)
 			{
-				Color foreColor = (Enabled ? ForeColor : Tokens.TextTertiary);
+				Color foreColor = (Enabled ? ForeColor : UiTheme.TextTertiary);
 				TextRenderer.DrawText(graphics, Text, Font, bounds, foreColor, TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
 			}
 		}
@@ -1194,8 +1194,8 @@ internal sealed partial class SettingsForm
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
 			FlatStyle = FlatStyle.Flat;
-			BackColor = Tokens.Surface;
-			ForeColor = Tokens.TextPrimary;
+			BackColor = UiTheme.Surface;
+			ForeColor = UiTheme.TextPrimary;
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 			Cursor = Cursors.Hand;
 			_hoverT = new Tween(this);
@@ -1220,15 +1220,15 @@ internal sealed partial class SettingsForm
 			Rectangle clientRectangle = ClientRectangle;
 			// 清屏用父容器底色：BackColor 是控件自己的填充色，拿它清屏会在圆角外留下一块同色直角，
 			// 看上去就是「方按钮」（深色主题下尤其明显）。
-			graphics.Clear((Parent != null) ? Parent.BackColor : Tokens.Canvas);
+			graphics.Clear((Parent != null) ? Parent.BackColor : UiTheme.Canvas);
 			float value = _hoverT.Value;
-			Color color = (_primary ? Tokens.Accent : Tokens.ButtonHover);
-			Color back = Mix(_primary ? Tokens.Accent : Tokens.Surface, color, value);
+			Color color = (_primary ? UiTheme.Accent : UiTheme.ButtonHover);
+			Color back = Mix(_primary ? UiTheme.Accent : UiTheme.Surface, color, value);
 			if (!Enabled)
 			{
-				back = Tokens.Canvas;
+				back = UiTheme.Canvas;
 			}
-			using (GraphicsPath path = RoundedPath(new Rectangle(0, 0, clientRectangle.Width, clientRectangle.Height), Sc(Tokens.RadiusField)))
+			using (GraphicsPath path = RoundedPath(new Rectangle(0, 0, clientRectangle.Width, clientRectangle.Height), Sc(UiTheme.RadiusField)))
 			{
 				using (SolidBrush brush = new SolidBrush(back))
 				{
@@ -1236,16 +1236,16 @@ internal sealed partial class SettingsForm
 				}
 				if (!_primary)
 				{
-					using (Pen pen = new Pen(Enabled ? Tokens.InputStroke : Tokens.Divider))
+					using (Pen pen = new Pen(Enabled ? UiTheme.InputStroke : UiTheme.Divider))
 					{
 						graphics.DrawPath(pen, path);
 					}
 				}
 			}
-			Color foreColor = (_primary ? Tokens.TextOnAccent : Tokens.TextPrimary);
+			Color foreColor = (_primary ? UiTheme.TextOnAccent : UiTheme.TextPrimary);
 			if (!Enabled)
 			{
-				foreColor = Tokens.TextTertiary;
+				foreColor = UiTheme.TextTertiary;
 			}
 			TextRenderer.DrawText(graphics, Text, Font, new Rectangle(Sc(8), 0, Math.Max(10, clientRectangle.Width - Sc(16)), clientRectangle.Height), foreColor, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
 		}
@@ -1303,7 +1303,7 @@ internal sealed partial class SettingsForm
 		public CaptionButton()
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
-			BackColor = Tokens.Canvas;
+			BackColor = UiTheme.Canvas;
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 		}
 
@@ -1346,20 +1346,20 @@ internal sealed partial class SettingsForm
 			Rectangle clientRectangle = ClientRectangle;
 			// 清屏用父容器底色：BackColor 是控件自己的填充色，拿它清屏会在圆角外留下一块同色直角，
 			// 看上去就是「方按钮」（深色主题下尤其明显）。
-			graphics.Clear((Parent != null) ? Parent.BackColor : Tokens.Canvas);
+			graphics.Clear((Parent != null) ? Parent.BackColor : UiTheme.Canvas);
 			if (_hot || _down)
 			{
-				Color color = ((_kind == 2) ? Tokens.Danger : Tokens.Hover);
+				Color color = ((_kind == 2) ? UiTheme.Danger : UiTheme.Hover);
 				if (_down)
 				{
 					color = ControlPaint.Dark(color, 0.08f);
 				}
 				Rectangle rect = new Rectangle(Sc(2), Sc(2), Math.Max(4, clientRectangle.Width - Sc(4)), Math.Max(4, clientRectangle.Height - Sc(4)));
-				using GraphicsPath path = RoundedPath(rect, Sc(Tokens.RadiusChip));
+				using GraphicsPath path = RoundedPath(rect, Sc(UiTheme.RadiusChip));
 				using SolidBrush brush = new SolidBrush(color);
 				graphics.FillPath(brush, path);
 			}
-			Color color2 = ((_kind == 2 && _hot) ? Color.White : Tokens.TextSecondary);
+			Color color2 = ((_kind == 2 && _hot) ? Color.White : UiTheme.TextSecondary);
 			float num = Math.Max(1.1f, (float)Sc(1) * 1.15f);
 			using Pen pen = new Pen(color2, num);
 			pen.StartCap = LineCap.Round;

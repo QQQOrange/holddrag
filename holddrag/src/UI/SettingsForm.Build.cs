@@ -48,8 +48,8 @@ internal sealed partial class SettingsForm
 		}
 		Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 		AutoScaleMode = AutoScaleMode.None;
-		BackColor = Tokens.Canvas;
-		ForeColor = Tokens.TextPrimary;
+		BackColor = UiTheme.Canvas;
+		ForeColor = UiTheme.TextPrimary;
 		// 保留 Sizable（留着 WS_THICKFRAME：DWM 阴影、左右下三边原生缩放都靠它），
 		// 但用 WM_NCCALCSIZE 把系统标题栏整条吃掉 —— 标题栏由我们自己画，和内容同色不"断层"。
 		FormBorderStyle = FormBorderStyle.Sizable;
@@ -74,7 +74,7 @@ internal sealed partial class SettingsForm
 		// 内容区：单列卡片流，卡片限宽 880 左对齐
 		_content = new Panel
 		{
-			BackColor = Tokens.Canvas
+			BackColor = UiTheme.Canvas
 		};
 		_content.Resize += delegate
 		{
@@ -91,7 +91,7 @@ internal sealed partial class SettingsForm
 		BuildPages();
 		// 侧栏：品牌区 + 导航胶囊 + 底部状态卡（照参照的三段式）
 		_nav = new SideNav();
-		_nav.Width = S(Tokens.SidebarW);
+		_nav.Width = S(UiTheme.SidebarW);
 		_nav.Bind(NavTitles(), NavGlyphs(), delegate(int i)
 		{
 			SelectPage(i);
@@ -99,21 +99,21 @@ internal sealed partial class SettingsForm
 		// 标题栏：左边是当前页标题 + 一行说明，右边三个窗口按钮（和参照一样）
 		_titleStrip = new Panel
 		{
-			BackColor = Tokens.Canvas
+			BackColor = UiTheme.Canvas
 		};
 		_titleStrip.Paint += delegate(object s2, PaintEventArgs e2)
 		{
 			Graphics graphics = e2.Graphics;
 			HQ.Apply(graphics);
 			// 标题栏和内容区同一个底色，中间不画分隔线：整页是一整块，没有"两条杠"
-			using SolidBrush brush = new SolidBrush(Tokens.Canvas);
+			using SolidBrush brush = new SolidBrush(UiTheme.Canvas);
 			graphics.FillRectangle(brush, _titleStrip.ClientRectangle);
 		};
 		_lblPageTitle = new Label
 		{
 			AutoSize = false,
-			BackColor = Tokens.Canvas,
-			ForeColor = Tokens.TextPrimary,
+			BackColor = UiTheme.Canvas,
+			ForeColor = UiTheme.TextPrimary,
 			Font = new Font(DesignFontFamily, Sc(17), FontStyle.Bold, GraphicsUnit.Pixel),
 			TextAlign = ContentAlignment.MiddleLeft,
 			Text = ""
@@ -121,8 +121,8 @@ internal sealed partial class SettingsForm
 		_txtSearch = new TextBox
 		{
 			BorderStyle = BorderStyle.FixedSingle,
-			ForeColor = Tokens.TextPrimary,
-			BackColor = Tokens.Surface,
+			ForeColor = UiTheme.TextPrimary,
+			BackColor = UiTheme.Surface,
 			Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel),
 			PlaceholderText = Loc.T("搜索设置…")
 		};
@@ -170,8 +170,8 @@ internal sealed partial class SettingsForm
 		_lblPageSub = new Label
 		{
 			AutoSize = false,
-			BackColor = Tokens.Canvas,
-			ForeColor = Tokens.TextTertiary,
+			BackColor = UiTheme.Canvas,
+			ForeColor = UiTheme.TextTertiary,
 			Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel),
 			TextAlign = ContentAlignment.MiddleLeft,
 			Text = ""
@@ -234,28 +234,28 @@ internal sealed partial class SettingsForm
 		_pager = new Panel
 		{
 			Height = S(60),
-			BackColor = Tokens.Canvas
+			BackColor = UiTheme.Canvas
 		};
 		_pager.Paint += delegate(object s4, PaintEventArgs e4)
 		{
 			Graphics graphics = e4.Graphics;
 			HQ.Apply(graphics);
-			using (SolidBrush brush = new SolidBrush(Tokens.Canvas))
+			using (SolidBrush brush = new SolidBrush(UiTheme.Canvas))
 			{
 				graphics.FillRectangle(brush, _pager.ClientRectangle);
 			}
 			// 只画一条极淡的上边线，把"操作区"和"内容区"分开，不再套整块背景
-			using Pen pen = new Pen(Tokens.Divider);
+			using Pen pen = new Pen(UiTheme.Divider);
 			graphics.DrawLine(pen, 0, 0, _pager.Width, 0);
 		};
 		_lblStatus = new Label
 		{
 			AutoSize = false,
 			AutoEllipsis = true,
-			ForeColor = Tokens.Success,
+			ForeColor = UiTheme.Success,
 			TextAlign = ContentAlignment.MiddleLeft,
 			Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel),
-			BackColor = Tokens.Canvas,
+			BackColor = UiTheme.Canvas,
 			Location = new Point(S(24), S(14)),
 			Size = new Size(S(360), S(32)),
 			Text = ""
@@ -415,9 +415,9 @@ internal sealed partial class SettingsForm
 			{
 				return;
 			}
-			int num = S(Tokens.TitleBarH);
+			int num = S(UiTheme.TitleBarH);
 			int pagerH = ((_pager != null) ? _pager.Height : 0);
-			int num2 = S(Tokens.SidebarW);
+			int num2 = S(UiTheme.SidebarW);
 			Place(_nav, new Rectangle(0, 0, num2, ClientSize.Height));
 			int num3 = Math.Max(S(240), ClientSize.Width - num2);
 			Place(_titleStrip, new Rectangle(num2, 0, num3, num));
@@ -557,7 +557,7 @@ internal sealed partial class SettingsForm
 		{
 			return _content.ClientSize.Width;
 		}
-		return Math.Max(10, ClientSize.Width - S(Tokens.SidebarW));
+		return Math.Max(10, ClientSize.Width - S(UiTheme.SidebarW));
 	}
 
 	private void BuildControls()
@@ -568,8 +568,8 @@ internal sealed partial class SettingsForm
 			TabStop = false,
 			BorderStyle = BorderStyle.None,
 			// 一定要显式给前景色：TextBox 默认是系统黑色，深色主题下就是"深底黑字"，完全看不见
-			ForeColor = Tokens.TextPrimary,
-			BackColor = Tokens.FieldFill,
+			ForeColor = UiTheme.TextPrimary,
+			BackColor = UiTheme.FieldFill,
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel),
 			TextAlign = HorizontalAlignment.Center
 		};
@@ -637,7 +637,7 @@ internal sealed partial class SettingsForm
 			PickCustomFrameColor();
 		};
 		_lblCustomColor = HintLabel();
-		_lblCustomColor.ForeColor = Tokens.TextPrimary;
+		_lblCustomColor.ForeColor = UiTheme.TextPrimary;
 		_cmbFrameStyle = NewCombo();
 		_cmbFrameStyle.SelectedIndexChanged += delegate
 		{
@@ -652,7 +652,7 @@ internal sealed partial class SettingsForm
 			SelectId(_cmbFrameColor, _gridColor.SelectedId);
 		};
 		_lblColorName = HintLabel();
-		_lblColorName.ForeColor = Tokens.TextPrimary;
+		_lblColorName.ForeColor = UiTheme.TextPrimary;
 		_lblStyleHeader = HintLabel();
 		_lblStyleHint = HintLabel();
 		_galleryStyle = new StyleGallery
@@ -698,15 +698,15 @@ internal sealed partial class SettingsForm
 		_txtBlacklist = new TextBox
 		{
 			BorderStyle = BorderStyle.None,
-			ForeColor = Tokens.TextPrimary,
-			BackColor = Tokens.FieldFill,
+			ForeColor = UiTheme.TextPrimary,
+			BackColor = UiTheme.FieldFill,
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel)
 		};
 		_txtAppRules = new TextBox
 		{
 			BorderStyle = BorderStyle.None,
-			ForeColor = Tokens.TextPrimary,
-			BackColor = Tokens.FieldFill,
+			ForeColor = UiTheme.TextPrimary,
+			BackColor = UiTheme.FieldFill,
 			Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel)
 		};
 		_cmbRuleMode = NewCombo();
@@ -848,8 +848,8 @@ internal sealed partial class SettingsForm
 			AutoEllipsis = true,
 			TextAlign = ContentAlignment.MiddleLeft,
 			// 必须是实色：卡片是自绘的，Transparent 子标签会让父级每帧整块重绘（滚动/切页发闷的主因）
-			BackColor = Tokens.Surface,
-			ForeColor = Tokens.Hint,
+			BackColor = UiTheme.Surface,
+			ForeColor = UiTheme.Hint,
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel),
 			Text = Loc.T("尚未检查")
 		};
@@ -857,8 +857,8 @@ internal sealed partial class SettingsForm
 		_txtToken = new TextBox
 		{
 			BorderStyle = BorderStyle.None,
-			ForeColor = Tokens.TextPrimary,
-			BackColor = Tokens.FieldFill,
+			ForeColor = UiTheme.TextPrimary,
+			BackColor = UiTheme.FieldFill,
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel),
 			// 令牌是敏感信息：输入即遮住，屏幕录制/旁人路过都看不到明文
 			UseSystemPasswordChar = true,
@@ -937,8 +937,8 @@ internal sealed partial class SettingsForm
 		{
 			AutoSize = false,
 			AutoEllipsis = false,
-			ForeColor = Tokens.Hint,
-			BackColor = Tokens.Surface,
+			ForeColor = UiTheme.Hint,
+			BackColor = UiTheme.Surface,
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel),
 			Size = new Size(100, 20)
 		};
@@ -959,8 +959,8 @@ internal sealed partial class SettingsForm
 			Text = text,
 			AutoSize = false,
 			UseMnemonic = false,
-			BackColor = Tokens.Surface,
-			ForeColor = Tokens.TextTertiary,
+			BackColor = UiTheme.Surface,
+			ForeColor = UiTheme.TextTertiary,
 			Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel),
 			TextAlign = ContentAlignment.MiddleLeft
 		};
@@ -975,8 +975,8 @@ internal sealed partial class SettingsForm
 			AutoSize = false,
 			UseMnemonic = false,
 			AutoEllipsis = true,
-			BackColor = Tokens.Surface,
-			ForeColor = accent ? Tokens.Accent : Tokens.TextPrimary,
+			BackColor = UiTheme.Surface,
+			ForeColor = accent ? UiTheme.Accent : UiTheme.TextPrimary,
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel),
 			TextAlign = ContentAlignment.MiddleRight
 		};

@@ -91,7 +91,7 @@ internal sealed partial class SettingsForm
 				{
 					g.FillPath(brush, graphicsPath);
 				}
-				using Pen pen = new Pen(Tokens.InputStroke);
+				using Pen pen = new Pen(UiTheme.InputStroke);
 				g.DrawPath(pen, graphicsPath);
 			}
 			finally
@@ -101,7 +101,7 @@ internal sealed partial class SettingsForm
 			// 字体必须跟界面一致：SystemFonts.DefaultFont 是 9pt 的另一种字族，
 			// 展开的下拉列表里文字会比收起状态小一号，而且不随 DPI 缩放。
 			using Font font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel);
-			TextRenderer.DrawText(bounds: new Rectangle(r.Right + Sc(8), bounds.Top, Math.Max(10, bounds.Width - num - Sc(10)), bounds.Height), dc: g, text: colorItem.Text, font: font, foreColor: Tokens.TextPrimary, flags: TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
+			TextRenderer.DrawText(bounds: new Rectangle(r.Right + Sc(8), bounds.Top, Math.Max(10, bounds.Width - num - Sc(10)), bounds.Height), dc: g, text: colorItem.Text, font: font, foreColor: UiTheme.TextPrimary, flags: TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
 		}
 		catch (Exception ex)
 		{
@@ -142,14 +142,14 @@ internal sealed partial class SettingsForm
 			if (num == IntPtr.Zero)
 			{
 				_lblStatus.Text = Loc.T("没有找到窗口：把鼠标移到目标窗口上再点");
-				_lblStatus.ForeColor = Tokens.Danger;
+				_lblStatus.ForeColor = UiTheme.Danger;
 				return;
 			}
 			string text = WindowActions.ProcessExeName(num);
 			if (string.IsNullOrEmpty(text))
 			{
 				_lblStatus.Text = Loc.T("读不到这个窗口的程序名（权限更高？）");
-				_lblStatus.ForeColor = Tokens.Danger;
+				_lblStatus.ForeColor = UiTheme.Danger;
 				return;
 			}
 			string text2 = ((_cmbRuleMode.SelectedItem is IdItem idItem) ? idItem.Value : AppRules.Ignore);
@@ -166,7 +166,7 @@ internal sealed partial class SettingsForm
 			list.Add(text + "=" + text2);
 			_txtAppRules.Text = string.Join(";", list);
 			_lblStatus.Text = Loc.T("已添加：") + text + " → " + AppRules.DisplayName(text2);
-			_lblStatus.ForeColor = Tokens.Success;
+			_lblStatus.ForeColor = UiTheme.Success;
 		}
 		catch (Exception ex)
 		{
@@ -226,13 +226,13 @@ internal sealed partial class SettingsForm
 			LayoutStore.Layout layout = LayoutStore.Save(text);
 			RefreshLayoutCombo();
 			_lblStatus.Text = Loc.T("已保存布局：") + text + "（" + layout.Windows.Count + Loc.T(" 个窗口）");
-			_lblStatus.ForeColor = Tokens.Success;
+			_lblStatus.ForeColor = UiTheme.Success;
 		}
 		catch (Exception ex)
 		{
 			Log.Error(ex);
 			_lblStatus.Text = Loc.T("保存布局失败：") + ex.Message;
-			_lblStatus.ForeColor = Tokens.Danger;
+			_lblStatus.ForeColor = UiTheme.Danger;
 		}
 	}
 
@@ -243,19 +243,19 @@ internal sealed partial class SettingsForm
 			if (!(_cmbLayouts.SelectedItem is IdItem idItem))
 			{
 				_lblStatus.Text = Loc.T("还没有保存过布局");
-				_lblStatus.ForeColor = Tokens.Danger;
+				_lblStatus.ForeColor = UiTheme.Danger;
 				return;
 			}
 			LayoutStore.Layout layout = LayoutStore.LoadAll().Find((LayoutStore.Layout l) => string.Equals(l.Name, idItem.Value, StringComparison.OrdinalIgnoreCase));
 			if (layout == null)
 			{
 				_lblStatus.Text = Loc.T("找不到这个布局");
-				_lblStatus.ForeColor = Tokens.Danger;
+				_lblStatus.ForeColor = UiTheme.Danger;
 				return;
 			}
 			int num = LayoutStore.Restore(layout);
 			_lblStatus.Text = Loc.T("已恢复布局：") + layout.Name + "（" + num + " / " + layout.Windows.Count + Loc.T(" 个窗口）");
-			_lblStatus.ForeColor = Tokens.Success;
+			_lblStatus.ForeColor = UiTheme.Success;
 		}
 		catch (Exception ex)
 		{
@@ -274,7 +274,7 @@ internal sealed partial class SettingsForm
 			LayoutStore.Delete(idItem.Value);
 			RefreshLayoutCombo();
 			_lblStatus.Text = Loc.T("已删除布局：") + idItem.Value;
-			_lblStatus.ForeColor = Tokens.Success;
+			_lblStatus.ForeColor = UiTheme.Success;
 		}
 		catch (Exception ex)
 		{
@@ -291,8 +291,8 @@ internal sealed partial class SettingsForm
 			FormBorderStyle = FormBorderStyle.FixedDialog,
 			StartPosition = FormStartPosition.CenterParent,
 			ClientSize = new Size(Sc(380), Sc(140)),
-			BackColor = Tokens.Surface,
-			ForeColor = Tokens.TextPrimary,
+			BackColor = UiTheme.Surface,
+			ForeColor = UiTheme.TextPrimary,
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel),
 			ShowInTaskbar = false,
 			MaximizeBox = false,
@@ -303,8 +303,8 @@ internal sealed partial class SettingsForm
 			Bounds = new Rectangle(Sc(20), Sc(26), Sc(340), Sc(28)),
 			Text = initial ?? "",
 			BorderStyle = BorderStyle.FixedSingle,
-			BackColor = Tokens.FieldFill,
-			ForeColor = Tokens.TextPrimary,
+			BackColor = UiTheme.FieldFill,
+			ForeColor = UiTheme.TextPrimary,
 			Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel)
 		};
 		FlatButton flatButton = new FlatButton
@@ -359,7 +359,7 @@ internal sealed partial class SettingsForm
 				if (_lblStatus != null)
 				{
 					_lblStatus.Text = Loc.T("没有找到：") + text;
-					_lblStatus.ForeColor = Tokens.Danger;
+					_lblStatus.ForeColor = UiTheme.Danger;
 				}
 				return;
 			}
@@ -375,7 +375,7 @@ internal sealed partial class SettingsForm
 			{
 				_lblStatus.Text = Loc.T("「") + text + Loc.T("」 ") + (_searchIndex + 1) + "/" + _searchHits.Count + Loc.T("：") + searchHit.Label;
 			}
-			_lblStatus.ForeColor = Tokens.TextSecondary;
+			_lblStatus.ForeColor = UiTheme.TextSecondary;
 		}
 		catch (Exception ex)
 		{
@@ -432,7 +432,7 @@ internal sealed partial class SettingsForm
 			if (_lblStatus != null)
 			{
 				_lblStatus.Text = Loc.T("诊断包已导出：") + text;
-				_lblStatus.ForeColor = Tokens.Success;
+				_lblStatus.ForeColor = UiTheme.Success;
 			}
 			try
 			{
@@ -451,7 +451,7 @@ internal sealed partial class SettingsForm
 			if (_lblStatus != null)
 			{
 				_lblStatus.Text = Loc.T("导出失败：") + ex.Message;
-				_lblStatus.ForeColor = Tokens.Danger;
+				_lblStatus.ForeColor = UiTheme.Danger;
 			}
 		}
 	}

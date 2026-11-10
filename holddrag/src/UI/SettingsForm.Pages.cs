@@ -277,7 +277,7 @@ internal sealed partial class SettingsForm
 			left = num;
 			return Math.Max(S(320), (num2 - gap) / 2);
 		}
-		int num3 = Math.Min(num2, S(Tokens.CardMaxW));
+		int num3 = Math.Min(num2, S(UiTheme.CardMaxW));
 		// 单列但窗口还比较宽：左右均分留白，视觉上居中，而不是全挤在左边
 		left = num + Math.Max(0, (num2 - num3) / 2);
 		return num3;
@@ -376,7 +376,7 @@ internal sealed partial class SettingsForm
 		else
 		{
 			int numY = Math.Max(S(200), contentW - S(48));
-			cardW = Math.Min(numY, (page.Cards.Count <= 1) ? S(1200) : S(Tokens.CardMaxW));
+			cardW = Math.Min(numY, (page.Cards.Count <= 1) ? S(1200) : S(UiTheme.CardMaxW));
 			numX = S(24) + Math.Max(0, (numY - cardW) / 2);
 		}
 		page.Host.SuspendLayout();
@@ -402,20 +402,20 @@ internal sealed partial class SettingsForm
 					else
 					{
 						Place(card, new Rectangle(numX + cardW + num2, num5, cardW, num7));
-						num3 = num5 + Math.Max(num6, num7) + S(Tokens.CardGap);
+						num3 = num5 + Math.Max(num6, num7) + S(UiTheme.CardGap);
 					}
 					num4++;
 				}
 				else
 				{
 					Place(card, new Rectangle(numX, num3, cardW, num7));
-					num3 += num7 + S(Tokens.CardGap);
+					num3 += num7 + S(UiTheme.CardGap);
 				}
 				card.Layout(cardW);
 			}
 			if (flag2 && num4 % 2 == 1)
 			{
-				num3 = num5 + num6 + S(Tokens.CardGap);
+				num3 = num5 + num6 + S(UiTheme.CardGap);
 			}
 			Size size = new Size(contentW, Math.Max(num3 + S(4), S(80)));
 			if (page.Host.Canvas.Size != size)

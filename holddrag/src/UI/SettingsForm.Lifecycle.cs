@@ -191,7 +191,7 @@ internal sealed partial class SettingsForm
 			if (IsHandleCreated)
 			{
 				// 用画布色当标题栏：和侧栏只差 2% 的明度，接缝看不出来
-				Native.SetTitleBarTheme(Handle, Theme.IsDark, Tokens.Canvas, Tokens.TextPrimary, Tokens.Stroke);
+				Native.SetTitleBarTheme(Handle, Theme.IsDark, UiTheme.Canvas, UiTheme.TextPrimary, UiTheme.Stroke);
 			}
 		}
 		catch

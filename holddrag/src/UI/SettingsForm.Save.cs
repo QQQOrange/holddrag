@@ -298,7 +298,7 @@ internal sealed partial class SettingsForm
 		string text = SelectedId(_cmbFrameColor, FrameColors.DefaultId);
 		string text2 = SelectedId(_cmbFrameStyle, FrameStyles.DefaultId);
 		bool flag = text != _edit.FrameColorId || text2 != _edit.FrameStyleId || (int)_numFrameThick.Value != _edit.FrameThickness || (int)_numFrameRadius.Value != _edit.FrameRadius || _chkFrame.Checked != _edit.ShowActivationFrame || _chkFollowAccent.Checked != _edit.FrameColorFollowAccent || _customColorArgb != _edit.FrameCustomColor;
-		_lblFrameTip.ForeColor = (flag ? Tokens.WarnText : Tokens.Hint);
+		_lblFrameTip.ForeColor = (flag ? UiTheme.WarnText : UiTheme.Hint);
 		_lblFrameTip.Text = (flag ? Loc.T("外观已改动，点「保存并生效」才会画到实际外框上。") : Loc.T("颜色与样式即点即换，预览与外框同一段代码。"));
 	}
 
@@ -412,10 +412,10 @@ internal sealed partial class SettingsForm
 		_coord.SuppressTrigger = true;
 		_txtKey.Text = Loc.T("请按下要用的按键…");
 		// 底色与文字色必须成对改：只改底色的话，暗色主题里浅色字落在浅黄底上几乎看不见
-		_txtKey.BackColor = Tokens.FieldRecording;
-		_txtKey.ForeColor = Tokens.FieldRecordingText;
+		_txtKey.BackColor = UiTheme.FieldRecording;
+		_txtKey.ForeColor = UiTheme.FieldRecordingText;
 		_lblKeyHint.Text = Loc.T("正在录制：按任意键或鼠标侧键，Esc 取消。");
-		_lblKeyHint.ForeColor = Tokens.WarnText;
+		_lblKeyHint.ForeColor = UiTheme.WarnText;
 		Focus();
 	}
 
@@ -427,8 +427,8 @@ internal sealed partial class SettingsForm
 		}
 		_recording = false;
 		_coord.SuppressTrigger = false;
-		_txtKey.BackColor = Tokens.FieldFill;
-		_txtKey.ForeColor = Tokens.TextPrimary;
+		_txtKey.BackColor = UiTheme.FieldFill;
+		_txtKey.ForeColor = UiTheme.TextPrimary;
 		UpdateKeyText();
 		if (!applied)
 		{
@@ -445,7 +445,7 @@ internal sealed partial class SettingsForm
 			text = Loc.T("注意：Win 键被作为触发键期间，Win 组合键（Win+E、Win+D 等）无法使用。");
 		}
 		_lblKeyHint.Text = ((text.Length > 0) ? text : (Loc.T("已绑定：") + KeysUtil.DisplayName(_edit.TriggerKeyId)));
-		_lblKeyHint.ForeColor = ((text.Length > 0) ? Tokens.WarnText : Tokens.Hint);
+		_lblKeyHint.ForeColor = ((text.Length > 0) ? UiTheme.WarnText : UiTheme.Hint);
 	}
 
 	protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -463,14 +463,14 @@ internal sealed partial class SettingsForm
 				// 纯修饰键（Ctrl/Shift/Alt/Win）被 KeyCode 掩码掩掉后就是 Keys.None；
 				// 放任不管会走默认分支绑成 "K:0x00"（vk=0 永远匹配不上任何真实按键），触发键就此失效。
 				_lblKeyHint.Text = Loc.T("修饰键（Ctrl / Shift / Alt / Win）不能单独作为触发键，请再按一个主键。");
-				_lblKeyHint.ForeColor = Tokens.WarnText;
+				_lblKeyHint.ForeColor = UiTheme.WarnText;
 				return true;
 			}
 			string text = ResolveRecordedKey(keys);
 			if (text == null)
 			{
 				_lblKeyHint.Text = Loc.T("左键 / 右键 / 中键不能作为触发键，请用键盘按键或鼠标侧键。");
-				_lblKeyHint.ForeColor = Tokens.WarnText;
+				_lblKeyHint.ForeColor = UiTheme.WarnText;
 				return true;
 			}
 			_edit.TriggerKeyId = text;
@@ -494,7 +494,7 @@ internal sealed partial class SettingsForm
 			if (e.Button == MouseButtons.Left || e.Button == MouseButtons.Right || e.Button == MouseButtons.Middle)
 			{
 				_lblKeyHint.Text = Loc.T("左键 / 右键 / 中键不能作为触发键，请用键盘按键或鼠标侧键。");
-				_lblKeyHint.ForeColor = Tokens.WarnText;
+				_lblKeyHint.ForeColor = UiTheme.WarnText;
 				return;
 			}
 		}
@@ -557,7 +557,7 @@ internal sealed partial class SettingsForm
 		if (!_store.Apply(_edit, out string saveError))
 		{
 			// 保存失败时绝不能再显示"已保存并立即生效"：设置没有落盘，重启就会丢
-			_lblStatus.ForeColor = Tokens.Danger;
+			_lblStatus.ForeColor = UiTheme.Danger;
 			_lblStatus.Text = Loc.T("保存失败：") + saveError + Loc.T("（本次修改没有写入磁盘，重启后会丢失；请检查配置目录权限或磁盘空间）");
 			return;
 		}
@@ -577,12 +577,12 @@ internal sealed partial class SettingsForm
 		}
 		if (autoStartOk)
 		{
-			_lblStatus.ForeColor = string.IsNullOrEmpty(message) ? Tokens.Success : Tokens.WarnText;
+			_lblStatus.ForeColor = string.IsNullOrEmpty(message) ? UiTheme.Success : UiTheme.WarnText;
 			_lblStatus.Text = string.IsNullOrEmpty(message) ? Loc.T("已保存并立即生效") : (Loc.T("已保存并立即生效") + " · " + message);
 		}
 		else
 		{
-			_lblStatus.ForeColor = Tokens.Danger;
+			_lblStatus.ForeColor = UiTheme.Danger;
 			_lblStatus.Text = Loc.T("配置已保存，但开机自启设置失败");
 			MessageBox.Show(message, Loc.T("开机自启设置失败"), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
 		}
@@ -616,7 +616,7 @@ internal sealed partial class SettingsForm
 			{
 				if (_lblStatus != null)
 				{
-					_lblStatus.ForeColor = Tokens.Danger;
+					_lblStatus.ForeColor = UiTheme.Danger;
 					_lblStatus.Text = Loc.T("语言没能写入配置：") + error;
 				}
 				return;
@@ -915,7 +915,7 @@ internal sealed partial class SettingsForm
 		{
 			if (_lblStatus != null)
 			{
-				_lblStatus.ForeColor = (error ? Tokens.Danger : Tokens.Success);
+				_lblStatus.ForeColor = (error ? UiTheme.Danger : UiTheme.Success);
 				_lblStatus.Text = text ?? string.Empty;
 			}
 		}
@@ -945,7 +945,7 @@ internal sealed partial class SettingsForm
 			StopRecording(applied: false);
 		}
 		Populate();
-		_lblStatus.ForeColor = Tokens.Hint;
+		_lblStatus.ForeColor = UiTheme.Hint;
 		_lblStatus.Text = Loc.T("已载入默认值，点「保存并生效」后写入");
 	}
 
@@ -992,7 +992,7 @@ internal sealed partial class SettingsForm
 			try
 			{
 				Clipboard.SetText(url);
-				SetUpdateStatus(Loc.T("打不开浏览器，链接已复制到剪贴板：") + url, Tokens.WarnText);
+				SetUpdateStatus(Loc.T("打不开浏览器，链接已复制到剪贴板：") + url, UiTheme.WarnText);
 			}
 			catch
 			{

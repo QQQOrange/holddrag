@@ -57,7 +57,7 @@ internal sealed partial class SettingsForm
 			// 肉眼看到的就是「鼠标移上去整块闪一下」。
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
 			DoubleBuffered = true;
-			BackColor = Tokens.Surface;
+			BackColor = UiTheme.Surface;
 		}
 
 		/// <summary>
@@ -228,7 +228,7 @@ internal sealed partial class SettingsForm
 		{
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
-			graphics.Clear(Tokens.Surface);
+			graphics.Clear(UiTheme.Surface);
 			int columns = ColumnsFor(Width);
 			for (int i = 0; i < _items.Count; i++)
 			{
@@ -237,13 +237,13 @@ internal sealed partial class SettingsForm
 				Rectangle rect = new Rectangle(num * (Cell + Gap), num2 * (Cell + Gap), Cell, Cell);
 				bool flag = i == _sel;
 				bool flag2 = i == _hot;
-				using (GraphicsPath path = RoundedPath(new Rectangle(rect.X + Sc(2), rect.Y + Sc(2), Cell - Sc(4), Cell - Sc(4)), Sc(Tokens.RadiusField)))
+				using (GraphicsPath path = RoundedPath(new Rectangle(rect.X + Sc(2), rect.Y + Sc(2), Cell - Sc(4), Cell - Sc(4)), Sc(UiTheme.RadiusField)))
 				{
 					using (SolidBrush brush = new SolidBrush(_items[i].Color))
 					{
 						graphics.FillPath(brush, path);
 					}
-					Color color = (flag ? Tokens.Accent : (flag2 ? Tokens.InputStrokeHover : Tokens.Stroke));
+					Color color = (flag ? UiTheme.Accent : (flag2 ? UiTheme.InputStrokeHover : UiTheme.Stroke));
 					using (Pen pen = new Pen(color, flag ? Sc(2) : 1f))
 					{
 						graphics.DrawPath(pen, path);
@@ -253,7 +253,7 @@ internal sealed partial class SettingsForm
 				{
 					using (GraphicsPath path2 = RoundedPath(new Rectangle(rect.X + Sc(7), rect.Y + Sc(7), Cell - Sc(14), Cell - Sc(14)), Sc(4)))
 					{
-						using (Pen pen2 = new Pen(Tokens.Surface, Math.Max(1.5f, Sc(2))))
+						using (Pen pen2 = new Pen(UiTheme.Surface, Math.Max(1.5f, Sc(2))))
 						{
 							graphics.DrawPath(pen2, path2);
 						}
@@ -274,7 +274,7 @@ internal sealed partial class SettingsForm
 			// 肉眼看到的就是「鼠标移上去整块闪一下」。
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
 			DoubleBuffered = true;
-			BackColor = Tokens.Surface;
+			BackColor = UiTheme.Surface;
 		}
 
 		/// <summary>
@@ -495,7 +495,7 @@ internal sealed partial class SettingsForm
 		{
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
-			graphics.Clear(Tokens.Surface);
+			graphics.Clear(UiTheme.Surface);
 			int columns = ColumnsFor(Width);
 			int num = (Width + Gap) / columns - Gap;
 			Color color = Color.Gray;
@@ -516,13 +516,13 @@ internal sealed partial class SettingsForm
 				bool flag = i == _sel;
 				bool flag2 = i == _hot;
 				Rectangle rect = new Rectangle(num4, num5, num, CellH);
-				using (GraphicsPath path = RoundedPath(new Rectangle(rect.X, rect.Y, rect.Width, CellH - Sc(18)), Sc(Tokens.RadiusField)))
+				using (GraphicsPath path = RoundedPath(new Rectangle(rect.X, rect.Y, rect.Width, CellH - Sc(18)), Sc(UiTheme.RadiusField)))
 				{
-					using (SolidBrush brush = new SolidBrush(Tokens.SurfaceAlt))
+					using (SolidBrush brush = new SolidBrush(UiTheme.SurfaceAlt))
 					{
 						graphics.FillPath(brush, path);
 					}
-					Color color2 = (flag ? Tokens.Accent : (flag2 ? Tokens.InputStrokeHover : Tokens.Stroke));
+					Color color2 = (flag ? UiTheme.Accent : (flag2 ? UiTheme.InputStrokeHover : UiTheme.Stroke));
 					using (Pen pen = new Pen(color2, flag ? Sc(2) : 1f))
 					{
 						graphics.DrawPath(pen, path);
@@ -542,11 +542,11 @@ internal sealed partial class SettingsForm
 				}
 				else if (!_frameEnabled && r.Width > 4 && r.Height > 4)
 				{
-					using Pen pen2 = new Pen(Tokens.Divider);
+					using Pen pen2 = new Pen(UiTheme.Divider);
 					pen2.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
 					graphics.DrawRectangle(pen2, r.X, r.Y, r.Width, r.Height);
 				}
-				TextRenderer.DrawText(graphics, FrameStyles.DisplayName(_items[i]), font, new Rectangle(rect.X, rect.Bottom - Sc(17), rect.Width, Sc(16)), flag ? Tokens.AccentPressed : Tokens.TextSecondary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(graphics, FrameStyles.DisplayName(_items[i]), font, new Rectangle(rect.X, rect.Bottom - Sc(17), rect.Width, Sc(16)), flag ? UiTheme.AccentPressed : UiTheme.TextSecondary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
 			}
 		}
 	}
@@ -658,7 +658,7 @@ internal sealed partial class SettingsForm
 		public FramePreviewBox()
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, value: true);
-			BackColor = Tokens.Surface;
+			BackColor = UiTheme.Surface;
 		}
 
 		public void Refresh_()
@@ -670,7 +670,7 @@ internal sealed partial class SettingsForm
 		{
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
-			graphics.Clear(Tokens.Surface);
+			graphics.Clear(UiTheme.Surface);
 			Rectangle clientRectangle = ClientRectangle;
 			int num = Math.Max(2, Sc(6));
 			RectangleF rectangleF = new RectangleF((float)num + 1f, (float)num + 1f, (float)clientRectangle.Width - (float)num * 2f - 2f, (float)clientRectangle.Height - (float)num * 2f - 2f);
@@ -678,13 +678,13 @@ internal sealed partial class SettingsForm
 			{
 				return;
 			}
-			using (GraphicsPath path = RoundedPath(Rectangle.Ceiling(rectangleF), Sc(Tokens.RadiusField)))
+			using (GraphicsPath path = RoundedPath(Rectangle.Ceiling(rectangleF), Sc(UiTheme.RadiusField)))
 			{
-				using (SolidBrush brush = new SolidBrush(Tokens.SurfaceAlt))
+				using (SolidBrush brush = new SolidBrush(UiTheme.SurfaceAlt))
 				{
 					graphics.FillPath(brush, path);
 				}
-				using (Pen pen = new Pen(Tokens.Divider))
+				using (Pen pen = new Pen(UiTheme.Divider))
 				{
 					graphics.DrawPath(pen, path);
 				}
@@ -692,7 +692,7 @@ internal sealed partial class SettingsForm
 			if (!_frameEnabled)
 			{
 				using Font font = new Font(DesignFontFamily, Sc(11), FontStyle.Regular, GraphicsUnit.Pixel);
-				TextRenderer.DrawText(graphics, Loc.T("外框已关闭"), font, clientRectangle, Tokens.TextTertiary, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+				TextRenderer.DrawText(graphics, Loc.T("外框已关闭"), font, clientRectangle, UiTheme.TextTertiary, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
 				return;
 			}
 			Color color = Color.Gray;
@@ -734,7 +734,7 @@ internal sealed partial class SettingsForm
 			// 肉眼看到的就是「鼠标移上去整块闪一下」。
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
 			DoubleBuffered = true;
-			BackColor = Tokens.Surface;
+			BackColor = UiTheme.Surface;
 		}
 
 		/// <summary>
@@ -887,7 +887,7 @@ internal sealed partial class SettingsForm
 		{
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
-			graphics.Clear(Tokens.Surface);
+			graphics.Clear(UiTheme.Surface);
 			if (_entries.Count == 0)
 			{
 				return;
@@ -904,14 +904,14 @@ internal sealed partial class SettingsForm
 				Rectangle rectangle = new Rectangle(0, num, Width, HeaderH);
 				if (flag)
 				{
-					using (SolidBrush brush = new SolidBrush(Tokens.AccentSoft))
+					using (SolidBrush brush = new SolidBrush(UiTheme.AccentSoft))
 					{
 						graphics.FillRectangle(brush, rectangle);
 					}
 				}
 				else if (flag2)
 				{
-					using (SolidBrush brush2 = new SolidBrush(Tokens.ButtonHover))
+					using (SolidBrush brush2 = new SolidBrush(UiTheme.ButtonHover))
 					{
 						graphics.FillRectangle(brush2, rectangle);
 					}
@@ -919,15 +919,15 @@ internal sealed partial class SettingsForm
 				int num2 = Sc(14);
 				if (font3 != null)
 				{
-					TextRenderer.DrawText(graphics, _entries[i].Icon, font3, new Rectangle(num2, rectangle.Top + (HeaderH - Sc(16)) / 2, Sc(16), Sc(16)), flag ? Tokens.Accent : Tokens.TextSecondary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+					TextRenderer.DrawText(graphics, _entries[i].Icon, font3, new Rectangle(num2, rectangle.Top + (HeaderH - Sc(16)) / 2, Sc(16), Sc(16)), flag ? UiTheme.Accent : UiTheme.TextSecondary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 					num2 += Sc(22);
 				}
-				TextRenderer.DrawText(graphics, _entries[i].Title, font, new Rectangle(num2, rectangle.Top, Math.Max(10, Width - num2 - Sc(30)), HeaderH), flag ? Tokens.AccentPressed : Tokens.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+				TextRenderer.DrawText(graphics, _entries[i].Title, font, new Rectangle(num2, rectangle.Top, Math.Max(10, Width - num2 - Sc(30)), HeaderH), flag ? UiTheme.AccentPressed : UiTheme.TextPrimary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 				if (font4 != null)
 				{
-					TextRenderer.DrawText(graphics, Glyph.Chevron, font4, new Rectangle(Width - Sc(26), rectangle.Top + (HeaderH - Sc(14)) / 2, Sc(14), Sc(14)), flag ? Tokens.Accent : Tokens.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+					TextRenderer.DrawText(graphics, Glyph.Chevron, font4, new Rectangle(Width - Sc(26), rectangle.Top + (HeaderH - Sc(14)) / 2, Sc(14), Sc(14)), flag ? UiTheme.Accent : UiTheme.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 				}
-				using (Pen pen = new Pen(Tokens.Divider))
+				using (Pen pen = new Pen(UiTheme.Divider))
 				{
 					graphics.DrawLine(pen, 0, rectangle.Bottom - 1, Width, rectangle.Bottom - 1);
 				}
@@ -935,11 +935,11 @@ internal sealed partial class SettingsForm
 			Rectangle bodyRect = BodyRect();
 			if (bodyRect.Height > 4)
 			{
-				using (SolidBrush brush3 = new SolidBrush(Tokens.Surface))
+				using (SolidBrush brush3 = new SolidBrush(UiTheme.Surface))
 				{
 					graphics.FillRectangle(brush3, bodyRect);
 				}
-				TextRenderer.DrawText(graphics, _entries[_open].Body, font2, new Rectangle(bodyRect.Left + Sc(16), bodyRect.Top + Sc(4), Math.Max(10, bodyRect.Width - Sc(28)), Math.Max(10, bodyRect.Height - Sc(8))), Tokens.TextSecondary, TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.Top);
+				TextRenderer.DrawText(graphics, _entries[_open].Body, font2, new Rectangle(bodyRect.Left + Sc(16), bodyRect.Top + Sc(4), Math.Max(10, bodyRect.Width - Sc(28)), Math.Max(10, bodyRect.Height - Sc(8))), UiTheme.TextSecondary, TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.Top);
 			}
 		}
 	}
@@ -1000,16 +1000,16 @@ internal sealed partial class SettingsForm
 		public PageHost()
 		{
 			SetStyle(ControlStyles.OptimizedDoubleBuffer, value: true);
-			BackColor = Tokens.Canvas;
+			BackColor = UiTheme.Canvas;
 			AutoScroll = false;
 			Canvas = new BufferedPanel
 			{
-				BackColor = Tokens.Canvas,
+				BackColor = UiTheme.Canvas,
 				Location = new Point(0, 0)
 			};
 			Canvas.Paint += delegate(object s, PaintEventArgs e)
 			{
-				e.Graphics.Clear(Tokens.Canvas);
+				e.Graphics.Clear(UiTheme.Canvas);
 			};
 			Controls.Add(Canvas);
 		}

@@ -149,7 +149,10 @@ internal sealed class HintOverlay : IDisposable
 			};
 			Native.RegisterClassExW(ref lpwcx);
 			// WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST
-			_hwnd = Native.CreateWindowExW(134742024u, "HoldDragHintOverlay", "HoldDrag Hint", 2147483648u, 0, 0, 10, 10, IntPtr.Zero, IntPtr.Zero, Native.GetModuleHandleW(null), IntPtr.Zero);
+			// WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOPMOST
+			// 必须带 WS_EX_TRANSPARENT（点透）：否则浮层会挡住它覆盖的那块屏幕，
+			// WindowFromPoint 命中到浮层自己，拖动目标就找不到了。
+			_hwnd = Native.CreateWindowExW(134742056u, "HoldDragHintOverlay", "HoldDrag Hint", 2147483648u, 0, 0, 10, 10, IntPtr.Zero, IntPtr.Zero, Native.GetModuleHandleW(null), IntPtr.Zero);
 			if (_hwnd == IntPtr.Zero)
 			{
 				Log.Error("HintOverlay 创建失败，Win32 错误码 " + Marshal.GetLastWin32Error());

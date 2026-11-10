@@ -46,12 +46,12 @@ internal sealed partial class SettingsForm
 		string token = Updater.NormalizeToken(_txtToken.Text);
 		if (string.IsNullOrEmpty(token))
 		{
-			_lblTokenVerify.ForeColor = Tokens.WarnText;
+			_lblTokenVerify.ForeColor = UiTheme.WarnText;
 			_lblTokenVerify.Text = Loc.T("先填令牌再验证");
 			return;
 		}
 		_btnVerifyToken.Enabled = false;
-		_lblTokenVerify.ForeColor = Tokens.Hint;
+		_lblTokenVerify.ForeColor = UiTheme.Hint;
 		_lblTokenVerify.Text = Loc.T("正在向 GitHub 验证…");
 		ThreadPool.QueueUserWorkItem(delegate
 		{
@@ -95,12 +95,12 @@ internal sealed partial class SettingsForm
 		switch (result)
 		{
 		case Updater.TokenCheckResult.Valid:
-			return Tokens.Success;
+			return UiTheme.Success;
 		case Updater.TokenCheckResult.NotConfigured:
 		case Updater.TokenCheckResult.RateLimited:
-			return Tokens.WarnText;
+			return UiTheme.WarnText;
 		default:
-			return Tokens.Danger;
+			return UiTheme.Danger;
 		}
 	}
 
@@ -118,7 +118,7 @@ internal sealed partial class SettingsForm
 			appConfig.GitHubToken = token;
 			if (!_store.Apply(appConfig, out string error))
 			{
-				_lblTokenState.ForeColor = Tokens.Danger;
+				_lblTokenState.ForeColor = UiTheme.Danger;
 				_lblTokenState.Text = Loc.T("保存失败：") + error;
 				return;
 			}
@@ -134,7 +134,7 @@ internal sealed partial class SettingsForm
 		catch (Exception ex)
 		{
 			Log.Error(ex);
-			_lblTokenState.ForeColor = Tokens.Danger;
+			_lblTokenState.ForeColor = UiTheme.Danger;
 			_lblTokenState.Text = Loc.T("保存令牌失败：") + ex.Message;
 		}
 	}
@@ -153,17 +153,17 @@ internal sealed partial class SettingsForm
 			// 令牌改动过 → 之前的验证结论作废（否则会出现"看着已验证、其实验的是旧令牌"）
 			if (_lblTokenVerify != null && !_lblTokenVerify.IsDisposed && !string.Equals(text, _verifiedToken, StringComparison.Ordinal))
 			{
-				_lblTokenVerify.ForeColor = Tokens.Hint;
+				_lblTokenVerify.ForeColor = UiTheme.Hint;
 				_lblTokenVerify.Text = (_verifiedToken == null) ? Loc.T("尚未验证") : Loc.T("令牌已改动，请重新验证");
 			}
 			bool flag = string.Equals(text, text2, StringComparison.Ordinal);
 			if (string.IsNullOrEmpty(text))
 			{
-				_lblTokenState.ForeColor = flag ? Tokens.WarnText : Tokens.Hint;
+				_lblTokenState.ForeColor = flag ? UiTheme.WarnText : UiTheme.Hint;
 				_lblTokenState.Text = (flag ? Loc.T("未填写：检查更新走匿名接口") : Loc.T("已清空，点「保存令牌」生效"));
 				return;
 			}
-			_lblTokenState.ForeColor = flag ? Tokens.Success : Tokens.Hint;
+			_lblTokenState.ForeColor = flag ? UiTheme.Success : UiTheme.Hint;
 			// 不显示令牌的任何字符（哪怕只露前 4 后 4）：旁人扫一眼屏幕就能记下片段，
 			// 这里只说"生效没生效"。
 			_lblTokenState.Text = (flag ? Loc.T("已生效（接口限额 5000 次/小时）") : Loc.T("待保存：点「保存令牌」后生效"));
@@ -180,12 +180,12 @@ internal sealed partial class SettingsForm
 		{
 			if (userInitiated)
 			{
-				SetUpdateStatus(Loc.T("正在检查，请稍候…"), Tokens.Hint);
+				SetUpdateStatus(Loc.T("正在检查，请稍候…"), UiTheme.Hint);
 			}
 			return;
 		}
 		_updateBusy = true;
-		SetUpdateStatus(Loc.T("正在检查更新…"), Tokens.Hint);
+		SetUpdateStatus(Loc.T("正在检查更新…"), UiTheme.Hint);
 		ThreadPool.QueueUserWorkItem(delegate
 		{
 			string error;
@@ -202,14 +202,14 @@ internal sealed partial class SettingsForm
 				}
 				if (upToDate)
 				{
-					SetUpdateStatus(Loc.T("已是最新版本（v") + AppInfo.Version + Loc.Close + NoteSuffix(note), Tokens.Success);
+					SetUpdateStatus(Loc.T("已是最新版本（v") + AppInfo.Version + Loc.Close + NoteSuffix(note), UiTheme.Success);
 					if (userInitiated)
 					{
 						MessageBox.Show(this, Loc.T("当前已是最新版本 v") + AppInfo.Version + "。" + NoteSuffix(note), Loc.T("检查更新"), MessageBoxButtons.OK, MessageBoxIcon.Asterisk);
 					}
 					return;
 				}
-				SetUpdateStatus(Loc.T("检查失败：") + error, Tokens.Danger);
+				SetUpdateStatus(Loc.T("检查失败：") + error, UiTheme.Danger);
 				if (userInitiated)
 				{
 					MessageBox.Show(this, Loc.T("检查更新失败：\r\n\r\n") + error + Loc.T("\r\n\r\n你也可以手动打开发布页查看：\r\n") + AppInfo.ReleasesUrl, Loc.T("检查更新"), MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
@@ -266,7 +266,7 @@ internal sealed partial class SettingsForm
 
 	private void OnUpdateFound(UpdateInfo info, string note)
 	{
-		SetUpdateStatus(Loc.T("发现新版本 ") + info.Tag + Loc.T("（当前 v") + AppInfo.Version + Loc.Close + NoteSuffix(note), Tokens.WarnText);
+		SetUpdateStatus(Loc.T("发现新版本 ") + info.Tag + Loc.T("（当前 v") + AppInfo.Version + Loc.Close + NoteSuffix(note), UiTheme.WarnText);
 		// v1.8.1：统一走「弹窗 → 下载窗口」这条路径。
 		// 没填令牌也允许下载：发布资产直链不吃接口限额，用户点「立即下载」就是明确同意。
 		PromptAndDownload(info);
@@ -293,7 +293,7 @@ internal sealed partial class SettingsForm
 		}
 		if (!flag)
 		{
-			SetUpdateStatus(Loc.T("已跳过 ") + info.Tag + Loc.T("；需要时再点「检查更新」即可"), Tokens.Hint);
+			SetUpdateStatus(Loc.T("已跳过 ") + info.Tag + Loc.T("；需要时再点「检查更新」即可"), UiTheme.Hint);
 			return;
 		}
 		DownloadAndApply(info);
@@ -322,8 +322,8 @@ internal sealed partial class SettingsForm
 		form.MinimizeBox = false;
 		form.MaximizeBox = false;
 		form.ShowInTaskbar = false;
-		form.BackColor = Tokens.Surface;
-		form.ForeColor = Tokens.TextPrimary;
+		form.BackColor = UiTheme.Surface;
+		form.ForeColor = UiTheme.TextPrimary;
 		form.Font = new Font(DesignFontFamily, Sc(13), FontStyle.Regular, GraphicsUnit.Pixel);
 		form.AutoScaleMode = AutoScaleMode.Dpi;
 		int num = Sc(20);
@@ -332,7 +332,7 @@ internal sealed partial class SettingsForm
 		{
 			AutoSize = false,
 			BackColor = Color.Transparent,
-			ForeColor = Tokens.TextPrimary,
+			ForeColor = UiTheme.TextPrimary,
 			Font = new Font(DesignFontFamily, Sc(15), FontStyle.Bold, GraphicsUnit.Pixel),
 			Text = Loc.T("发现新版本 ") + info.Tag + Loc.T("（当前 v") + AppInfo.Version + Loc.Close
 		};
@@ -340,24 +340,24 @@ internal sealed partial class SettingsForm
 		{
 			AutoSize = false,
 			BackColor = Color.Transparent,
-			ForeColor = Tokens.TextSecondary,
+			ForeColor = UiTheme.TextSecondary,
 			Text = BuildNoTokenNotice()
 		};
 		Label label3 = new Label
 		{
 			AutoSize = false,
 			BackColor = Color.Transparent,
-			ForeColor = Tokens.Hint,
+			ForeColor = UiTheme.Hint,
 			Text = Loc.T("下载地址（点击或按回车打开）")
 		};
 		LinkLabel linkLabel = new LinkLabel
 		{
 			AutoSize = false,
 			BackColor = Color.Transparent,
-			ForeColor = Tokens.Accent,
-			LinkColor = Tokens.Accent,
-			ActiveLinkColor = Tokens.AccentPressed,
-			VisitedLinkColor = Tokens.Accent,
+			ForeColor = UiTheme.Accent,
+			LinkColor = UiTheme.Accent,
+			ActiveLinkColor = UiTheme.AccentPressed,
+			VisitedLinkColor = UiTheme.Accent,
 			Text = info.AssetUrl,
 			AccessibleName = Loc.T("GitHub 下载地址"),
 			AccessibleDescription = Loc.T("在浏览器中打开该链接，下载新版本 ") + info.Tag
@@ -370,10 +370,10 @@ internal sealed partial class SettingsForm
 		{
 			AutoSize = false,
 			BackColor = Color.Transparent,
-			ForeColor = Tokens.TextTertiary,
-			LinkColor = Tokens.TextTertiary,
-			ActiveLinkColor = Tokens.Accent,
-			VisitedLinkColor = Tokens.TextTertiary,
+			ForeColor = UiTheme.TextTertiary,
+			LinkColor = UiTheme.TextTertiary,
+			ActiveLinkColor = UiTheme.Accent,
+			VisitedLinkColor = UiTheme.TextTertiary,
 			Text = Loc.T("发布页：") + info.PageUrl,
 			AccessibleName = Loc.T("GitHub 发布页地址")
 		};
@@ -440,7 +440,7 @@ internal sealed partial class SettingsForm
 	{
 		_updateBusy = true;
 		_btnCheckUpdate.Enabled = false;
-		SetUpdateStatus(Loc.T("正在下载 ") + info.Tag + "…", Tokens.Hint);
+		SetUpdateStatus(Loc.T("正在下载 ") + info.Tag + "…", UiTheme.Hint);
 		try
 		{
 			using DownloadForm downloadForm = new DownloadForm(info);
@@ -448,23 +448,23 @@ internal sealed partial class SettingsForm
 			switch (downloadForm.Result)
 			{
 			case DownloadForm.Outcome.Cancelled:
-				SetUpdateStatus(Loc.T("已取消下载，仍是 v") + AppInfo.Version, Tokens.Hint);
+				SetUpdateStatus(Loc.T("已取消下载，仍是 v") + AppInfo.Version, UiTheme.Hint);
 				break;
 			case DownloadForm.Outcome.Failed:
-				SetUpdateStatus(Loc.T("下载失败"), Tokens.Danger);
+				SetUpdateStatus(Loc.T("下载失败"), UiTheme.Danger);
 				break;
 			case DownloadForm.Outcome.Applied:
-				SetUpdateStatus(Loc.T("更新已就绪，程序即将退出并自动替换"), Tokens.Success);
+				SetUpdateStatus(Loc.T("更新已就绪，程序即将退出并自动替换"), UiTheme.Success);
 				break;
 			default:
-				SetUpdateStatus(Loc.T("下载窗口已关闭"), Tokens.Hint);
+				SetUpdateStatus(Loc.T("下载窗口已关闭"), UiTheme.Hint);
 				break;
 			}
 		}
 		catch (Exception ex)
 		{
 			Log.Error(ex);
-			SetUpdateStatus(Loc.T("下载失败：") + ex.Message, Tokens.Danger);
+			SetUpdateStatus(Loc.T("下载失败：") + ex.Message, UiTheme.Danger);
 		}
 		finally
 		{

@@ -62,31 +62,31 @@ internal static class AuroraTheme
 		return IsDark ? dark : light;
 	}
 
-	public static Color Canvas => P(Color.FromArgb(247, 247, 251), Color.FromArgb(11, 12, 16));
+	public static Color Canvas => UiTheme.Canvas;
 
-	public static Color Surface => P(Color.FromArgb(255, 255, 255), Color.FromArgb(21, 22, 27));
+	public static Color Surface => UiTheme.Surface;
 
-	public static Color SurfaceAlt => P(Color.FromArgb(249, 249, 253), Color.FromArgb(18, 19, 24));
+	public static Color SurfaceAlt => UiTheme.SurfaceAlt;
 
-	public static Color Stroke => P(Color.FromArgb(233, 233, 241), Color.FromArgb(36, 38, 46));
+	public static Color Stroke => UiTheme.Stroke;
 
-	public static Color Divider => P(Color.FromArgb(240, 240, 246), Color.FromArgb(30, 32, 39));
+	public static Color Divider => UiTheme.Divider;
 
-	public static Color Hover => P(Color.FromArgb(242, 242, 249), Color.FromArgb(27, 29, 36));
+	public static Color Hover => UiTheme.Hover;
 
-	public static Color TextPrimary => P(Color.FromArgb(20, 21, 27), Color.FromArgb(239, 240, 245));
+	public static Color TextPrimary => UiTheme.TextPrimary;
 
-	public static Color TextSecondary => P(Color.FromArgb(91, 95, 112), Color.FromArgb(165, 169, 186));
+	public static Color TextSecondary => UiTheme.TextSecondary;
 
-	public static Color TextTertiary => P(Color.FromArgb(142, 146, 165), Color.FromArgb(112, 116, 137));
+	public static Color TextTertiary => UiTheme.TextTertiary;
 
-	public static Color Accent => P(Color.FromArgb(91, 91, 214), Color.FromArgb(145, 140, 255));
+	public static Color Accent => UiTheme.Accent;
 
-	public static Color AccentSoft => P(Color.FromArgb(239, 237, 254), Color.FromArgb(26, 25, 48));
+	public static Color AccentSoft => UiTheme.AccentSoft;
 
-	public static Color TextOnAccent => P(Color.FromArgb(255, 255, 255), Color.FromArgb(18, 16, 31));
+	public static Color TextOnAccent => UiTheme.TextOnAccent;
 
-	public static Color Danger => P(Color.FromArgb(220, 38, 38), Color.FromArgb(248, 113, 113));
+	public static Color Danger => UiTheme.Danger;
 
 	public const int Radius = 10;
 

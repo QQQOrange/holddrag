@@ -49,10 +49,10 @@ internal sealed partial class SettingsForm
 			framePickerProbe.GallerySelectedCell = _galleryStyle.SelectedCellRect;
 			framePickerProbe.GridInsideGroup = InsideCard(_gridColor);
 			framePickerProbe.GalleryInsideGroup = InsideCard(_galleryStyle);
-			framePickerProbe.GridInk = InkOf(_gridColor, Tokens.Surface);
-			framePickerProbe.GalleryInk = InkOf(_galleryStyle, Tokens.Surface);
-			framePickerProbe.GridAccentInk = InkNear(_gridColor, Tokens.Accent, 60);
-			framePickerProbe.GalleryAccentInk = InkNear(_galleryStyle, Tokens.Accent, 60);
+			framePickerProbe.GridInk = InkOf(_gridColor, UiTheme.Surface);
+			framePickerProbe.GalleryInk = InkOf(_galleryStyle, UiTheme.Surface);
+			framePickerProbe.GridAccentInk = InkNear(_gridColor, UiTheme.Accent, 60);
+			framePickerProbe.GalleryAccentInk = InkNear(_galleryStyle, UiTheme.Accent, 60);
 		}
 		catch (Exception ex)
 		{
@@ -342,7 +342,7 @@ internal sealed partial class SettingsForm
 				{
 					renderStats.BlackPixels++;
 				}
-				if (Math.Abs(pixel.R - Tokens.Accent.R) <= 18 && Math.Abs(pixel.G - Tokens.Accent.G) <= 18 && Math.Abs(pixel.B - Tokens.Accent.B) <= 18)
+				if (Math.Abs(pixel.R - UiTheme.Accent.R) <= 18 && Math.Abs(pixel.G - UiTheme.Accent.G) <= 18 && Math.Abs(pixel.B - UiTheme.Accent.B) <= 18)
 				{
 					renderStats.AccentPixels++;
 				}

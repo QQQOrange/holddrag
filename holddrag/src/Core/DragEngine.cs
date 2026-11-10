@@ -222,6 +222,8 @@ internal sealed class DragEngine : IDisposable
 
 	public bool Begin(nint hwnd, bool move, int button, Native.POINT pt)
 	{
+		// 一旦真的开始拖，提示就该让位（它只是"还没动手时"的说明）
+		CancelHintTimer();
 		if (hwnd != IntPtr.Zero)
 		{
 			if (move && !AppRules.AllowsMove(hwnd))

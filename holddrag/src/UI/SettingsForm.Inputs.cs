@@ -122,7 +122,7 @@ internal sealed partial class SettingsForm
 		{
 			SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, value: true);
 			BackColor = Color.Transparent;
-			Font = new Font(DesignFontFamily, Sc((int)Tokens.FontRow), FontStyle.Regular, GraphicsUnit.Pixel);
+			Font = new Font(DesignFontFamily, Sc((int)UiTheme.FontRow), FontStyle.Regular, GraphicsUnit.Pixel);
 			_font = Font;
 			Cursor = Cursors.Hand;
 			TabStop = true;
@@ -391,25 +391,25 @@ internal sealed partial class SettingsForm
 		{
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
-			graphics.Clear((Parent != null) ? Parent.BackColor : Tokens.Surface);
+			graphics.Clear((Parent != null) ? Parent.BackColor : UiTheme.Surface);
 			Rectangle rect = new Rectangle(0, 0, Math.Max(2, Width - 1), Math.Max(2, Height - 1));
-			using GraphicsPath path = RoundedPath(rect, Sc(Tokens.RadiusField));
-			using (SolidBrush brush = new SolidBrush(Enabled ? Tokens.FieldFill : Tokens.DisabledFill))
+			using GraphicsPath path = RoundedPath(rect, Sc(UiTheme.RadiusField));
+			using (SolidBrush brush = new SolidBrush(Enabled ? UiTheme.FieldFill : UiTheme.DisabledFill))
 			{
 				graphics.FillPath(brush, path);
 			}
 			Color color;
 			if (!Enabled)
 			{
-				color = Tokens.DisabledStroke;
+				color = UiTheme.DisabledStroke;
 			}
 			else if (Focused || _pressed)
 			{
-				color = Tokens.Accent;
+				color = UiTheme.Accent;
 			}
 			else
 			{
-				color = (_hover ? Tokens.InputStrokeHover : Tokens.FieldStroke);
+				color = (_hover ? UiTheme.InputStrokeHover : UiTheme.FieldStroke);
 			}
 			using (Pen pen = new Pen(color, (Focused || _pressed) ? Math.Max(1.6f, Sc(1)) : 1f))
 			{
@@ -423,9 +423,9 @@ internal sealed partial class SettingsForm
 			}
 			else
 			{
-				TextRenderer.DrawText(graphics, (obj != null) ? obj.ToString() : string.Empty, _font, content, Enabled ? Tokens.TextPrimary : Tokens.TextTertiary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
+				TextRenderer.DrawText(graphics, (obj != null) ? obj.ToString() : string.Empty, _font, content, Enabled ? UiTheme.TextPrimary : UiTheme.TextTertiary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
 			}
-			DrawChevron(graphics, new Rectangle(Width - Sc(30), 0, Sc(18), Height), Enabled ? Tokens.TextSecondary : Tokens.TextTertiary);
+			DrawChevron(graphics, new Rectangle(Width - Sc(30), 0, Sc(18), Height), Enabled ? UiTheme.TextSecondary : UiTheme.TextTertiary);
 		}
 
 		internal static void DrawChevron(Graphics graphics, Rectangle area, Color color)
@@ -462,7 +462,7 @@ internal sealed partial class SettingsForm
 			FormBorderStyle = FormBorderStyle.None;
 			ShowInTaskbar = false;
 			StartPosition = FormStartPosition.Manual;
-			BackColor = Tokens.Surface;
+			BackColor = UiTheme.Surface;
 			DoubleBuffered = true;
 			AutoScaleMode = AutoScaleMode.None;
 			int num = Math.Min(owner.Items.Count, 9);
@@ -561,7 +561,7 @@ internal sealed partial class SettingsForm
 				_popup = popup;
 				_rowH = rowH;
 				SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, value: true);
-				BackColor = Tokens.Surface;
+				BackColor = UiTheme.Surface;
 				TabStop = true;
 			}
 
@@ -675,7 +675,7 @@ internal sealed partial class SettingsForm
 			{
 				Graphics graphics = e.Graphics;
 				HQ.Apply(graphics);
-				graphics.Clear(Tokens.Surface);
+				graphics.Clear(UiTheme.Surface);
 				for (int i = 0; i < _items.Count; i++)
 				{
 					Rectangle rect = new Rectangle(Sc(4), Sc(5) + i * _rowH, Math.Max(10, Width - Sc(8)), _rowH);
@@ -683,8 +683,8 @@ internal sealed partial class SettingsForm
 					bool flag2 = i == _hot;
 					if (flag || flag2)
 					{
-						using GraphicsPath path = RoundedPath(rect, Sc(Tokens.RadiusChip));
-						using SolidBrush brush = new SolidBrush(flag ? Tokens.AccentSoft : Tokens.Hover);
+						using GraphicsPath path = RoundedPath(rect, Sc(UiTheme.RadiusChip));
+						using SolidBrush brush = new SolidBrush(flag ? UiTheme.AccentSoft : UiTheme.Hover);
 						graphics.FillPath(brush, path);
 					}
 					Rectangle bounds = new Rectangle(rect.Left + Sc(10), rect.Top, Math.Max(10, rect.Width - Sc(20)), rect.Height);
@@ -694,7 +694,7 @@ internal sealed partial class SettingsForm
 					}
 					else
 					{
-						TextRenderer.DrawText(graphics, (_items[i] != null) ? _items[i].ToString() : string.Empty, _font ?? Font, bounds, flag ? Tokens.Accent : Tokens.TextPrimary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
+						TextRenderer.DrawText(graphics, (_items[i] != null) ? _items[i].ToString() : string.Empty, _font ?? Font, bounds, flag ? UiTheme.Accent : UiTheme.TextPrimary, TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter);
 					}
 				}
 			}
@@ -724,9 +724,9 @@ internal sealed partial class SettingsForm
 			_maximum = (maximum < minimum) ? minimum : maximum;
 			_increment = (increment <= 0m) ? 1m : increment;
 			_value = Math.Min(Math.Max(minimum, 0m), _maximum);
-			Font = new Font(DesignFontFamily, Sc((int)Tokens.FontRow), FontStyle.Regular, GraphicsUnit.Pixel);
+			Font = new Font(DesignFontFamily, Sc((int)UiTheme.FontRow), FontStyle.Regular, GraphicsUnit.Pixel);
 			_font = Font;
-			BackColor = Tokens.FieldFill;
+			BackColor = UiTheme.FieldFill;
 			Cursor = Cursors.Hand;
 			TabStop = true;
 		}
@@ -856,20 +856,20 @@ internal sealed partial class SettingsForm
 		{
 			Graphics graphics = e.Graphics;
 			HQ.Apply(graphics);
-			graphics.Clear(Tokens.Surface);
+			graphics.Clear(UiTheme.Surface);
 			Rectangle rect = new Rectangle(0, 0, Math.Max(2, Width - 1), Math.Max(2, Height - 1));
-			using GraphicsPath path = RoundedPath(rect, Sc(Tokens.RadiusField));
-			using (SolidBrush brush = new SolidBrush(Enabled ? Tokens.FieldFill : Tokens.DisabledFill))
+			using GraphicsPath path = RoundedPath(rect, Sc(UiTheme.RadiusField));
+			using (SolidBrush brush = new SolidBrush(Enabled ? UiTheme.FieldFill : UiTheme.DisabledFill))
 			{
 				graphics.FillPath(brush, path);
 			}
-			Color color = (!Enabled) ? Tokens.DisabledStroke : (Focused ? Tokens.Accent : Tokens.FieldStroke);
+			Color color = (!Enabled) ? UiTheme.DisabledStroke : (Focused ? UiTheme.Accent : UiTheme.FieldStroke);
 			using (Pen pen = new Pen(color, Focused ? Math.Max(1.6f, Sc(1)) : 1f))
 			{
 				graphics.DrawPath(pen, path);
 			}
 			Rectangle bounds = new Rectangle(Sc(12), 0, Math.Max(10, Width - Sc(40)), Height);
-			TextRenderer.DrawText(graphics, _value.ToString("0"), _font, bounds, Enabled ? Tokens.TextPrimary : Tokens.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+			TextRenderer.DrawText(graphics, _value.ToString("0"), _font, bounds, Enabled ? UiTheme.TextPrimary : UiTheme.TextTertiary, TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
 			if (Enabled)
 			{
 				DrawStep(graphics, UpRect, up: true, _hot == 0);
@@ -882,13 +882,13 @@ internal sealed partial class SettingsForm
 			if (hot)
 			{
 				using GraphicsPath path = RoundedPath(area, Sc(4));
-				using SolidBrush brush = new SolidBrush(Tokens.Hover);
+				using SolidBrush brush = new SolidBrush(UiTheme.Hover);
 				graphics.FillPath(brush, path);
 			}
 			float num = (float)area.Left + (float)area.Width / 2f;
 			float num2 = (float)area.Top + (float)area.Height / 2f;
 			float num3 = Math.Max(2.2f, (float)Sc(2));
-			using Pen pen = new Pen(Enabled ? Tokens.TextSecondary : Tokens.TextTertiary, Math.Max(1.3f, Sc(1) * 1.3f));
+			using Pen pen = new Pen(Enabled ? UiTheme.TextSecondary : UiTheme.TextTertiary, Math.Max(1.3f, Sc(1) * 1.3f));
 			pen.StartCap = LineCap.Round;
 			pen.EndCap = LineCap.Round;
 			pen.LineJoin = LineJoin.Round;

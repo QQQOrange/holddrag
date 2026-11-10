@@ -666,6 +666,11 @@ internal static partial class SelfTest
 			current.DoubleClickRightZone = false;
 			current.AllowFullscreenWindows = true;
 			current.RestoreMaximizedWhenMoved = false;
+			// 这条用例断言"窗口位移 == 光标位移"的精确关系；贴边吸附会在窗口靠近边缘时
+			// 吃掉几像素（吸附本身由 T105/T118 单独覆盖），提示浮层同理不参与断言。
+			current.SnapToEdges = false;
+			current.ShowDragHud = false;
+			current.ShowTriggerHint = false;
 			Native.GetCursorPos(out var lpPoint2);
 			Native.RECT rECT = WorkAreaOfNearestMonitor(lpPoint2);
 			form = new Form();
@@ -1601,6 +1606,10 @@ internal static partial class SelfTest
 				c.ActionLeft = "Move";
 				c.DoubleClickLeftMaximize = true;
 				c.ExitFullscreenOnTrigger = true;
+				// 这条用例只验证"是拖动不是最大化"，位移必须精确跟手；
+				// 开着贴边吸附时窗口若正好靠边，位移会被吸走一截（吸附另有 T105/T118 覆盖）
+				c.SnapToEdges = false;
+				c.ShowDragHud = false;
 			});
 			Native.POINT p3 = CenterOf(dragFixture3.H);
 			ActivateTrigger(dragFixture3.Coord);

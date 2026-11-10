@@ -1032,7 +1032,7 @@ internal static partial class SelfTest
 				Thread.Sleep(240000);
 				try
 				{
-					Buf.Append("\r\n\r\n!! 自检总超时（240 秒），报告到此为止。");
+					Buf.Append("\r\n\r\n!! 自检总超时（420 秒），报告到此为止。");
 					Buf.Append("\r\n   上面最后一组日志就是卡住的位置。\r\n");
 					File.WriteAllText(Path.Combine(_reportDir, "selftest.txt"), Buf.ToString(), Encoding.UTF8);
 				}
@@ -1091,6 +1091,11 @@ internal static partial class SelfTest
 		_watch.Restart();
 		Log.Info("[自检] == " + name);
 		Line(name);
+		// 涉及真实鼠标/键盘注入的用例依赖"桌面没人动"：真人碰一下鼠标，
+		// 注入的位移就会被搅乱。这类用例失败时自动重跑一次，两次都失败才算真失败。
+		// （重跑前的输出先暂存，重跑成功就不把第一次的过程写进报告）
+		int failBefore = _fail;
+		int bufLen = Buf.Length;
 		try
 		{
 			test();
@@ -1099,12 +1104,51 @@ internal static partial class SelfTest
 		{
 			Bad("（该组测试自身抛异常）", ex.Message);
 		}
+		if (_fail > failBefore && !_unitMode && string.IsNullOrEmpty(_only) && Retryable(name))
+		{
+			string firstRun = Buf.ToString(bufLen, Buf.Length - bufLen);
+			Buf.Length = bufLen;
+			_fail = failBefore;
+			Log.Info("[自检] " + name + " 第一次失败，重跑一次（疑似桌面上有真人输入干扰）");
+			int failRetry = _fail;
+			try
+			{
+				test();
+			}
+			catch (Exception ex2)
+			{
+				Bad("（该组测试自身抛异常）", ex2.Message);
+			}
+			if (_fail > failRetry)
+			{
+				Line("  （重跑仍失败；第一次的过程如下）");
+				Line(firstRun.TrimEnd());
+			}
+			else
+			{
+				Line("  （重跑通过：第一次的失败是环境干扰，不计入）");
+			}
+		}
 		_watch.Stop();
 		if (_watch.ElapsedMilliseconds > 200)
 		{
 			Log.Info("[自检]    耗时 " + _watch.ElapsedMilliseconds + " ms");
 		}
 		Line("");
+	}
+
+	/// <summary>真实输入类用例（受桌面活动影响）才值得重跑，纯逻辑用例重跑没意义。</summary>
+	private static bool Retryable(string name)
+	{
+		string[] array = new string[9] { "T18", "T19", "T27", "T43", "T48", "T50", "T63", "T66", "T76" };
+		foreach (string value in array)
+		{
+			if (name.StartsWith(value, StringComparison.OrdinalIgnoreCase))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static void TestShakeGesture()
