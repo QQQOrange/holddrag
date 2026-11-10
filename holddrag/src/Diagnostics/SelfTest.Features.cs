@@ -19,10 +19,10 @@ internal static partial class SelfTest
 	private static void TestSnapEngine()
 	{
 		Native.RECT work = new Native.RECT(0, 0, 1920, 1040);
-		// 离左边 5px：应该吸到 0，并给出 x=0 的引导线
+		// 离左边 5px：应该吸到 0
 		SnapEngine.Result result = SnapEngine.SnapMove(new Native.RECT(5, 200, 805, 700), work, 8);
 		Eq(result.Rect.Left, 0, "左边 5px 内吸附到工作区左沿");
-		Eq(result.GuideX, 0, "吸附时给出竖引导线坐标");
+		Eq(result.GuideX, 0, "吸附时仍然算出对齐位置（供内部使用）");
 		Check(result.SnappedX, "标记为已吸附（X 轴）");
 		// 离右边 3px：右边贴到 1920
 		SnapEngine.Result result2 = SnapEngine.SnapMove(new Native.RECT(1112, 100, 1917, 600), work, 8);
@@ -157,33 +157,9 @@ internal static partial class SelfTest
 		{
 			dragFixture.Coord.Drag.ProbeShowHudForTest("1280 × 720  ·  240,180");
 			Check(dragFixture.Coord.Drag.HudVisibleForTest, "尺寸 HUD 的分层窗口能创建并显示");
-			dragFixture.Coord.Drag.ProbeShowGuideForTest();
-			Check(dragFixture.Coord.Drag.GuideVisibleForTest, "吸附引导线的分层窗口能创建并显示");
 			dragFixture.Coord.Drag.ProbeHideHintsForTest();
 			Thread.Sleep(120);
 			Check(!dragFixture.Coord.Drag.HudVisibleForTest, "HUD 能隐藏");
-			Check(!dragFixture.Coord.Drag.GuideVisibleForTest, "引导线能隐藏");
-		}
-		finally
-		{
-			dragFixture.Coord.Drag.ProbeHideHintsForTest();
-		}
-	}
-
-	/// <summary>回归：引导线必须画在吸附位置，不能画在屏幕左上角。</summary>
-	private static void TestGuideLineGeometry()
-	{
-		using DragFixture dragFixture = new DragFixture(null);
-		try
-		{
-			dragFixture.Coord.Drag.ProbeShowGuideForTest();
-			Rectangle rectangle = dragFixture.Coord.Drag.GuideBoundsForTest;
-			Check(!rectangle.IsEmpty, "引导线窗口已显示", rectangle.ToString());
-			Eq(rectangle.Left, 400, "★ 竖引导线的 x 就是吸附位置（曾经恒为 0）");
-			Eq(rectangle.Top, 100, "★ 竖引导线的起点是吸附区间的上端");
-			Check(rectangle.Width <= 6, "竖引导线很细", "宽=" + rectangle.Width);
-			Check(rectangle.Height >= 700, "竖引导线覆盖吸附区间", "高=" + rectangle.Height);
-			dragFixture.Coord.Drag.ProbeHideHintsForTest();
 		}
 		finally
 		{

@@ -123,14 +123,13 @@ internal static partial class SelfTest
 		Safe("T107 撤销：Ctrl+Z 能还原上一次拖动，且只能用一次", TestUndo);
 		Safe("T108 诊断包：生成的 zip 里包含 system.txt 与版本/显示器信息", TestDiagnosticsBundle);
 		Safe("T109 新配置项默认值与越界归一（HUD / 吸附 / 分屏 / 撤销 / 引导）", TestNewConfigDefaults);
-		Safe("T110 尺寸 HUD 与吸附引导线：分层窗口能创建、显示、隐藏", TestHudOverlay);
+		Safe("T110 尺寸 HUD：分层窗口能创建、显示、隐藏", TestHudOverlay);
 		Safe("T111 按程序规则：解析 / 匹配 / 非法条目丢弃", TestAppRules);
 		Safe("T112 工作区布局：保存 / 读取 / 恢复 / 删除", TestLayoutStore);
 		Safe("T113 脚本接口：命名管道一条命令一来一回", TestIpcRoundTrip);
 		Safe("T114 设置搜索：关键字命中与状态提示", TestSettingsSearch);
 		Safe("T115 便携模式：数据目录判定", TestPortableMode);
 		Safe("T116 规则与布局的界面行真的存在", TestRulesAndLayoutUi);
-		Safe("T117 引导线位置：必须画在吸附位置（之前在屏幕左上角）", TestGuideLineGeometry);
 		Safe("T118 吸附：窗口比工作区大时不做右侧/底部吸附", TestSnapWideWindow);
 		Safe("T119 规则通配符：* 与 ? 都要能匹配", TestRuleWildcards);
 		Safe("T120 设置搜索：输入即定位（不用按回车）", TestSearchLive);

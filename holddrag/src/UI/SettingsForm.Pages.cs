@@ -85,7 +85,7 @@ internal sealed partial class SettingsForm
 		Card cardAux = NewCard(page4, Loc.T("辅助"), Loc.T("尺寸提示、贴边吸附、键盘布局与撤销"));
 		cardAux.Toggle(_chkShowHud, Loc.T("拖动时显示尺寸提示"), Loc.T("在光标旁浮一个小标签，实时显示窗口宽高"));
 		cardAux.Toggle(_chkHudPos, Loc.T("尺寸提示里带上坐标"), Loc.T("同时显示窗口左上角的屏幕坐标"));
-		cardAux.Toggle(_chkSnap, Loc.T("拖到屏幕边缘时自动吸附"), Loc.T("离屏幕/工作区边缘很近时自动贴齐，并画一条引导线；拖动时按住 Shift 可以临时不吸附"));
+		cardAux.Toggle(_chkSnap, Loc.T("拖到屏幕边缘时自动吸附"), Loc.T("离屏幕/工作区边缘很近时自动贴齐；拖动时按住 Shift 可以临时不吸附"));
 		cardAux.Setting(_numSnapThreshold, 72, UnitLabel("px"), 26, Loc.T("吸附距离"), Loc.T("离边缘多近才吸附；0 = 关闭"));
 		cardAux.Toggle(_chkTiling, Loc.T("键盘分屏"), Loc.T("按住触发键后：← 左半屏、→ 右半屏、↑ 最大化、↓ 还原、1-9 九宫格、0 居中"));
 		cardAux.Toggle(_chkUndo, Loc.T("允许 Ctrl+Z 撤销"), Loc.T("拖完 5 秒内按 Ctrl+Z 可以还原窗口原来的位置和大小"));
@@ -202,7 +202,7 @@ internal sealed partial class SettingsForm
 			{
 				Icon = Glyph.Layout,
 				Title = Loc.T("尺寸提示与贴边吸附"),
-				Body = Loc.T("拖动时窗口角上浮一个小胶囊，实时显示宽高（可在「拖动行为 → 辅助」里关掉或加上坐标）。拖到屏幕或任务栏边缘附近会自动贴齐，并在吸附位置画一条细高亮线；吸附距离可调，0 表示关闭。")
+				Body = Loc.T("拖动时窗口角上浮一个小胶囊，实时显示宽高（可在「拖动行为 → 辅助」里关掉或加上坐标）。拖到屏幕或任务栏边缘附近会自动贴齐；吸附距离可调，0 表示关闭。")
 			},
 			new HelpPanel.Entry
 			{

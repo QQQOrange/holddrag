@@ -1,8 +1,8 @@
 ﻿// HoldDrag · Overlay/HintOverlay.cs
 //
-// 拖动时的两种轻提示，共用一个分层窗口（独立线程）：
-//   1) 尺寸 HUD：外框角上浮一个小胶囊，显示 W × H（可选坐标）；
-//   2) 吸附引导线：贴边时在吸附位置画一条 2px 的高亮线。
+// 拖动时的轻提示（独立线程 + 分层窗口）：
+//   · 尺寸 HUD：外框上方浮一个小胶囊，显示 W × H（可选坐标）；
+//   · 触发提示：按住触发键一会儿后浮出「左键/右键/方向键」说明。
 //
 // 为什么单独一个窗口：外框本身只是一圈描边，塞不进文字；另开一个分层窗口
 // 既不影响外框的绘制，也不会抢焦点（WS_EX_NOACTIVATE + WS_EX_TRANSPARENT）。
@@ -37,16 +37,6 @@ internal sealed class HintOverlay : IDisposable
 
 	private bool _visible;
 
-	private bool _isLine;
-
-	private bool _vertical;
-
-	private int _linePos;
-
-	private int _lineStart;
-
-	private int _lineEnd;
-
 	private string _text = "";
 
 	private int _x;
@@ -58,8 +48,6 @@ internal sealed class HintOverlay : IDisposable
 	private int _h;
 
 	private float _scale = 1f;
-
-	private Color _accent = Color.FromArgb(145, 140, 255);
 
 	private Native.WndProc _proc;
 
@@ -89,7 +77,7 @@ internal sealed class HintOverlay : IDisposable
 
 	internal bool VisibleForTest => _visible;
 
-	/// <summary>自测用：分层窗口当前的位置与尺寸（验证引导线画在吸附位置而不是屏幕左上角）。</summary>
+	/// <summary>自测用：分层窗口当前的位置与尺寸。</summary>
 	internal Rectangle BoundsForTest
 	{
 		get
@@ -209,7 +197,7 @@ internal sealed class HintOverlay : IDisposable
 			string text2 = text ?? "";
 			float num = (scale <= 0f) ? 1f : scale;
 			// 拖动时每帧都会调进来：文字和位置都没变就不用重画（省掉几十次/秒的位图重建）
-			if (_visible && !_isLine && _lastFrameValid && string.Equals(_lastText, text2, StringComparison.Ordinal) && _lastFrame.Left == rect.Left && _lastFrame.Top == rect.Top && _lastFrame.Right == rect.Right && _lastFrame.Bottom == rect.Bottom && Math.Abs(_scale - num) < 0.01f)
+			if (_visible && _lastFrameValid && string.Equals(_lastText, text2, StringComparison.Ordinal) && _lastFrame.Left == rect.Left && _lastFrame.Top == rect.Top && _lastFrame.Right == rect.Right && _lastFrame.Bottom == rect.Bottom && Math.Abs(_scale - num) < 0.01f)
 			{
 				return;
 			}
@@ -217,37 +205,8 @@ internal sealed class HintOverlay : IDisposable
 			_lastText = text2;
 			_lastFrame = rect;
 			_lastFrameValid = true;
-			_isLine = false;
 			_scale = num;
 			MeasureAndPlace(rect);
-			_visible = true;
-			_wantGen++;
-			_dirty = true;
-		}
-		Post();
-	}
-
-	/// <summary>显示吸附引导线（屏幕坐标）。</summary>
-	public void ShowLine(bool vertical, int pos, int start, int end, Color color)
-	{
-		lock (_gate)
-		{
-			if (_hwnd == IntPtr.Zero)
-			{
-				return;
-			}
-			_isLine = true;
-			_vertical = vertical;
-			_linePos = pos;
-			_lineStart = Math.Min(start, end);
-			_lineEnd = Math.Max(start, end);
-			_accent = color;
-			// 竖线：左上角 = (pos, start)；横线：左上角 = (start, pos)。
-			// 之前这里没赋值，_x/_y 一直是 0，于是引导线永远画在屏幕左上角。
-			_x = (vertical ? pos : _lineStart);
-			_y = (vertical ? _lineStart : pos);
-			_w = (vertical ? 2 : (_lineEnd - _lineStart));
-			_h = (vertical ? (_lineEnd - _lineStart) : 2);
 			_visible = true;
 			_wantGen++;
 			_dirty = true;
@@ -303,18 +262,12 @@ internal sealed class HintOverlay : IDisposable
 		try
 		{
 			bool visible;
-			bool isLine;
-			bool vertical;
-			int linePos;
-			int lineStart;
-			int lineEnd;
 			string text;
 			int x;
 			int y;
 			int w;
 			int h;
 			float scale;
-			Color accent;
 			int gen;
 			lock (_gate)
 			{
@@ -324,18 +277,12 @@ internal sealed class HintOverlay : IDisposable
 				}
 				_dirty = false;
 				visible = _visible;
-				isLine = _isLine;
-				vertical = _vertical;
-				linePos = _linePos;
-				lineStart = _lineStart;
-				lineEnd = _lineEnd;
 				text = _text;
 				x = _x;
 				y = _y;
 				w = _w;
 				h = _h;
 				scale = _scale;
-				accent = _accent;
 				gen = _wantGen;
 			}
 			if (!visible)
@@ -346,7 +293,7 @@ internal sealed class HintOverlay : IDisposable
 				}
 				return;
 			}
-			using Bitmap bitmap = isLine ? RenderLine(vertical, linePos, lineStart, lineEnd, accent) : RenderText(text, w, h, scale);
+			using Bitmap bitmap = RenderText(text, w, h, scale);
 			Push(bitmap, x, y);
 			_appliedGen = gen;
 			ApplyCountForTest++;
@@ -393,26 +340,6 @@ internal sealed class HintOverlay : IDisposable
 		}
 		Font font = FontFor(scale);
 		TextRenderer.DrawText(graphics, text, font, rect, Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-		return bitmap;
-	}
-
-	private static Bitmap RenderLine(bool vertical, int pos, int start, int end, Color color)
-	{
-		int num = Math.Max(1, end - start);
-		int num2 = 2;
-		Bitmap bitmap = new Bitmap(vertical ? num2 : num, vertical ? num : num2, PixelFormat.Format32bppArgb);
-		using Graphics graphics = Graphics.FromImage(bitmap);
-		graphics.SmoothingMode = SmoothingMode.None;
-		graphics.Clear(Color.Transparent);
-		using SolidBrush brush = new SolidBrush(Color.FromArgb(210, color));
-		if (vertical)
-		{
-			graphics.FillRectangle(brush, 0, 0, num2, num);
-		}
-		else
-		{
-			graphics.FillRectangle(brush, 0, 0, num, num2);
-		}
 		return bitmap;
 	}
 

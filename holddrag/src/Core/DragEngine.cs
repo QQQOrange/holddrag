@@ -92,9 +92,6 @@ internal sealed class DragEngine : IDisposable
 	/// <summary>尺寸 HUD（拖动时显示 W × H）。</summary>
 	private readonly HintOverlay _hud = new HintOverlay();
 
-	/// <summary>吸附引导线（独立窗口，和 HUD 互不干扰）。</summary>
-	private readonly HintOverlay _guide = new HintOverlay();
-
 	/// <summary>触发键按住一会儿后浮出来的快捷键提示（只在还没开始拖的时候出现）。</summary>
 	private readonly HintOverlay _hint = new HintOverlay();
 
@@ -185,7 +182,6 @@ internal sealed class DragEngine : IDisposable
 	{
 		Cancel();
 		_hud.Dispose();
-		_guide.Dispose();
 		_hint.Dispose();
 		_worker.Dispose();
 		if (_overlaysReady)
@@ -201,7 +197,6 @@ internal sealed class DragEngine : IDisposable
 		try
 		{
 			_hud.Start();
-			_guide.Start();
 			_hint.Start();
 			_frame.EnsureCreated();
 			_overlaysReady = true;
@@ -506,15 +501,8 @@ internal sealed class DragEngine : IDisposable
 	internal void ProbeShowHudForTest(string text)
 	{
 		_hud.Start();
-		_guide.Start();
 		Native.RECT rect = new Native.RECT(200, 200, 900, 700);
 		_hud.ShowText(text, rect, 1f);
-	}
-
-	internal void ProbeShowGuideForTest()
-	{
-		_guide.Start();
-		_guide.ShowLine(vertical: true, 400, 100, 900, Color.FromArgb(145, 140, 255));
 	}
 
 	internal bool HudVisibleForTest
@@ -526,29 +514,10 @@ internal sealed class DragEngine : IDisposable
 		}
 	}
 
-	internal bool GuideVisibleForTest
-	{
-		get
-		{
-			Thread.Sleep(80);
-			return _guide.VisibleForTest;
-		}
-	}
-
-	internal Rectangle GuideBoundsForTest
-	{
-		get
-		{
-			Thread.Sleep(120);
-			return _guide.BoundsForTest;
-		}
-	}
-
 	internal void ProbeHideHintsForTest()
 	{
 		_hud.Hide();
-		_guide.Hide();
-	}
+			}
 
 	internal void ArmUndoForTest(nint hwnd, Native.RECT rect)
 	{
@@ -772,22 +741,6 @@ internal sealed class DragEngine : IDisposable
 				Native.RECT work = WorkAreaOfPoint(pt);
 				SnapEngine.Result snap = (s.Move ? SnapEngine.SnapMove(rECT, work, ScaledThreshold(appConfig.SnapThreshold, s.Hwnd)) : SnapEngine.SnapResize(rECT, s.Zone == ResizeZone.Left, s.Zone == ResizeZone.Right, s.Zone == ResizeZone.Top, s.Zone == ResizeZone.Bottom, work, ScaledThreshold(appConfig.SnapThreshold, s.Hwnd)));
 				rECT = snap.Rect;
-				if (snap.GuideX >= 0)
-				{
-					_guide.ShowLine(vertical: true, snap.GuideX, work.Top, work.Bottom, appConfig.EffectiveFrameColor);
-				}
-				else if (snap.GuideY >= 0)
-				{
-					_guide.ShowLine(vertical: false, snap.GuideY, work.Left, work.Right, appConfig.EffectiveFrameColor);
-				}
-				else
-				{
-					_guide.Hide();
-				}
-			}
-			else
-			{
-				_guide.Hide();
 			}
 			if (appConfig.ShowDragHud)
 			{
@@ -888,7 +841,6 @@ internal sealed class DragEngine : IDisposable
 					Step(pt, s, forceWrite: true);
 					WindowActions.NotifySizeMove(hwnd, start: false);
 					_hud.Hide();
-					_guide.Hide();
 				});
 				_undoHwnd = hwnd;
 				_undoRect = s.StartRect;
@@ -1062,7 +1014,6 @@ internal sealed class DragEngine : IDisposable
 			{
 				_frame.HideNowSync();
 			_hud.Hide();
-			_guide.Hide();
 			}
 			try
 			{
