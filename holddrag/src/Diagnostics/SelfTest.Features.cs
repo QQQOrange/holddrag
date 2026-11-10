@@ -38,9 +38,13 @@ internal static partial class SelfTest
 		SnapEngine.Result result5 = SnapEngine.SnapResize(new Native.RECT(4, 100, 800, 600), dragLeft: true, dragRight: false, dragTop: false, dragBottom: false, work, 8);
 		Eq(result5.Rect.Left, 0, "缩放时左边缘 4px 内吸附");
 		Eq(result5.Rect.Right, 800, "缩放吸附不影响另一条竖边");
-		// 水平居中（阈值内）
+		// 居中吸附已下线：中线附近必须原样通过（否则窗口会"自己跳到中间"）
 		SnapEngine.Result result6 = SnapEngine.SnapMove(new Native.RECT(558, 300, 1358, 800), work, 8);
-		Eq(result6.Rect.Left, 560, "接近水平居中时对齐到中线");
+		Eq(result6.Rect.Left, 558, "★ 接近水平中线时不再吸附（居中吸附已去掉）");
+		Check(!result6.SnappedX, "★ 中线附近不算吸附（X 轴）");
+		SnapEngine.Result result7 = SnapEngine.SnapMove(new Native.RECT(400, 220, 1200, 720), work, 8);
+		Eq(result7.Rect.Top, 220, "★ 接近垂直中线时不再吸附（居中吸附已去掉）");
+		Check(!result7.SnappedY, "★ 中线附近不算吸附（Y 轴）");
 	}
 
 	private static void TestTiling()

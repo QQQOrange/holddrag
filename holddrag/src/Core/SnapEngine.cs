@@ -26,7 +26,10 @@ internal static class SnapEngine
 		public int GuideY;
 	}
 
-	/// <summary>移动吸附：把窗口的左/右/上/下边贴到工作区边缘或水平/垂直居中。</summary>
+	/// <summary>
+	/// 移动吸附：只把窗口的左/右/上/下边贴到工作区边缘。
+	/// 不做「居中吸附」—— 拖到中间附近把窗口吸到正中，看起来像窗口自己跳了一下，干扰比帮助大。
+	/// </summary>
 	public static Result SnapMove(Native.RECT proposed, Native.RECT work, int threshold)
 	{
 		Result result = new Result
@@ -49,7 +52,6 @@ internal static class SnapEngine
 		{
 			ConsiderX(work.Right - width, work.Right);
 		}
-		ConsiderX(work.Left + (work.Width - width) / 2, work.Left + work.Width / 2);
 		if (guideX >= 0)
 		{
 			result.Rect.Left = left;
@@ -65,7 +67,6 @@ internal static class SnapEngine
 		{
 			ConsiderY(work.Bottom - height, work.Bottom);
 		}
-		ConsiderY(work.Top + (work.Height - height) / 2, work.Top + work.Height / 2);
 		if (guideY >= 0)
 		{
 			result.Rect.Top = top;
