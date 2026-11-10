@@ -57,6 +57,22 @@ internal sealed partial class SettingsForm
 		return _searchHits.Count;
 	}
 
+	/// <summary>自测用：模拟"只往搜索框里打字，不按回车"。</summary>
+	internal int ProbeTypeSearch(string text)
+	{
+		_txtSearch.Text = text ?? "";
+		// TextChanged 里挂的是 250ms 防抖，这里直接触发一次定位，等价于用户停下不动 250ms
+		Application.DoEvents();
+		if (!string.IsNullOrEmpty(_txtSearch.Text))
+		{
+			RunSearch(1);
+		}
+		Application.DoEvents();
+		return _searchHits.Count;
+	}
+
+	internal int ProbeActivePage() => _activePage;
+
 	internal string ProbeSearchStatus()
 	{
 		return _lblStatus.Text;

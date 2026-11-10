@@ -1,4 +1,4 @@
-// HoldDrag · Core/AppRules.cs
+﻿// HoldDrag · Core/AppRules.cs
 //
 // 按程序规则：对某个 exe 单独指定行为，比"黑名单"细一档。
 //
@@ -31,6 +31,9 @@ internal static class AppRules
 	private static readonly object Gate = new object();
 
 	private static Dictionary<string, string> _map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+	/// <summary>带通配符（* 和 ?）的规则，按写字顺序匹配。</summary>
+	private static List<(System.Text.RegularExpressions.Regex Pattern, string Mode)> _wildcards = new List<(System.Text.RegularExpressions.Regex, string)>();
 
 	private static readonly Dictionary<(nint Hwnd, long Tick), string> Cache = new Dictionary<(nint, long), string>();
 
@@ -71,9 +74,27 @@ internal static class AppRules
 				dictionary[text2] = NormalizeMode(text3);
 			}
 		}
+		List<(System.Text.RegularExpressions.Regex, string)> list = new List<(System.Text.RegularExpressions.Regex, string)>();
+		foreach (KeyValuePair<string, string> item in dictionary)
+		{
+			if (item.Key.IndexOf('*') < 0 && item.Key.IndexOf('?') < 0)
+			{
+				continue;
+			}
+			try
+			{
+				string text = "^" + System.Text.RegularExpressions.Regex.Escape(item.Key).Replace("\\*", ".*").Replace("\\?", ".") + "$";
+				list.Add((new System.Text.RegularExpressions.Regex(text, System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant), item.Value));
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+		}
 		lock (Gate)
 		{
 			_map = dictionary;
+			_wildcards = list;
 			Cache.Clear();
 		}
 	}
@@ -140,6 +161,13 @@ internal static class AppRules
 			if (_map.TryGetValue(exe, out var value))
 			{
 				return value;
+			}
+			foreach (var wildcard in _wildcards)
+			{
+				if (wildcard.Pattern.IsMatch(exe))
+				{
+					return wildcard.Mode;
+				}
 			}
 		}
 		return null;

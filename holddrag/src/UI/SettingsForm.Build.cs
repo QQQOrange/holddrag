@@ -126,6 +126,32 @@ internal sealed partial class SettingsForm
 			Font = new Font(DesignFontFamily, Sc(12), FontStyle.Regular, GraphicsUnit.Pixel),
 			PlaceholderText = Loc.T("搜索设置…")
 		};
+		_txtSearch.TextChanged += delegate
+		{
+			// 输入即定位：不用先按回车（每 250ms 合并一次，避免逐字符触发整页重排）
+			try
+			{
+				_searchDebounce?.Stop();
+				_searchDebounce?.Dispose();
+				_searchDebounce = new System.Windows.Forms.Timer
+				{
+					Interval = 250
+				};
+				_searchDebounce.Tick += delegate
+				{
+					_searchDebounce.Stop();
+					if (!string.IsNullOrEmpty(_txtSearch.Text))
+					{
+						RunSearch(1);
+					}
+				};
+				_searchDebounce.Start();
+			}
+			catch (Exception ex)
+			{
+				Log.Error(ex);
+			}
+		};
 		_txtSearch.KeyDown += delegate(object? s, KeyEventArgs e)
 		{
 			if (e.KeyCode == Keys.Enter)
@@ -668,6 +694,7 @@ internal sealed partial class SettingsForm
 		_numSnapThreshold = NewNum(0m, 40m, 1m);
 		_chkTiling = Check(Loc.T("按住触发键时用方向键 / 数字键布局窗口"));
 		_chkUndo = Check(Loc.T("允许 Ctrl+Z 撤销上一次拖动（5 秒内）"));
+		_chkTriggerHint = Check(Loc.T("按住触发键一会儿后显示快捷键提示"));
 		_txtBlacklist = new TextBox
 		{
 			BorderStyle = BorderStyle.None,

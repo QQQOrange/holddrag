@@ -115,6 +115,9 @@ internal sealed partial class SettingsForm
 	/// <summary>Ctrl+Z 撤销上一次拖动。</summary>
 	private FlatCheck _chkUndo;
 
+	/// <summary>触发键按住后浮出快捷键提示。</summary>
+	private FlatCheck _chkTriggerHint;
+
 	/// <summary>按程序规则：程序名=类型。</summary>
 	private TextBox _txtAppRules;
 
@@ -139,6 +142,9 @@ internal sealed partial class SettingsForm
 	private int _searchIndex = -1;
 
 	private string _searchQuery = "";
+
+	/// <summary>搜索输入防抖计时器。</summary>
+	private System.Windows.Forms.Timer _searchDebounce;
 
 	private struct SearchHit
 	{

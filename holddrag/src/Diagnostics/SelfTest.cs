@@ -322,6 +322,10 @@ internal static partial class SelfTest
 		Safe("T116 规则与布局的界面行真的存在", TestRulesAndLayoutUi);
 		Safe("T117 引导线位置：必须画在吸附位置（之前在屏幕左上角）", TestGuideLineGeometry);
 		Safe("T118 吸附：窗口比工作区大时不做右侧/底部吸附", TestSnapWideWindow);
+		Safe("T119 规则通配符：* 与 ? 都要能匹配", TestRuleWildcards);
+		Safe("T120 设置搜索：输入即定位（不用按回车）", TestSearchLive);
+		Safe("T121 触发提示浮层：能显示、能隐藏、内容覆盖主操作", TestTriggerHint);
+		Safe("T122 Shift 临时关吸附：状态读取与默认值", TestShiftBypassSnap);
 		Line("");
 		Line("合计 " + (_pass + _fail) + " 项：通过 " + _pass + "，失败 " + _fail);
 		string text = Buf.ToString();

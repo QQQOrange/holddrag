@@ -356,8 +356,11 @@ internal sealed partial class SettingsForm
 			}
 			if (_searchHits.Count == 0)
 			{
-				_lblStatus.Text = Loc.T("没有找到：") + text;
-				_lblStatus.ForeColor = Tokens.Danger;
+				if (_lblStatus != null)
+				{
+					_lblStatus.Text = Loc.T("没有找到：") + text;
+					_lblStatus.ForeColor = Tokens.Danger;
+				}
 				return;
 			}
 			_searchIndex = (_searchIndex + direction + _searchHits.Count) % _searchHits.Count;
@@ -368,7 +371,10 @@ internal sealed partial class SettingsForm
 			{
 				page.Host.Offset = Math.Max(0, searchHit.Card.Top - Sc(20));
 			}
-			_lblStatus.Text = Loc.T("「") + text + Loc.T("」 ") + (_searchIndex + 1) + "/" + _searchHits.Count + Loc.T("：") + searchHit.Label;
+			if (_lblStatus != null)
+			{
+				_lblStatus.Text = Loc.T("「") + text + Loc.T("」 ") + (_searchIndex + 1) + "/" + _searchHits.Count + Loc.T("：") + searchHit.Label;
+			}
 			_lblStatus.ForeColor = Tokens.TextSecondary;
 		}
 		catch (Exception ex)

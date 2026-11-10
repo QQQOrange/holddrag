@@ -90,6 +90,9 @@ internal sealed class AppConfig
 	/// <summary>HUD 里是否附带窗口坐标。</summary>
 	public bool DragHudShowPosition { get; set; }
 
+	/// <summary>触发键按住一会儿后浮出快捷键提示。</summary>
+	public bool ShowTriggerHint { get; set; }
+
 	/// <summary>拖动时吸附到屏幕/工作区边缘。</summary>
 	public bool SnapToEdges { get; set; }
 
@@ -185,6 +188,7 @@ internal sealed class AppConfig
 		ShakeMinimizeOthers = true;
 		ShowDragHud = true;
 		DragHudShowPosition = true;
+		ShowTriggerHint = true;
 		SnapToEdges = true;
 		SnapThreshold = 8;
 		KeyboardTiling = true;

@@ -95,6 +95,11 @@ internal sealed class DragEngine : IDisposable
 	/// <summary>吸附引导线（独立窗口，和 HUD 互不干扰）。</summary>
 	private readonly HintOverlay _guide = new HintOverlay();
 
+	/// <summary>触发键按住一会儿后浮出来的快捷键提示（只在还没开始拖的时候出现）。</summary>
+	private readonly HintOverlay _hint = new HintOverlay();
+
+	private System.Threading.Timer _hintTimer;
+
 	private nint _undoHwnd;
 
 	private Native.RECT _undoRect;
@@ -181,6 +186,7 @@ internal sealed class DragEngine : IDisposable
 		Cancel();
 		_hud.Dispose();
 		_guide.Dispose();
+		_hint.Dispose();
 		_worker.Dispose();
 		if (_overlaysReady)
 		{
@@ -196,6 +202,7 @@ internal sealed class DragEngine : IDisposable
 		{
 			_hud.Start();
 			_guide.Start();
+			_hint.Start();
 			_frame.EnsureCreated();
 			_overlaysReady = true;
 		}
@@ -562,6 +569,21 @@ internal sealed class DragEngine : IDisposable
 		}
 	}
 
+	/// <summary>
+	/// 按住 Shift 时临时不吸附：想精确摆放时不用跑去设置里关掉再打开。
+	/// </summary>
+	private static bool IsShiftDown()
+	{
+		try
+		{
+			return (Native.GetAsyncKeyState(0x10) & 0x8000) != 0;
+		}
+		catch
+		{
+			return false;
+		}
+	}
+
 	/// <summary>吸附阈值按目标窗口的 DPI 缩放（150% 屏上 8px 会显得很紧）。</summary>
 	private static int ScaledThreshold(int threshold, nint hwnd)
 	{
@@ -743,7 +765,7 @@ internal sealed class DragEngine : IDisposable
 					ShakeAction.ToggleMinimizeOthers(s.Hwnd);
 				}
 			}
-			if (appConfig.SnapToEdges && appConfig.SnapThreshold > 0 && (s.Move || s.Zone != ResizeZone.None))
+			if (appConfig.SnapToEdges && appConfig.SnapThreshold > 0 && !IsShiftDown() && (s.Move || s.Zone != ResizeZone.None))
 			{
 				Native.RECT work = WorkAreaOfPoint(pt);
 				SnapEngine.Result snap = (s.Move ? SnapEngine.SnapMove(rECT, work, ScaledThreshold(appConfig.SnapThreshold, s.Hwnd)) : SnapEngine.SnapResize(rECT, s.Zone == ResizeZone.Left, s.Zone == ResizeZone.Right, s.Zone == ResizeZone.Top, s.Zone == ResizeZone.Bottom, work, ScaledThreshold(appConfig.SnapThreshold, s.Hwnd)));
@@ -1195,6 +1217,123 @@ internal sealed class DragEngine : IDisposable
 		return rECT;
 	}
 
+
+	/// <summary>
+	/// 触发键按住 1.2 秒还没开始拖 → 在光标旁浮一条操作提示。
+	///
+	/// 键盘分屏、Shift 关吸附这些能力没有可见入口，用户基本发现不了；
+	/// 与其在设置里写一堆说明，不如在真正用得到的那一刻提示一次。
+	/// </summary>
+	private void ArmHintTimer(Native.POINT pt)
+	{
+		try
+		{
+			if (!_cfg().ShowTriggerHint)
+			{
+				return;
+			}
+			if (_hintTimer == null)
+			{
+				_hintTimer = new System.Threading.Timer(OnHintTimer, null, Timeout.Infinite, Timeout.Infinite);
+			}
+			_hintTimer.Change(1200, Timeout.Infinite);
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	/// <summary>提示浮层的延时回调（复用同一个 Timer，避免在高频路径上反复 new）。</summary>
+	private void OnHintTimer(object state)
+	{
+		try
+		{
+			lock (_gate)
+			{
+				if (_dragging || !_hoverRectValid || !_frameWanted)
+				{
+					return;
+				}
+			}
+			Native.RECT rect = _hoverRect;
+			nint hwnd = _hoverHwnd;
+			string text = HintText();
+			if (!string.IsNullOrEmpty(text))
+			{
+				_hint.ShowText(text, rect, (float)Native.DpiOfWindow(hwnd) / 96f);
+			}
+		}
+		catch (Exception ex)
+		{
+			Log.Error(ex);
+		}
+	}
+
+	private string HintText()
+	{
+		try
+		{
+			AppConfig appConfig = _cfg();
+			List<string> list = new List<string>();
+			list.Add(Loc.T("左键") + " " + Actions.DisplayName(appConfig.ActionLeft));
+			list.Add(Loc.T("右键") + " " + Actions.DisplayName(appConfig.ActionRight));
+			if (appConfig.KeyboardTiling)
+			{
+				list.Add(Loc.T("方向键 分屏"));
+			}
+			if (appConfig.SnapToEdges && appConfig.SnapThreshold > 0)
+			{
+				list.Add(Loc.T("Shift 不吸附"));
+			}
+			return string.Join("  ·  ", list);
+		}
+		catch
+		{
+			return string.Empty;
+		}
+	}
+
+	internal void ProbeShowTriggerHintForTest()
+	{
+		_hint.Start();
+		Native.POINT pt = default(Native.POINT);
+		Native.GetCursorPos(out pt);
+		Native.RECT rect = new Native.RECT(pt.X - 200, pt.Y - 100, pt.X + 400, pt.Y + 300);
+		_hint.ShowText(HintText(), rect, 1f);
+	}
+
+	internal void ProbeHideTriggerHintForTest()
+	{
+		CancelHintTimer();
+	}
+
+	internal bool HintVisibleForTest
+	{
+		get
+		{
+			Thread.Sleep(100);
+			return _hint.VisibleForTest;
+		}
+	}
+
+	internal string HintTextForTest => HintText();
+
+	internal static bool ProbeShiftDownForTest() => IsShiftDown();
+
+	private void CancelHintTimer()
+	{
+		try
+		{
+			_hintTimer?.Dispose();
+			_hintTimer = null;
+			_hint.Hide();
+		}
+		catch
+		{
+		}
+	}
+
 	public void ShowHoverFrame(Native.POINT pt)
 	{
 		if (!_overlaysReady || _dragging)
@@ -1212,6 +1351,11 @@ internal sealed class DragEngine : IDisposable
 		{
 			HideHoverFrame();
 			return;
+		}
+		if (num != _hoverHwnd || !_hoverRectValid)
+		{
+			CancelHintTimer();
+			ArmHintTimer(pt);
 		}
 		if (num == _hoverRaw)
 		{

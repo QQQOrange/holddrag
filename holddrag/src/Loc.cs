@@ -688,6 +688,7 @@ namespace HoldDrag
 			["运行中的实例会监听命名管道，可以用一条命令控制它：带 status 参数查看状态；center / next-monitor / topmost / pause on|off / move x y w h / layout-save 名称 / layout-restore 名称 都是可用命令，用 help 参数可以列出全部。成功返回 OK 且退出码为 0，失败返回 ERR 且退出码为 1。"] = "The running instance listens on a named pipe, so a single command can drive it: status reports the state; center / next-monitor / topmost / pause on|off / move x y w h / layout-save NAME / layout-restore NAME are available, and help lists them all. Success returns OK with exit code 0, failure returns ERR with exit code 1.",
 			["诊断包与便携模式"] = "Diagnostics bundle and portable mode",
 			["「帮助 → 诊断」可以一键导出诊断包：配置文件 + 最近三个日志 + 系统信息（版本、系统、DPI、显示器、权限），遇到问题把它发给开发者即可。把 portable.txt 放在 exe 旁边则进入便携模式，配置、日志和布局都写在该目录的 data 文件夹里，不再写入 AppData。"] = "Help → Diagnostics exports a bundle: the config, the last three logs and system info (version, OS, DPI, monitors, privileges). Put portable.txt next to the exe to enable portable mode; config, logs and layouts then live in a data folder beside the exe instead of AppData.",
+			["双击手势、全屏窗口，以及尺寸提示 / 吸附 / 分屏 / 撤销"] = "Double-click gestures, full-screen windows, and the size HUD / snapping / tiling / undo",
 		};
 	}
 }
